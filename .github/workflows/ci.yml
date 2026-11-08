@@ -1,0 +1,124 @@
+# Checks the Fetch programs, their vulnerability status and the shop on every
+# change. The gateway comes from APIWard at the commit go.mod pins.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      EAT_PORT_OFFSET: "1000"
+    defaults:
+      run:
+        working-directory: fetch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: fetch
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: fetch/go.mod
+          cache-dependency-path: fetch/go.sum
+      # The APIWard commit is read from go.mod, so the checkout cannot drift
+      # from the version the Go code is built against.
+      - id: pin
+        run: |
+          module=github.com/Alex-Zechariah-02/apiward
+          version=$(go list -m -f '{{.Version}}' "$module")
+          commit=$(go list -m -f '{{with .Origin}}{{.Hash}}{{end}}' "$module@$version")
+          test -n "$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Alex-Zechariah-02/apiward
+          ref: ${{ steps.pin.outputs.commit }}
+          path: apiward
+          persist-credentials: false
+      - run: go mod verify
+      - run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      - run: go vet ./...
+      - run: go test ./... -count=1
+      - run: go test -race ./... -count=1 -timeout 30m
+
+  vuln:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  client:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EAT_PORT_OFFSET: "3000"
+    defaults:
+      run:
+        working-directory: fetch/client
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: fetch
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: fetch/go.mod
+          cache-dependency-path: fetch/go.sum
+      - id: pin
+        run: |
+          module=github.com/Alex-Zechariah-02/apiward
+          version=$(go list -m -f '{{.Version}}' "$module")
+          commit=$(go list -m -f '{{with .Origin}}{{.Hash}}{{end}}' "$module@$version")
+          test -n "$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      # The browser tests build the gateway and its Dashboard from APIWard.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Alex-Zechariah-02/apiward
+          ref: ${{ steps.pin.outputs.commit }}
+          path: apiward
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            fetch/client/package-lock.json
+            apiward/dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npm audit --audit-level=high
+      # The tests run in the installed Chrome (playwright.config.ts).
+      - run: npx playwright install --with-deps chrome
+      # Failure traces hold page contents and test credentials, so they stay
+      # on the machine that ran the tests and are not uploaded.
+      - run: npx playwright test
+
+  deps:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
