@@ -14,72 +14,88 @@ import (
 	"github.com/Alex-Zechariah-02/fetch/internal/services"
 )
 
-// buildPrograms builds the gateway, services and Accounts programs into bin, every
-// time, so the demonstration always runs the current sources.
+// builtPrograms are the program files demo up runs.
 type builtPrograms struct{ gateway, services, accounts string }
 
+// buildPrograms builds the gateway, services and Accounts programs into bin,
+// every time, so the demonstration always runs the current sources.
 func buildPrograms(source sources, bin string) (builtPrograms, error) {
-	if err := os.MkdirAll(bin, 0o700); err != nil {
+	gateway, err := buildProgram("gateway", source.apiward, bin)
+	if err != nil {
 		return builtPrograms{}, err
 	}
-	var built []string
-	for _, program := range []struct{ name, folder string }{{"gateway", source.apiward}, {"services", source.fetch}, {"accounts", source.fetch}} {
-		name := program.name
-		fmt.Println("Building the", name, "program...")
-		output := filepath.Join(bin, executable(name))
-		build := exec.Command("go", "build", "-trimpath", "-o", output, "./cmd/"+name)
-		build.Dir = program.folder
-		if log, err := build.CombinedOutput(); err != nil {
-			return builtPrograms{}, fmt.Errorf("building %s: %w\n%s", name, err, log)
-		}
-		built = append(built, output)
+	services, accounts, err := buildServices(source.fetch, bin)
+	return builtPrograms{gateway, services, accounts}, err
+}
+
+// buildServices builds this repository's services and Accounts programs.
+func buildServices(fetch, bin string) (services, accounts string, err error) {
+	if services, err = buildProgram("services", fetch, bin); err != nil {
+		return "", "", err
 	}
-	return builtPrograms{built[0], built[1], built[2]}, nil
+	accounts, err = buildProgram("accounts", fetch, bin)
+	return services, accounts, err
+}
+
+// buildProgram builds ./cmd/<name> of the module in folder into bin.
+func buildProgram(name, folder, bin string) (string, error) {
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		return "", err
+	}
+	fmt.Println("Building the", name, "program...")
+	output := filepath.Join(bin, executable(name))
+	build := exec.Command("go", "build", "-trimpath", "-o", output, "./cmd/"+name)
+	build.Dir = folder
+	if log, err := build.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("building %s: %w\n%s", name, err, log)
+	}
+	return output, nil
 }
 
 // buildWebsites builds the Dashboard (APIWard's dashboard folder) and the shop
-// (this repository's client folder) and copies each build into web: admin/ is
-// served by the gateway, demo/ by the demo process.
+// (this repository's client folder) into web: admin/ is served by the
+// gateway, demo/ by the demo process.
 func buildWebsites(source sources, web string) error {
-	websites := []struct{ page, folder string }{
-		{"admin", filepath.Join(source.apiward, "dashboard")},
-		{"demo", filepath.Join(source.fetch, "client")},
+	if err := buildWebsite(filepath.Join(source.apiward, "dashboard"), filepath.Join(web, "admin")); err != nil {
+		return err
 	}
-	for _, site := range websites {
-		if _, err := os.Stat(filepath.Join(site.folder, "node_modules")); errors.Is(err, os.ErrNotExist) {
-			fmt.Println("Installing the", site.folder, "packages...")
-			if err := npm(site.folder, "ci", "--no-audit", "--no-fund"); err != nil {
-				return err
-			}
-		}
-		fmt.Println("Building the", site.folder+"...")
-		if err := npm(site.folder, "run", "build"); err != nil {
-			return err
-		}
+	return buildWebsite(filepath.Join(source.fetch, "client"), filepath.Join(web, "demo"))
+}
 
-		target := filepath.Join(web, site.page)
-		info, err := os.Lstat(target)
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-		case err != nil:
-			return err
-		case info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0:
-			// A link, such as a junction to an old build folder: removing it
-			// removes only the link, never the folder it points to.
-			if err := os.Remove(target); err != nil {
-				return err
-			}
-		default:
-			if err := os.RemoveAll(target); err != nil {
-				return err
-			}
-		}
-		if err := os.MkdirAll(web, 0o700); err != nil {
+// buildWebsite builds the website in folder and replaces target with a copy
+// of its build.
+func buildWebsite(folder, target string) error {
+	if _, err := os.Stat(filepath.Join(folder, "node_modules")); errors.Is(err, os.ErrNotExist) {
+		fmt.Println("Installing the", folder, "packages...")
+		if err := npm(folder, "ci", "--no-audit", "--no-fund"); err != nil {
 			return err
 		}
-		if err := os.CopyFS(target, os.DirFS(filepath.Join(site.folder, "dist"))); err != nil {
-			return fmt.Errorf("copying the %s build: %w", site.folder, err)
+	}
+	fmt.Println("Building the", folder+"...")
+	if err := npm(folder, "run", "build"); err != nil {
+		return err
+	}
+	info, err := os.Lstat(target)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return err
+	case info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0:
+		// A link, such as a junction to an old build folder: removing it
+		// removes only the link, never the folder it points to.
+		if err := os.Remove(target); err != nil {
+			return err
 		}
+	default:
+		if err := os.RemoveAll(target); err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	if err := os.CopyFS(target, os.DirFS(filepath.Join(folder, "dist"))); err != nil {
+		return fmt.Errorf("copying the %s build: %w", folder, err)
 	}
 	return nil
 }

@@ -1,0 +1,244 @@
+components:
+  securitySchemes:
+    bearer:
+      bearerFormat: JWT
+      scheme: bearer
+      type: http
+info:
+  title: Fetch Orders API
+  version: "1"
+openapi: 3.1.0
+paths:
+  /orders:
+    get:
+      operationId: all
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - OPERATIONS
+        - SUPPORT
+    post:
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                address:
+                  additionalProperties: false
+                  properties:
+                    city:
+                      maxLength: 40
+                      minLength: 1
+                      type: string
+                    line1:
+                      maxLength: 100
+                      minLength: 1
+                      type: string
+                    line2:
+                      maxLength: 100
+                      minLength: 0
+                      type: string
+                    postcode:
+                      maxLength: 5
+                      minLength: 5
+                      type: string
+                    state:
+                      enum:
+                        - Johor
+                        - Kedah
+                        - Kelantan
+                        - Melaka
+                        - Negeri Sembilan
+                        - Pahang
+                        - Perak
+                        - Perlis
+                        - Pulau Pinang
+                        - Sabah
+                        - Sarawak
+                        - Selangor
+                        - Terengganu
+                        - Wilayah Persekutuan Kuala Lumpur
+                        - Wilayah Persekutuan Labuan
+                        - Wilayah Persekutuan Putrajaya
+                      type: string
+                  required:
+                    - line1
+                    - postcode
+                    - city
+                    - state
+                  type: object
+                items:
+                  items:
+                    additionalProperties: false
+                    properties:
+                      item:
+                        maxLength: 7
+                        minLength: 7
+                        type: string
+                      quantity:
+                        maximum: 50
+                        minimum: 1
+                        type: integer
+                    required:
+                      - item
+                      - quantity
+                    type: object
+                  maxItems: 20
+                  minItems: 1
+                  type: array
+                merchant:
+                  maxLength: 7
+                  minLength: 7
+                  type: string
+                note:
+                  maxLength: 200
+                  minLength: 0
+                  type: string
+                payment:
+                  enum:
+                    - cash
+                    - wallet
+                  type: string
+              required:
+                - merchant
+                - items
+                - address
+                - payment
+              type: object
+        required: true
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - CUSTOMER
+  /orders/accept/{rest}:
+    post:
+      operationId: accept
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - MERCHANT
+  /orders/cancel/{rest}:
+    post:
+      operationId: cancel
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - CUSTOMER
+  /orders/deliver/{rest}:
+    post:
+      operationId: deliver
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - RIDER
+  /orders/detail/{rest}:
+    get:
+      operationId: detail
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - CUSTOMER
+        - MERCHANT
+        - OPERATIONS
+        - RIDER
+        - SUPPORT
+  /orders/jobs:
+    get:
+      operationId: jobs
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - RIDER
+  /orders/merchant:
+    get:
+      operationId: merchant
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - MERCHANT
+  /orders/mine:
+    get:
+      operationId: mine
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - CUSTOMER
+  /orders/pickup/{rest}:
+    post:
+      operationId: pickup
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - RIDER
+  /orders/quote:
+    get:
+      operationId: quote
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - CUSTOMER
+  /orders/ready/{rest}:
+    post:
+      operationId: ready
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - MERCHANT
+  /orders/wallet:
+    get:
+      operationId: wallet
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - CUSTOMER

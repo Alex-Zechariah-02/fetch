@@ -68,31 +68,14 @@ func createDemo(dir, webDir, gateway, admin string, out io.Writer) (err error) {
 		}
 	}()
 
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	files, err := serviceFiles(dir)
 	if err != nil {
 		return err
 	}
-	private, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return err
-	}
-	public, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	if err != nil {
-		return err
-	}
-	secret := make([]byte, 32)
-	rand.Read(secret)
-
 	baseline := baselinePolicy()
-	files := map[string][]byte{
-		privateKeyFile: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}),
-		publicKeyFile:  pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public}),
-		secretFile:     []byte(hex.EncodeToString(secret)),
-		signingFile:    indented(map[string]string{"kid": "fetch-2026-10-a", "private_key_file": filepath.Join(dir, privateKeyFile)}),
-		configFile:     indented(gatewayConfig(dir, webDir)),
-		baselineFile:   indented(baseline),
-		denyAllFile:    indented(denyAll(baseline)),
-	}
+	files[configFile] = indented(gatewayConfig(dir, webDir))
+	files[baselineFile] = indented(baseline)
+	files[denyAllFile] = indented(denyAll(baseline))
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), content, 0o600); err != nil {
 			return err
@@ -109,6 +92,31 @@ func createDemo(dir, webDir, gateway, admin string, out io.Writer) (err error) {
 		return fmt.Errorf("gateway install: %w", err)
 	}
 	return nil
+}
+
+// serviceFiles are the files the services and Accounts run with in dir: the
+// shared service secret and a new signing key pair with its settings.
+func serviceFiles(dir string) (map[string][]byte, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	private, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	public, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	secret := make([]byte, 32)
+	rand.Read(secret)
+	return map[string][]byte{
+		privateKeyFile: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}),
+		publicKeyFile:  pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public}),
+		secretFile:     []byte(hex.EncodeToString(secret)),
+		signingFile:    indented(map[string]string{"kid": "fetch-2026-10-a", "private_key_file": filepath.Join(dir, privateKeyFile)}),
+	}, nil
 }
 
 func indented(value any) []byte {

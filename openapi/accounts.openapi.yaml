@@ -1,0 +1,59 @@
+components:
+  securitySchemes:
+    bearer:
+      bearerFormat: JWT
+      scheme: bearer
+      type: http
+info:
+  title: Fetch Accounts API
+  version: "1"
+openapi: 3.1.0
+paths:
+  /accounts/login:
+    post:
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                email:
+                  maxLength: 254
+                  minLength: 3
+                  type: string
+                password:
+                  maxLength: 256
+                  minLength: 1
+                  type: string
+              required:
+                - email
+                - password
+              type: object
+        required: true
+      security: []
+      x-fetch-access: allow
+  /accounts/me:
+    get:
+      operationId: me
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - CUSTOMER
+        - MERCHANT
+        - OPERATIONS
+        - RIDER
+        - SUPPORT
+  /accounts/refresh:
+    post:
+      operationId: refresh
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - CUSTOMER
+        - MERCHANT
+        - OPERATIONS
+        - RIDER
+        - SUPPORT

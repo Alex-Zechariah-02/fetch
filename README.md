@@ -11,7 +11,7 @@ Behind APIWard, the shop is reached only through the gateway: its pages and asse
 - `cmd/demo` builds, sets up and runs the full local stack with `up`. `setup` writes `gateway.json`, complete baseline and deny-all policies, `service.secret`, a signing key pair and `accounts.json` into a new identified private directory, then installs the first administrator. `run` starts the five services and the gateway, serves the shop's built files on the website upstream, reports protected admission separately from listening, and stops its own children gracefully. `token` is an optional client of Accounts for a seeded subject; it cannot change the fixed 15-minute lifetime. `reset` restores every service's seed and clears its receipts. `events` prints request events from the gateway's active audit file; retained rotated files are not searched.
 - `cmd/measure -samples 30 -account cust-001` collects preliminary paired wallet latency against an isolated running stack, directly and through the gateway. It honors `EAT_PORT_OFFSET`, keeps credentials out of output, checks equivalent successful responses, and emits raw observations and aggregate JSON.
 - `internal/services`: the four APIs and Accounts. `internal/ports`: the demonstration addresses.
-- `client/`: the shop (React and TypeScript, built with Vite) and its browser tests; see its README. `e2e/`: the browser-test helpers shared with APIWard's Dashboard tests.
+- `client/`: the shop (React and TypeScript, built with Vite) and its browser tests; see its README. `e2e/`: the browser-test helpers shared with APIWard's Dashboard tests. `openapi/`: an OpenAPI description of each API.
 
 ## Requirements
 
@@ -38,6 +38,25 @@ If an earlier native setup stopped before any administrator, candidate or policy
 The Dashboard is at `http://127.0.0.1:9440/` and the shop at `http://127.0.0.2:9480/`, through the gateway; `run` serves the shop's files itself on `127.0.0.1:9506`, the website's upstream. Metrics are at `http://127.0.0.1:9450/metrics`. `EAT_PORT_OFFSET` shifts every port; for example, `1000` selects data port 10480, admin port 10440 and metrics port 10450.
 
 At the default offset, Inventory, Orders, Reports, Support and Accounts listen on `127.0.0.1:9501` through `9505`, with protected control listeners on `9601` through `9605`. Orders reserves Inventory stock and Reports reads Orders history through fixed `/internal/` endpoints with `X-Service-Key` from `service.secret`. Those endpoints have no gateway routes. Every service response carries `X-Service`; gateway refusals do not. The controls expose `/state`, `/receipts` and `/reset` with a separate bearer secret. Keep the state directory and all service and control listeners private to the local demonstration.
+
+## Standalone (unprotected)
+
+```
+go run ./cmd/demo up -standalone
+```
+
+Runs the shop, the four APIs and Accounts with no gateway, to show the application before it is protected. It needs no APIWard checkout. The demo process listens on the shop's address (`http://127.0.0.2:9480/`), serves the shop and forwards each API path to its service. **Nothing is checked:** it copies the `sub` and `roles` claims of any bearer token into the identity headers the services read, without verifying the token, so a token with made-up roles is believed; only identity headers sent by the client are discarded. Never use this mode to protect anything. Each run makes a new folder `standalone` in the demo home with a new signing key; tokens from an earlier run stop working. `-fresh` and `-apiward` are refused with `-standalone`.
+
+## Moving the APIs behind APIWard
+
+Each API has an OpenAPI 3.1 description in `openapi/`: `inventory`, `orders`, `reports`, `support` and `accounts` `.openapi.yaml`. They describe the endpoints, sign-in and request bodies, and carry Fetch's own `x-fetch-roles` and `x-fetch-access` members. APIWard's import passes `x-fetch-*` members through unread and takes no roles or rate limits from a description, so an administrator sets those in the Dashboard.
+
+```
+go run ./cmd/demo migrate -out <new-policy-file>
+go run ./cmd/demo policy stage -dir <home>/state -file <new-policy-file>
+```
+
+`migrate` builds the gateway from the APIWard checkout and runs `gateway policy import-openapi` once per API, onto a base that holds the services' addresses, the roles and the shop's pages, and writes one policy file; it stops if any endpoint is refused. Staging saves it as a draft change in the running gateway; in the Dashboard, give each endpoint its roles and rate limit, put the change on trial and keep it. On a gateway elsewhere, copy the descriptions there and run `gateway policy import-openapi` directly; it reads only the files it is given.
 
 ## Demonstration commands
 

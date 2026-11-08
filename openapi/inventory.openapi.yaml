@@ -1,0 +1,119 @@
+components:
+  securitySchemes:
+    bearer:
+      bearerFormat: JWT
+      scheme: bearer
+      type: http
+info:
+  title: Fetch Inventory API
+  version: "1"
+openapi: 3.1.0
+paths:
+  /inventory/categories:
+    get:
+      operationId: categories
+      security: []
+      x-fetch-access: allow
+  /inventory/items/{rest}:
+    get:
+      operationId: item
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      security: []
+      x-fetch-access: allow
+    patch:
+      operationId: item.update
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                available:
+                  type: boolean
+                price_sen:
+                  maximum: 100000
+                  minimum: 50
+                  type: integer
+              required: []
+              type: object
+        required: true
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - MERCHANT
+  /inventory/merchants:
+    get:
+      operationId: merchants
+      security: []
+      x-fetch-access: allow
+  /inventory/merchants/{rest}:
+    get:
+      operationId: merchant
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      security: []
+      x-fetch-access: allow
+  /inventory/search:
+    get:
+      operationId: search
+      security: []
+      x-fetch-access: allow
+  /inventory/stock/{rest}:
+    get:
+      operationId: stock.read
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - MERCHANT
+        - OPERATIONS
+    patch:
+      operationId: stock.adjust
+      parameters:
+        - in: path
+          name: rest
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                delta:
+                  maximum: 100
+                  minimum: -100
+                  type: integer
+              required:
+                - delta
+              type: object
+        required: true
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - MERCHANT
+        - OPERATIONS

@@ -8,7 +8,7 @@ toolchain go1.27.3
 ignore ./client
 
 require (
-	github.com/Alex-Zechariah-02/apiward v0.0.0-20261108135535-14a44bd6503d
+	github.com/Alex-Zechariah-02/apiward v0.1.0
 	github.com/go-jose/go-jose/v4 v4.1.9
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0

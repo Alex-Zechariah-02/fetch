@@ -39,6 +39,7 @@ func up(args []string) error {
 	fresh := set.Bool("fresh", false, "delete the earlier demonstration state, including its administrator and policy, and start over")
 	stdin := set.Bool("stdin", false, "also stop when standard input closes")
 	apiward := set.String("apiward", "", "APIWard checkout that builds the gateway and the Dashboard (default: ../apiward beside this repository)")
+	standalone := set.Bool("standalone", false, "run the shop and services with no gateway: nothing is checked (unprotected)")
 	if err := set.Parse(args); err != nil {
 		return err
 	}
@@ -48,6 +49,13 @@ func up(args []string) error {
 	homeDir, err := filepath.Abs(*home)
 	if err != nil {
 		return err
+	}
+	if *standalone {
+		// The standalone mode has no gateway state to delete or build.
+		if *fresh || *apiward != "" {
+			return errors.New("-standalone runs no gateway: it takes neither -fresh nor -apiward")
+		}
+		return upStandalone(homeDir, *stdin)
 	}
 	state := filepath.Join(homeDir, "state")
 	bin := filepath.Join(homeDir, "bin")
@@ -163,17 +171,9 @@ func defaultHome() string {
 // so up builds the sources it is run from, and the APIWard checkout: apiward,
 // or else the folder apiward beside this repository.
 func findSources(apiward string) (sources, error) {
-	output, err := exec.Command("go", "env", "GOMOD").Output()
+	fetch, err := fetchRepository()
 	if err != nil {
-		return sources{}, fmt.Errorf("finding the Fetch repository with the go command: %w", err)
-	}
-	mod := strings.TrimSpace(string(output))
-	if mod == "" || mod == os.DevNull {
-		return sources{}, errors.New("run up from the Fetch repository: go run ./cmd/demo up")
-	}
-	fetch := filepath.Dir(mod)
-	if _, err := os.Stat(filepath.Join(fetch, "cmd", "demo")); err != nil {
-		return sources{}, fmt.Errorf("%s is not the Fetch repository", fetch)
+		return sources{}, err
 	}
 	if apiward == "" {
 		apiward = filepath.Join(fetch, "..", "apiward")
@@ -185,6 +185,23 @@ func findSources(apiward string) (sources, error) {
 		return sources{}, fmt.Errorf("%s is not an APIWard checkout: clone github.com/Alex-Zechariah-02/apiward there or pass -apiward <folder>", apiward)
 	}
 	return sources{apiward: apiward, fetch: fetch}, nil
+}
+
+// fetchRepository is the Fetch repository of the working directory's module.
+func fetchRepository() (string, error) {
+	output, err := exec.Command("go", "env", "GOMOD").Output()
+	if err != nil {
+		return "", fmt.Errorf("finding the Fetch repository with the go command: %w", err)
+	}
+	mod := strings.TrimSpace(string(output))
+	if mod == "" || mod == os.DevNull {
+		return "", errors.New("run up from the Fetch repository: go run ./cmd/demo up")
+	}
+	fetch := filepath.Dir(mod)
+	if _, err := os.Stat(filepath.Join(fetch, "cmd", "demo")); err != nil {
+		return "", fmt.Errorf("%s is not the Fetch repository", fetch)
+	}
+	return fetch, nil
 }
 
 // removeState deletes an earlier demonstration directory, after checking it

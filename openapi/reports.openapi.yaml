@@ -1,0 +1,43 @@
+components:
+  securitySchemes:
+    bearer:
+      bearerFormat: JWT
+      scheme: bearer
+      type: http
+info:
+  title: Fetch Reports API
+  version: "1"
+openapi: 3.1.0
+paths:
+  /reports/merchant:
+    get:
+      operationId: merchant
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - MERCHANT
+  /reports/sales:
+    get:
+      operationId: sales
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - OPERATIONS
+  /reports/summary:
+    get:
+      operationId: summary
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - OPERATIONS
+  /reports/top-items:
+    get:
+      operationId: top-items
+      security:
+        - bearer: []
+      x-fetch-access: allow
+      x-fetch-roles:
+        - OPERATIONS

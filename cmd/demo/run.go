@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -79,112 +78,24 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 		}
 	}()
 
-	// Each started process reports its exit on exited; running counts those
-	// not yet received, so the cleanup waits for exactly the rest.
-	type processExit struct {
-		name string
-		err  error
+	running := newChildren(dir, len(fetchServices)+1)
+	defer func() { runErr = errors.Join(runErr, running.stop()) }()
+	addresses, err := running.startServices(dir, serviceBinary, accountsBinary)
+	if err != nil {
+		return err
 	}
-	exited := make(chan processExit, len(fetchServices)+1)
-	var processes []*exec.Cmd
-	var gatewayLogStart int64
-	running := 0
-	defer func() {
-		for _, process := range processes {
-			// A process that already exited cannot be signalled. Its exit is
-			// still received below, so every child is reaped exactly once.
-			if err := interruptProcess(process); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				process.Process.Kill()
-			}
-		}
-		timer := time.NewTimer(12 * time.Second)
-		defer timer.Stop()
-		for running > 0 {
-			select {
-			case result := <-exited:
-				running--
-				if result.err != nil {
-					runErr = errors.Join(runErr, fmt.Errorf("%s stopped: %w; see its log in %s", result.name, result.err, dir))
-				}
-			case <-timer.C:
-				for _, process := range processes {
-					process.Process.Kill()
-				}
-				runErr = errors.Join(runErr, errors.New("child shutdown exceeded 12s; remaining processes killed"))
-			}
-		}
-	}()
-	start := func(name string, binary string, args ...string) error {
-		logFile, err := os.OpenFile(filepath.Join(dir, name+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
-			return err
-		}
-		if name == "gateway" {
-			info, err := logFile.Stat()
-			if err != nil {
-				logFile.Close()
-				return err
-			}
-			gatewayLogStart = info.Size()
-		}
-		cmd := exec.Command(binary, args...)
-		newProcessGroup(cmd)
-		cmd.Stdout, cmd.Stderr = logFile, logFile
-		if err := cmd.Start(); err != nil {
-			logFile.Close()
-			return fmt.Errorf("starting %s: %w", name, err)
-		}
-		processes = append(processes, cmd)
-		running++
-		go func() {
-			err := cmd.Wait()
-			logFile.Close()
-			exited <- processExit{name: name, err: err}
-		}()
-		return nil
-	}
-
-	secret := filepath.Join(dir, secretFile)
-	var addresses []string
-	for _, f := range fetchServices {
-		binary := serviceBinary
-		args := []string{"-listen", f.listen, "-control", f.control, "-secret-file", secret}
-		switch f.name {
-		case "accounts":
-			binary = accountsBinary
-			args = append(args, "-signing-settings", filepath.Join(dir, signingFile))
-		case "orders":
-			args = append(args, "-service", f.name, "-inventory", "http://"+fetchServices[0].listen)
-		case "reports":
-			args = append(args, "-service", f.name, "-orders", "http://"+fetchServices[1].listen)
-		default:
-			args = append(args, "-service", f.name)
-		}
-		if err := start(f.name, binary, args...); err != nil {
-			return err
-		}
-		addresses = append(addresses, f.listen, f.control)
-	}
-	if err := start("gateway", gateway, "run", "--config", filepath.Join(dir, configFile)); err != nil {
+	gatewayLogStart, err := running.start("gateway", gateway, "run", "--config", filepath.Join(dir, configFile))
+	if err != nil {
 		return err
 	}
 	addresses = append(addresses, adminListen, dataListen, metricsListen)
 
 	deadline := time.Now().Add(30 * time.Second)
-	for _, address := range addresses {
-		for !dialable(address) {
-			select {
-			case result := <-exited:
-				running--
-				return fmt.Errorf("%s exited during startup (%v); see %s", result.name, result.err, filepath.Join(dir, result.name+".log"))
-			case <-ctx.Done():
-				return nil
-			case <-time.After(50 * time.Millisecond):
-			}
-			if time.Now().After(deadline) {
-				return fmt.Errorf("%s did not start listening; see the logs in %s", address, dir)
-			}
+	if err := running.awaitListening(ctx, addresses, deadline); err != nil {
+		if errors.Is(err, errCancelled) {
+			return nil
 		}
+		return err
 	}
 	admission := ""
 	for admission == "" {
@@ -197,8 +108,8 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 			break
 		}
 		select {
-		case result := <-exited:
-			running--
+		case result := <-running.exited:
+			running.received()
 			return fmt.Errorf("%s exited before admission status (%v); see its log in %s", result.name, result.err, dir)
 		case <-ctx.Done():
 			return nil
@@ -210,13 +121,7 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 	}
 	fmt.Printf("listening; protected admission: %s\n", admission)
 	fmt.Printf("  dashboard: http://%s/\n  website:   http://%s/ (served from %s through the gateway)\n", adminListen, dataListen, siteListen)
-	for i, p := range processes {
-		name := "gateway"
-		if i < len(fetchServices) {
-			name = fetchServices[i].name
-		}
-		fmt.Printf("  %-9s process %d\n", name, p.Process.Pid)
-	}
+	running.printProcesses()
 	if ready != nil {
 		ready()
 	}
@@ -229,8 +134,8 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 		case err := <-siteDone:
 			siteDone <- err
 			return fmt.Errorf("the website stopped (%v)", err)
-		case result := <-exited:
-			running--
+		case result := <-running.exited:
+			running.received()
 			if result.name == "gateway" {
 				return fmt.Errorf("the gateway exited (%v); see %s", result.err, filepath.Join(dir, "gateway.log"))
 			}

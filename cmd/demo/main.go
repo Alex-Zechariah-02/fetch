@@ -81,7 +81,9 @@ const (
 )
 
 const usage = `usage:
-  demo up     [-home H] [-fresh] [-stdin]
+  demo up     [-home H] [-fresh] [-stdin] [-apiward DIR]
+  demo up     -standalone [-home H] [-stdin]   (no gateway: unprotected)
+  demo migrate -out F [-apiward DIR]
   demo setup  -dir D -web W -gateway G [-admin NAME]
   demo run    -dir D -web W -gateway G -services S -accounts A [-stdin]
   demo token  -dir D -subject ID [-ttl 15m]
@@ -103,15 +105,16 @@ func main() {
 		os.Exit(2)
 	}
 	commands := map[string]func([]string) error{
-		"up":     up,
-		"setup":  setup,
-		"run":    run,
-		"token":  token,
-		"reset":  reset,
-		"events": events,
-		"attack": attack,
-		"keys":   keys,
-		"policy": policy,
+		"up":      up,
+		"migrate": migrate,
+		"setup":   setup,
+		"run":     run,
+		"token":   token,
+		"reset":   reset,
+		"events":  events,
+		"attack":  attack,
+		"keys":    keys,
+		"policy":  policy,
 	}
 	command, ok := commands[os.Args[1]]
 	if !ok {

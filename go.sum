@@ -1,5 +1,5 @@
-github.com/Alex-Zechariah-02/apiward v0.0.0-20261108135535-14a44bd6503d h1:IGwQTgJXSzK6bMYeJHIBtle/c6ZqsWiabU8YYJ6Jc8Y=
-github.com/Alex-Zechariah-02/apiward v0.0.0-20261108135535-14a44bd6503d/go.mod h1:8Ws2DjP5jib+6CXFon7so5vo/c17Bvx3qMg6QLgB74k=
+github.com/Alex-Zechariah-02/apiward v0.1.0 h1:2VONRFM+rs33OXDDMDUPk9dDH8zDHdZS8GeUQa9qt5s=
+github.com/Alex-Zechariah-02/apiward v0.1.0/go.mod h1:anbB+gDYz+74sNceR6u0D5vkBwCQNGuijELGZWoH/8c=
 github.com/dlclark/regexp2 v1.12.0 h1:0j4c5qQmnC6XOWNjP3PIXURXN2gWx76rd3KvgdPkCz8=
 github.com/dlclark/regexp2 v1.12.0/go.mod h1:DHkYz0B9wPfa6wondMfaivmHpzrQ3v9q8cnmRbL6yW8=
 github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
