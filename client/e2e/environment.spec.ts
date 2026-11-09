@@ -1,7 +1,8 @@
+// The client suite's own harness: the isolation ports, the recorded backend
+// source identity, and the cleanup of a demonstration whose startup failed.
 import { expect, test } from '@playwright/test'
 import { resolveConfig } from 'vite'
 import { adminURL, build, controls, Demo, gatewayIdentity, siteURL } from './env'
-import { Demo as DashboardDemo } from '../../../apiward/dashboard/e2e/env'
 
 test('the browser harness and development proxy honor the selected isolation ports', async () => {
   // Independent expectations keep an offset accidentally omitted by the helper
@@ -29,16 +30,14 @@ test('the selected backend records its actual source identity', () => {
   expect(gatewayIdentity()).toHaveProperty('diff_sha256', expect.stringMatching(/^[a-f0-9]{64}$/))
 })
 
-test('failed demo startup can still be cleaned up by either browser suite', async () => {
+test('failed demo startup can still be cleaned up', async () => {
   const bin = build()
-  for (const [name, Deployment] of [['client', Demo], ['dashboard', DashboardDemo]] as const) {
-    // Deliberately omit setup: the owned demo exits before opening listeners.
-    const demo = new Deployment(bin, '')
-    await expect(demo.start()).rejects.toThrow('demo run exited')
-    const stopped = await Promise.race([
-      demo.stop().then(() => true),
-      new Promise<boolean>((done) => setTimeout(() => done(false), 1000)),
-    ])
-    expect.soft(stopped, `${name} teardown waited for an exit that already happened`).toBe(true)
-  }
+  // Deliberately omit setup: the owned demo exits before opening listeners.
+  const demo = new Demo(bin, '')
+  await expect(demo.start()).rejects.toThrow('demo run exited')
+  const stopped = await Promise.race([
+    demo.stop().then(() => true),
+    new Promise<boolean>((done) => setTimeout(() => done(false), 1000)),
+  ])
+  expect.soft(stopped, 'client teardown waited for an exit that already happened').toBe(true)
 })

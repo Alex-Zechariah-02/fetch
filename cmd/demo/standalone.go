@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Alex-Zechariah-02/fetch/internal/services"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 )
@@ -38,18 +39,26 @@ var identityHeaders = []string{"X-Gateway-Subject", "X-Gateway-Roles", "X-Gatewa
 // runStandalone starts the services and Accounts with the files in dir,
 // serves the shop in shop and the API paths on the data-plane address, and
 // stops everything when ctx ends.
-func runStandalone(ctx context.Context, dir string, shop fs.FS, serviceBinary, accountsBinary string) (runErr error) {
-	if err := checkPortsFree(); err != nil {
+func runStandalone(ctx context.Context, dir string, shop fs.FS, serviceBinary, accountsBinary string) error {
+	if err := checkFree(localAddresses()); err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp", dataListen)
+	listener, err := services.Listen(dataListen, services.Ingress{})
 	if err != nil {
 		return fmt.Errorf("the shop address: %w", err)
 	}
-	server := &http.Server{Handler: standaloneHandler(shop), ReadHeaderTimeout: 5 * time.Second}
+	banner := fmt.Sprintf("%s\n\nShop: http://%s/  (unprotected)\nPress Ctrl+C to stop.", standaloneWarning, dataListen)
+	return serveFetch(ctx, dir, listener, standaloneHandler(shop), serviceBinary, accountsBinary, nil, banner)
+}
+
+// serveFetch serves handler on listener and runs the services and Accounts
+// with the files in dir (on host's address when host is not nil) until ctx
+// ends; the server stops last, after every child, mirroring demo run. Once
+// everything listens it lists the processes and prints banner.
+func serveFetch(ctx context.Context, dir string, listener net.Listener, handler http.Handler, serviceBinary, accountsBinary string, host *fetchHost, banner string) (runErr error) {
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
-	// The server stops last, after every child, mirroring demo run.
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -58,7 +67,7 @@ func runStandalone(ctx context.Context, dir string, shop fs.FS, serviceBinary, a
 
 	running := newChildren(dir, len(fetchServices))
 	defer func() { runErr = errors.Join(runErr, running.stop()) }()
-	addresses, err := running.startServices(dir, serviceBinary, accountsBinary)
+	addresses, err := running.startServices(dir, serviceBinary, accountsBinary, host)
 	if err != nil {
 		return err
 	}
@@ -68,9 +77,8 @@ func runStandalone(ctx context.Context, dir string, shop fs.FS, serviceBinary, a
 		}
 		return err
 	}
-	fmt.Println(standaloneWarning)
 	running.printProcesses()
-	fmt.Printf("\nShop: http://%s/  (unprotected)\nPress Ctrl+C to stop.\n", dataListen)
+	fmt.Println(banner)
 	for {
 		select {
 		case <-ctx.Done():
@@ -152,7 +160,7 @@ func copyIdentity(r *http.Request) {
 // the shop from this repository, makes a new standalone directory in home
 // and runs everything until interrupted. APIWard is neither needed nor built.
 func upStandalone(home string, stdin bool) error {
-	if err := checkPortsFree(); err != nil {
+	if err := checkFree(localAddresses()); err != nil {
 		return err
 	}
 	fetch, err := fetchRepository()
@@ -168,29 +176,41 @@ func upStandalone(home string, stdin bool) error {
 		return err
 	}
 	dir := filepath.Join(home, "standalone")
-	if err := prepareStandalone(dir); err != nil {
+	files, err := serviceFiles(dir)
+	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	if err := prepareFolder(dir, files); err != nil {
+		return err
+	}
+	ctx, stop := stopContext(stdin)
 	defer stop()
+	return runStandalone(ctx, dir, os.DirFS(shop), services, accounts)
+}
+
+// stopContext ends on an interrupt or SIGTERM and, with stdin, also when
+// standard input closes. The caller calls stop when done.
+func stopContext(stdin bool) (ctx context.Context, stop context.CancelFunc) {
+	ctx, stop = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	if stdin {
 		go func() {
 			io.Copy(io.Discard, stdinLines)
 			stop()
 		}()
 	}
-	return runStandalone(ctx, dir, os.DirFS(shop), services, accounts)
+	return ctx, stop
 }
 
-// prepareStandalone makes a new private directory for one standalone run,
-// replacing the previous run's: the service secret and a new signing key.
-func prepareStandalone(dir string) error {
-	// Only a folder this mode made, which holds its secret and signing
+// prepareFolder makes dir a new private folder holding files for one run of
+// the services, replacing the previous run's folder: the service secret and
+// the signing settings.
+func prepareFolder(dir string, files map[string][]byte) error {
+	// Only a folder such a run made, which holds its secret and signing
 	// settings, is replaced; anything else in its place is left alone.
 	if _, err := os.Stat(dir); err == nil {
 		for _, name := range []string{secretFile, signingFile} {
 			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
-				return fmt.Errorf("not replacing %s: it is not a standalone demonstration folder", dir)
+				return fmt.Errorf("not replacing %s: it is not a folder this command made", dir)
 			}
 		}
 		if err := os.RemoveAll(dir); err != nil {
@@ -198,11 +218,7 @@ func prepareStandalone(dir string) error {
 		}
 	}
 	if err := privateDirectory(dir); err != nil {
-		return fmt.Errorf("creating the standalone directory: %w", err)
-	}
-	files, err := serviceFiles(dir)
-	if err != nil {
-		return err
+		return fmt.Errorf("creating %s: %w", dir, err)
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), content, 0o600); err != nil {

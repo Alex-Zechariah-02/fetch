@@ -7,10 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/Alex-Zechariah-02/fetch/internal/services"
 )
 
 // processExit is one child's exit.
@@ -96,14 +99,30 @@ func (c *children) stop() error {
 	return stopErr
 }
 
+// fetchHost is how the Fetch host of a two-host setup serves the APIs,
+// Accounts and the shop: on the address bind, over TLS that admits only the
+// gateway's client certificate.
+type fetchHost struct {
+	bind    netip.Addr
+	ingress services.Ingress
+}
+
 // startServices starts the four Fetch APIs and Accounts with the secret and
-// signing settings in dir, and returns every address they listen on.
-func (c *children) startServices(dir, serviceBinary, accountsBinary string) ([]string, error) {
+// signing settings in dir, on this machine's loopback addresses or, with host,
+// on the Fetch host's address, and returns every address they listen on. The
+// calls between services stay on loopback either way.
+func (c *children) startServices(dir, serviceBinary, accountsBinary string, host *fetchHost) ([]string, error) {
 	secret := filepath.Join(dir, secretFile)
 	var addresses []string
 	for _, f := range fetchServices {
 		binary := serviceBinary
-		args := []string{"-listen", f.listen, "-control", f.control, "-secret-file", secret}
+		listen := f.listen
+		args := []string{"-control", f.control, "-secret-file", secret}
+		if host != nil {
+			listen = deployedAddress(f.listen, host.bind)
+			args = append(args, "-tls-cert", host.ingress.Certificate, "-tls-key", host.ingress.Key, "-client-ca", host.ingress.ClientCA)
+		}
+		args = append(args, "-listen", listen)
 		switch f.name {
 		case "accounts":
 			binary = accountsBinary
@@ -118,7 +137,7 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string) ([]s
 		if _, err := c.start(f.name, binary, args...); err != nil {
 			return nil, err
 		}
-		addresses = append(addresses, f.listen, f.control)
+		addresses = append(addresses, listen, f.control)
 	}
 	return addresses, nil
 }

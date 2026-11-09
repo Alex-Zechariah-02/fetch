@@ -1,3 +1,7 @@
+// Recognition of a demonstration directory left by the setup before Fetch:
+// only an identified, unused bootstrap is locked, checked read-only and
+// preserved aside so demo up can create a new one in its place.
+
 package main
 
 import (

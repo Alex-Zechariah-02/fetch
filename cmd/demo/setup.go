@@ -10,7 +10,6 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -51,14 +50,27 @@ func setup(args []string) (err error) {
 	return nil
 }
 
-// createDemo does setup's work. The gateway's install output, which holds
-// the enrolment secret, goes to out.
-func createDemo(dir, webDir, gateway, admin string, out io.Writer) (err error) {
+// createDemo does setup's work for one machine. The gateway's install output,
+// which holds the enrolment secret, goes to out.
+func createDemo(dir, webDir, gateway, admin string, out io.Writer) error {
 	for _, page := range []string{"admin", "demo"} {
 		if _, err := os.Stat(filepath.Join(webDir, page, "index.html")); err != nil {
 			return fmt.Errorf("-web %s has no %s/index.html: build the frontend first", webDir, page)
 		}
 	}
+	files, err := serviceFiles(dir)
+	if err != nil {
+		return err
+	}
+	files[configFile] = indented(gatewayConfig(dir, webDir))
+	return createState(dir, files, baselinePolicy(), gateway, admin, out)
+}
+
+// createState makes the new private directory dir holding files, the
+// baseline and deny-all documents and the identity, then runs the gateway's
+// install. An existing directory is never reused, and a failure removes the
+// directory, private keys included, so setup can simply run again.
+func createState(dir string, files map[string][]byte, baseline map[string]any, gateway, admin string, out io.Writer) (err error) {
 	if err := privateDirectory(dir); err != nil {
 		return fmt.Errorf("creating a new demonstration directory: %w", err)
 	}
@@ -67,13 +79,6 @@ func createDemo(dir, webDir, gateway, admin string, out io.Writer) (err error) {
 			os.RemoveAll(dir)
 		}
 	}()
-
-	files, err := serviceFiles(dir)
-	if err != nil {
-		return err
-	}
-	baseline := baselinePolicy()
-	files[configFile] = indented(gatewayConfig(dir, webDir))
 	files[baselineFile] = indented(baseline)
 	files[denyAllFile] = indented(denyAll(baseline))
 	for name, content := range files {
@@ -81,11 +86,9 @@ func createDemo(dir, webDir, gateway, admin string, out io.Writer) (err error) {
 			return err
 		}
 	}
-
 	if err := identifyDemo(dir); err != nil {
 		return err
 	}
-
 	install := exec.Command(gateway, "install", "--config", filepath.Join(dir, configFile), "--admin", admin)
 	install.Stdout, install.Stderr = out, os.Stderr
 	if err := install.Run(); err != nil {
@@ -94,29 +97,52 @@ func createDemo(dir, webDir, gateway, admin string, out io.Writer) (err error) {
 	return nil
 }
 
+// localKid names the signing key of a one-machine demonstration.
+const localKid = "fetch-2026-10-a"
+
 // serviceFiles are the files the services and Accounts run with in dir: the
 // shared service secret and a new signing key pair with its settings.
 func serviceFiles(dir string) (map[string][]byte, error) {
+	private, public, err := signingKeys()
+	if err != nil {
+		return nil, err
+	}
+	return map[string][]byte{
+		privateKeyFile: private,
+		publicKeyFile:  public,
+		secretFile:     newSecret(),
+		signingFile:    signingSettings(localKid, filepath.Join(dir, privateKeyFile)),
+	}, nil
+}
+
+// signingKeys makes a new Accounts RS256 key pair: the private key as PKCS #8,
+// the public key as PKIX, both PEM.
+func signingKeys() (private, public []byte, err error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	private, err := x509.MarshalPKCS8PrivateKey(key)
+	privateDER, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	public, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	publicDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	return pemBlock("PRIVATE KEY", privateDER), pemBlock("PUBLIC KEY", publicDER), nil
+}
+
+// signingSettings is the Accounts settings file: the key ID and private key.
+func signingSettings(kid, privateKey string) []byte {
+	return indented(map[string]string{"kid": kid, "private_key_file": privateKey})
+}
+
+// newSecret is a new service and control secret, hex encoded.
+func newSecret() []byte {
 	secret := make([]byte, 32)
 	rand.Read(secret)
-	return map[string][]byte{
-		privateKeyFile: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}),
-		publicKeyFile:  pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public}),
-		secretFile:     []byte(hex.EncodeToString(secret)),
-		signingFile:    indented(map[string]string{"kid": "fetch-2026-10-a", "private_key_file": filepath.Join(dir, privateKeyFile)}),
-	}, nil
+	return []byte(hex.EncodeToString(secret))
 }
 
 func indented(value any) []byte {
@@ -127,9 +153,31 @@ func indented(value any) []byte {
 	return append(data, '\n')
 }
 
-// gatewayConfig names the native controller, data listener and proxy settings.
-// The native gateway validates this file before opening deployment state.
+// trustedKey is a public key the gateway verifies Accounts tokens with.
+type trustedKey struct {
+	Kid           string `json:"kid"`
+	PublicKeyFile string `json:"public_key_file"`
+}
+
+// gatewayConfig is the one-machine gateway settings: HTTP on the data
+// address and this directory's signing key.
 func gatewayConfig(dir, web string) map[string]any {
+	return gatewaySettings(dir, web, trustedKey{localKid, filepath.Join(dir, publicKeyFile)}, map[string]any{"listen": dataListen}, nil)
+}
+
+// gatewaySettings names the native controller, data listener and proxy
+// settings: data holds the data listener's own members and profiles the
+// upstream TLS profiles, if any. The native gateway validates this file
+// before opening deployment state.
+func gatewaySettings(dir, web string, key trustedKey, data map[string]any, profiles []tlsProfile) map[string]any {
+	data["max_body_bytes"] = 16384
+	data["read_header_timeout"] = "5s"
+	data["read_timeout"] = "10s"
+	data["write_timeout"] = "30s"
+	upstream := map[string]any{"dial_timeout": "2s", "response_header_timeout": "5s", "read_idle_timeout": "5s"}
+	if len(profiles) > 0 {
+		upstream["tls_profiles"] = profiles
+	}
 	return map[string]any{
 		"version": 1,
 		"gateway": map[string]any{
@@ -138,24 +186,10 @@ func gatewayConfig(dir, web string) map[string]any {
 			"admin_listen":   adminListen,
 			"metrics_listen": metricsListen,
 			"admin_ui":       filepath.Join(web, "admin"),
-			"jwt": map[string]any{
-				"issuer":   issuerName,
-				"audience": audience,
-				"keys":     []map[string]string{{"kid": "fetch-2026-10-a", "public_key_file": filepath.Join(dir, publicKeyFile)}},
-			},
+			"jwt":            map[string]any{"issuer": issuerName, "audience": audience, "keys": []trustedKey{key}},
 		},
-		"data": map[string]any{
-			"listen":              dataListen,
-			"max_body_bytes":      16384,
-			"read_header_timeout": "5s",
-			"read_timeout":        "10s",
-			"write_timeout":       "30s",
-		},
-		"upstream": map[string]any{
-			"dial_timeout":            "2s",
-			"response_header_timeout": "5s",
-			"read_idle_timeout":       "5s",
-		},
+		"data":     data,
+		"upstream": upstream,
 	}
 }
 

@@ -1,23 +1,20 @@
-// Demo up: the one-command local demonstration, from finding the sources and
-// asking for the administrator password to running everything until stopped.
+// Demo up: the one-command demonstration and its modes (one machine,
+// standalone, either host of a two-host setup), the sources it builds from,
+// and the administrator password prompts.
 
 package main
 
 import (
 	"bufio"
-	"bytes"
-	"context"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
-	"syscall"
 	"unicode/utf8"
 )
 
@@ -28,11 +25,9 @@ const upAdmin = "root"
 // Dashboard) and this Fetch repository (the services, Accounts and the shop).
 type sources struct{ apiward, fetch string }
 
-// up runs the whole local demonstration with one command. It builds the
-// gateway, the services and both websites from the current sources, creates
-// the demonstration the first time and then establishes its baseline policy
-// through the Admin API, prints the public demo accounts and runs everything until
-// interrupted. Later runs reuse the administrator and policy; services restart from seed.
+// up runs the demonstration with one command: on one machine by default,
+// with -standalone without a gateway, or as one host of a two-host setup
+// with -role.
 func up(args []string) error {
 	set := flag.NewFlagSet("up", flag.ContinueOnError)
 	home := set.String("home", defaultHome(), "folder for the built programs, websites and demonstration state")
@@ -40,6 +35,12 @@ func up(args []string) error {
 	stdin := set.Bool("stdin", false, "also stop when standard input closes")
 	apiward := set.String("apiward", "", "APIWard checkout that builds the gateway and the Dashboard (default: ../apiward beside this repository)")
 	standalone := set.Bool("standalone", false, "run the shop and services with no gateway: nothing is checked (unprotected)")
+	role := set.String("role", "", "run one host of a two-host setup: fetch (the shop, APIs and Accounts) or gateway (APIWard)")
+	bind := set.String("bind", "", "-role fetch: this host's IP address, which the gateway connects to")
+	fetch := set.String("fetch", "", "-role gateway: the Fetch host's IP address")
+	certs := set.String("certs", "", "-role: this host's folder from demo certs")
+	tlsCert := set.String("tls-cert", "", "-role gateway: the shop's certificate chain instead of the folder's data.pem, such as certbot's fullchain.pem")
+	tlsKey := set.String("tls-key", "", "-role gateway: the private key of -tls-cert")
 	if err := set.Parse(args); err != nil {
 		return err
 	}
@@ -50,113 +51,48 @@ func up(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *standalone {
+	switch {
+	case *standalone:
 		// The standalone mode has no gateway state to delete or build.
-		if *fresh || *apiward != "" {
-			return errors.New("-standalone runs no gateway: it takes neither -fresh nor -apiward")
+		if err := onlyFlags(set, "home", "stdin", "standalone"); err != nil {
+			return err
 		}
 		return upStandalone(homeDir, *stdin)
-	}
-	state := filepath.Join(homeDir, "state")
-	bin := filepath.Join(homeDir, "bin")
-	web := filepath.Join(homeDir, "web")
-
-	// A running demonstration holds the ports and its program files.
-	if err := checkPortsFree(); err != nil {
-		return err
-	}
-	source, err := findSources(*apiward)
-	if err != nil {
-		return err
-	}
-	if *fresh {
-		if err := removeState(state); err != nil {
+	case *role == "fetch":
+		if err := onlyFlags(set, "home", "stdin", "role", "bind", "certs"); err != nil {
 			return err
 		}
-	}
-	_, err = os.Stat(state)
-	firstRun := errors.Is(err, os.ErrNotExist)
-	if err != nil && !firstRun {
-		return err
-	}
-	earlierSetup := false
-	if !firstRun {
-		if err := checkDemo(state); err != nil {
-			lock, earlierErr := lockUnfinishedEarlierDemo(state)
-			if earlierErr != nil {
-				return errors.Join(err, earlierErr)
-			}
-			lock.Close()
-			firstRun, earlierSetup = true, true
-		}
-	}
-
-	// The password is chosen before anything is created, so stopping here
-	// leaves nothing half set up.
-	password := ""
-	if firstRun {
-		fmt.Println("First run: choose the password for the Dashboard administrator", upAdmin+".")
-		if password, err = choosePassword(); err != nil {
+		return upFetch(homeDir, *bind, *certs, *stdin)
+	case *role == "gateway":
+		if err := onlyFlags(set, "home", "fresh", "stdin", "apiward", "role", "fetch", "certs", "tls-cert", "tls-key"); err != nil {
 			return err
 		}
-	}
-
-	programs, err := buildPrograms(source, bin)
-	if err != nil {
-		return err
-	}
-	if err := buildWebsites(source, web); err != nil {
-		return err
-	}
-	secret := ""
-	if firstRun {
-		if earlierSetup {
-			preserved, err := preserveUnfinishedEarlierDemo(state)
-			if err != nil {
-				return err
-			}
-			fmt.Println("Preserved the unfinished earlier setup in", preserved)
-		}
-		var install bytes.Buffer
-		if err := createDemo(state, web, programs.gateway, upAdmin, &install); err != nil {
+		host, err := gatewayRole(homeDir, *fetch, *certs, *tlsCert, *tlsKey)
+		if err != nil {
 			return err
 		}
-		if secret, err = enrolmentSecret(install.String()); err != nil {
-			os.RemoveAll(state)
-			return err
-		}
+		return host.up(*apiward, *fresh, *stdin)
+	case *role != "":
+		return errors.New("-role is fetch or gateway")
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	running, cancel := context.WithCancel(ctx)
-	defer cancel()
-	ready := make(chan struct{})
-	finished := make(chan error, 1)
-	go func() {
-		finished <- runDemo(running, state, web, programs.gateway, programs.services, programs.accounts, func() { close(ready) })
-	}()
-	select {
-	case <-ready:
-	case err := <-finished:
+	if err := onlyFlags(set, "home", "fresh", "stdin", "apiward"); err != nil {
 		return err
 	}
+	return localHost(homeDir).up(*apiward, *fresh, *stdin)
+}
 
-	if err := prepareGateway(state, firstRun, secret, password); err != nil {
-		cancel()
-		return errors.Join(err, <-finished)
+// onlyFlags refuses every flag given that is not one of names.
+func onlyFlags(set *flag.FlagSet, names ...string) error {
+	var extra []string
+	set.Visit(func(f *flag.Flag) {
+		if !slices.Contains(names, f.Name) {
+			extra = append(extra, "-"+f.Name)
+		}
+	})
+	if len(extra) > 0 {
+		return fmt.Errorf("this mode does not take %s\n%s", strings.Join(extra, ", "), usage)
 	}
-	printSignIns()
-	fmt.Printf("\nDashboard: http://%s/  (sign in as %s)\nShop:      http://%s/\nPress Ctrl+C to stop.\n", adminListen, upAdmin, dataListen)
-	if *stdin {
-		// Every password prompt is answered; the rest of the input only
-		// signals the stop.
-		go func() {
-			io.Copy(io.Discard, stdinLines)
-			stop()
-		}()
-	}
-	return <-finished
+	return nil
 }
 
 func defaultHome() string {

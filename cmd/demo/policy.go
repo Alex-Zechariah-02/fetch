@@ -1,6 +1,13 @@
+// The demonstration's baseline policy: every Fetch operation with its roles,
+// rate and body rules, the shop's public pages and the upstreams, on this
+// machine or, for a gateway host, on the Fetch host over TLS.
+
 package main
 
-import "strings"
+import (
+	"net/netip"
+	"strings"
+)
 
 type fetchOperation struct {
 	id, api, method, target, roles string
@@ -120,4 +127,27 @@ func baselinePolicy() map[string]any {
 		roles = append(roles, map[string]any{"id": role})
 	}
 	return map[string]any{"schema_version": 4, "profile": "core", "upstreams": upstreams, "apis": apis, "operations": operations, "roles": roles, "permits": permits}
+}
+
+// fetchProfile is the gateway's TLS profile for the Fetch host: the CA that
+// issued Fetch's certificate and the client certificate Fetch admits.
+const fetchProfile = "fetch"
+
+// deployedBaseline is the baseline for a gateway host: every upstream is the
+// same port on the Fetch host at fetch, reached over TLS with fetchProfile.
+func deployedBaseline(fetch netip.Addr) map[string]any {
+	policy := baselinePolicy()
+	policy["schema_version"] = 5
+	for _, upstream := range policy["upstreams"].([]map[string]any) {
+		address := deployedAddress(upstream["dial"].(string), fetch)
+		delete(upstream, "dial")
+		upstream["url"], upstream["tls"] = "https://"+address, fetchProfile
+	}
+	return policy
+}
+
+// deployedAddress is the address at host with the port of the local
+// address listen.
+func deployedAddress(listen string, host netip.Addr) string {
+	return netip.AddrPortFrom(host, netip.MustParseAddrPort(listen).Port()).String()
 }

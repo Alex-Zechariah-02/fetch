@@ -1,3 +1,6 @@
+// The command line of one Fetch service or Accounts: its addresses, secret,
+// signing settings, internal call origins and the API's TLS files.
+
 package services
 
 import (
@@ -20,8 +23,12 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	if fixedName == "" {
 		flags.StringVar(&name, "service", "", "inventory, orders, reports or support")
 	}
-	listen := flags.String("listen", "", "API loopback address")
+	listen := flags.String("listen", "", "API address: loopback, or another literal IP address with the three TLS settings")
 	control := flags.String("control", "", "control loopback address")
+	var ingress Ingress
+	flags.StringVar(&ingress.Certificate, "tls-cert", "", "API certificate chain (PEM)")
+	flags.StringVar(&ingress.Key, "tls-key", "", "API private key (PEM)")
+	flags.StringVar(&ingress.ClientCA, "client-ca", "", "CA certificate (PEM) of the only client certificates the API admits: the gateway's")
 	secretFile := flags.String("secret-file", "", "service/control secret file")
 	inventoryURL := flags.String("inventory", "", "Inventory internal HTTP origin")
 	ordersURL := flags.String("orders", "", "Orders internal HTTP origin")
@@ -77,6 +84,10 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(output, "starting %s; api %s; control %s\n", name, *listen, *control)
-	return Run(ctx, service, *listen, *control, secret)
+	transport := "HTTP"
+	if ingress != (Ingress{}) {
+		transport = "TLS, client certificate required"
+	}
+	fmt.Fprintf(output, "starting %s; api %s (%s); control %s\n", name, *listen, transport, *control)
+	return Run(ctx, service, *listen, *control, secret, ingress)
 }

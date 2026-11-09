@@ -4,11 +4,7 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -87,24 +83,16 @@ func changeKeys(dir string, admin *adminClient, action, kid string) (string, err
 	switch action {
 	case "rotate":
 		kid = "fetch-" + time.Now().UTC().Format("20060102T150405") + "-" + newKey()[:8]
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			return "", err
-		}
-		private, err := x509.MarshalPKCS8PrivateKey(key)
-		if err != nil {
-			return "", err
-		}
-		public, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+		private, public, err := signingKeys()
 		if err != nil {
 			return "", err
 		}
 		newPrivate = filepath.Join(dir, kid+"-key.pem")
 		publicPath := filepath.Join(dir, kid+".pem")
-		if err := writeNewFile(newPrivate, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})); err != nil {
+		if err := writeNewFile(newPrivate, private); err != nil {
 			return "", err
 		}
-		if err := writeNewFile(publicPath, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public})); err != nil {
+		if err := writeNewFile(publicPath, public); err != nil {
 			return "", err
 		}
 		trusted = append(trusted, map[string]any{"kid": kid, "public_key_file": publicPath})
@@ -142,8 +130,7 @@ func changeKeys(dir string, admin *adminClient, action, kid string) (string, err
 		return "", fmt.Errorf("settings written; key reload was not confirmed, Accounts signing is unchanged; inspect /admin/keys before continuing: %w", err)
 	}
 	if action == "rotate" {
-		settings := map[string]string{"kid": kid, "private_key_file": newPrivate}
-		if err := replaceOperatorFile(filepath.Join(dir, signingFile), indented(settings)); err != nil {
+		if err := replaceOperatorFile(filepath.Join(dir, signingFile), signingSettings(kid, newPrivate)); err != nil {
 			return "", fmt.Errorf("gateway trusts new key but Accounts did not switch: %w", err)
 		}
 	}

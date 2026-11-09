@@ -1,3 +1,7 @@
+// The demonstration directory's identity, which binds state-changing demo
+// commands to the directory and files setup made, and the gateway's startup
+// observation read from its log.
+
 package main
 
 import (
@@ -32,12 +36,23 @@ func demoDigest(path string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// secretDigest is the digest of dir's service secret, or "" for a gateway
+// host's directory, which holds none: the identity binds the secret's absence
+// as firmly as its content.
+func secretDigest(dir string) (string, error) {
+	digest, err := demoDigest(filepath.Join(dir, secretFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	return digest, err
+}
+
 func identifyDemo(dir string) error {
 	config, err := demoDigest(filepath.Join(dir, configFile))
 	if err != nil {
 		return err
 	}
-	secret, err := demoDigest(filepath.Join(dir, secretFile))
+	secret, err := secretDigest(dir)
 	if err != nil {
 		return err
 	}
@@ -79,7 +94,7 @@ func checkDemo(dir string) error {
 	if err != nil {
 		return err
 	}
-	secret, err := demoDigest(filepath.Join(dir, secretFile))
+	secret, err := secretDigest(dir)
 	if err != nil {
 		return err
 	}

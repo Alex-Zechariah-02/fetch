@@ -131,7 +131,7 @@ func TestServiceControlKeyBound(t *testing.T) {
 	s, _ := New(Config{Name: "inventory", Secret: testSecret})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", nil); err == nil {
+	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", nil, Ingress{}); err == nil {
 		t.Fatal("an empty control credential was accepted")
 	}
 }

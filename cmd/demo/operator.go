@@ -6,6 +6,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -49,33 +52,54 @@ func loginWithClient(client *http.Client, origin, email string) (string, time.Ti
 	return reply.Token, reply.Expires, nil
 }
 
+// attack sends one scenario's requests to the demonstration's gateway from
+// another loopback source address, or with -target to a gateway on another
+// host from this machine's own address, and prints the answers by status.
 func attack(args []string) error {
 	set := flag.NewFlagSet("attack", flag.ContinueOnError)
 	scenario := set.String("scenario", "", "flood-search, flood-login or flood-orders")
-	from := set.String("from", "127.0.0.50", "source IPv4 loopback address")
+	from := set.String("from", "127.0.0.50", "source IPv4 loopback address, on the demonstration's machine")
+	dir := set.String("dir", "", "demonstration directory, on the demonstration's machine")
+	target := set.String("target", "", "a gateway on another host: its shop origin, such as https://203.0.113.10:9480")
+	ca := set.String("ca", "", "with -target: CA certificate (PEM) the gateway's certificate is checked against (default: the system's)")
 	count := set.Int("count", 100, "number of requests (1 to 10000)")
-	dir, err := parse(set, args)
-	if err != nil {
+	if err := set.Parse(args); err != nil {
 		return err
+	}
+	if set.NArg() != 0 {
+		return errors.New("attack takes no arguments\n" + usage)
 	}
 	if *scenario != "flood-search" && *scenario != "flood-login" && *scenario != "flood-orders" {
 		return errors.New("choose flood-search, flood-login or flood-orders")
 	}
-	address, err := netip.ParseAddr(*from)
-	if err != nil || !address.Is4() || !address.IsLoopback() || *count < 1 || *count > 10000 {
-		return errors.New("use an IPv4 loopback source and count from 1 to 10000")
+	if *count < 1 || *count > 10000 {
+		return errors.New("use a count from 1 to 10000")
 	}
-	if err := checkDemo(dir); err != nil {
+	var client *http.Client
+	var origin, source string
+	var err error
+	if *target != "" {
+		if err := onlyFlags(set, "scenario", "count", "target", "ca"); err != nil {
+			return err
+		}
+		origin, client, err = remoteClient(*target, *ca)
+		source = "target=" + origin
+	} else {
+		if err := onlyFlags(set, "scenario", "count", "from", "dir"); err != nil {
+			return err
+		}
+		origin, source = "http://"+dataListen, "from="+*from
+		client, err = localClient(*from, *dir)
+	}
+	if err != nil {
 		return err
 	}
-	dialer := &net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IP(address.AsSlice())}, Timeout: 2 * time.Second}
-	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: dialer.DialContext}, CheckRedirect: refuseRedirect}
 	defer client.CloseIdleConnections()
 	token := ""
 	if *scenario == "flood-orders" {
 		// This limit is per account: a different source address alone would
 		// still consume Customer 1's checkout budget.
-		token, _, err = loginWithClient(client, "http://"+dataListen, "customer2@fetch.test")
+		token, _, err = loginWithClient(client, origin, "customer2@fetch.test")
 		if err != nil {
 			return err
 		}
@@ -92,7 +116,7 @@ func attack(args []string) error {
 		case "flood-orders":
 			method, path, body = "POST", "/orders", marshal(map[string]any{"merchant": "MER-001", "items": []map[string]any{{"item": "ITM-001", "quantity": 1}}, "address": map[string]string{"line1": "12 Jalan Telawi 3", "postcode": "59100", "city": "Kuala Lumpur", "state": "Wilayah Persekutuan Kuala Lumpur"}, "payment": "cash"})
 		}
-		request, _ := http.NewRequestWithContext(ctx, method, "http://"+dataListen+path, bytes.NewReader(body))
+		request, _ := http.NewRequestWithContext(ctx, method, origin+path, bytes.NewReader(body))
 		request.GetBody = nil // A write without an answer is never retried by the transport.
 		if body != nil {
 			request.Header.Set("Content-Type", "application/json")
@@ -103,7 +127,7 @@ func attack(args []string) error {
 		}
 		response, err := client.Do(request)
 		if err != nil {
-			fmt.Printf("scenario=%s from=%s responses=%v elapsed=%s; stopped with an unknown request outcome\n", *scenario, *from, counts, time.Since(start).Round(time.Millisecond))
+			fmt.Printf("scenario=%s %s responses=%v elapsed=%s; stopped with an unknown request outcome\n", *scenario, source, counts, time.Since(start).Round(time.Millisecond))
 			return err
 		}
 		_, readErr := io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
@@ -113,8 +137,52 @@ func attack(args []string) error {
 		}
 		counts[response.StatusCode]++
 	}
-	fmt.Printf("scenario=%s from=%s requests=%d responses=%v elapsed=%s\n", *scenario, *from, *count, counts, time.Since(start).Round(time.Millisecond))
+	fmt.Printf("scenario=%s %s requests=%d responses=%v elapsed=%s\n", *scenario, source, *count, counts, time.Since(start).Round(time.Millisecond))
 	return nil
+}
+
+// localClient sends from the IPv4 loopback address from, on the machine of
+// the demonstration in dir.
+func localClient(from, dir string) (*http.Client, error) {
+	address, err := netip.ParseAddr(from)
+	if err != nil || !address.Is4() || !address.IsLoopback() {
+		return nil, errors.New("use an IPv4 loopback source")
+	}
+	if dir == "" {
+		return nil, errors.New("-dir is required without -target\n" + usage)
+	}
+	if dir, err = filepath.Abs(dir); err != nil {
+		return nil, err
+	}
+	if err := checkDemo(dir); err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IP(address.AsSlice())}, Timeout: 2 * time.Second}
+	return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: dialer.DialContext}, CheckRedirect: refuseRedirect}, nil
+}
+
+// remoteClient checks target, a gateway's https origin, and returns it
+// without a trailing slash with a client that checks the gateway's
+// certificate against the CA file at ca, or the system's roots.
+func remoteClient(target, ca string) (string, *http.Client, error) {
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", nil, errors.New("-target is a gateway's https origin, such as https://203.0.113.10:9480")
+	}
+	config := &tls.Config{MinVersion: tls.VersionTLS12}
+	if ca != "" {
+		data, err := os.ReadFile(ca)
+		if err != nil {
+			return "", nil, err
+		}
+		config.RootCAs = x509.NewCertPool()
+		if !config.RootCAs.AppendCertsFromPEM(data) {
+			return "", nil, fmt.Errorf("%s holds no CA certificate", ca)
+		}
+	}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: config}, CheckRedirect: refuseRedirect}
+	return "https://" + parsed.Host, client, nil
 }
 
 func operatorSession(dir string) (*adminClient, error) {

@@ -1,3 +1,7 @@
+// The client of the calls between services (Orders to Inventory, Reports to
+// Orders): a loopback HTTP origin, the service key on every call, bounded
+// time and answer size, and no redirects.
+
 package services
 
 import (

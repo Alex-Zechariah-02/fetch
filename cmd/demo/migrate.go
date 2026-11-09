@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"maps"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,18 +26,31 @@ func migrate(args []string) error {
 	set := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	apiward := set.String("apiward", "", "APIWard checkout that builds the gateway (default: ../apiward beside this repository)")
 	out := set.String("out", "", "new policy file to write")
+	specs := set.String("openapi", "", "folder of the <service>.openapi.yaml descriptions (default: this repository's openapi folder)")
+	fetchIP := set.String("fetch", "", "for a gateway host of a two-host setup: the Fetch host's IP address")
 	if err := set.Parse(args); err != nil {
 		return err
 	}
 	if set.NArg() != 0 || *out == "" {
-		return errors.New("migrate takes -out and optionally -apiward\n" + usage)
+		return errors.New("migrate takes -out and optionally -apiward, -openapi and -fetch\n" + usage)
 	}
 	if _, err := os.Lstat(*out); !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("%s already exists; name a new file", *out)
 	}
+	baseline, state := baselinePolicy(), "<home>/state"
+	if *fetchIP != "" {
+		fetch, err := netip.ParseAddr(*fetchIP)
+		if err != nil || fetch.IsUnspecified() {
+			return errors.New("-fetch must be the Fetch host's IP address")
+		}
+		baseline, state = deployedBaseline(fetch), "<home>/gateway"
+	}
 	source, err := findSources(*apiward)
 	if err != nil {
 		return err
+	}
+	if *specs == "" {
+		*specs = filepath.Join(source.fetch, "openapi")
 	}
 	work, err := os.MkdirTemp("", "fetch-migrate-")
 	if err != nil {
@@ -49,7 +63,7 @@ func migrate(args []string) error {
 	if log, err := build.CombinedOutput(); err != nil {
 		return fmt.Errorf("building the gateway: %w\n%s", err, log)
 	}
-	result, err := importDescriptions(gateway, filepath.Join(source.fetch, "openapi"), work)
+	result, err := importDescriptions(gateway, *specs, baseline, work)
 	if err != nil {
 		return err
 	}
@@ -60,17 +74,17 @@ func migrate(args []string) error {
 	if err := os.WriteFile(*out, data, 0o600); err != nil {
 		return err
 	}
-	fmt.Printf("Wrote %s. Stage it with: go run ./cmd/demo policy stage -dir <home>/state -file %s\n", *out, *out)
+	fmt.Printf("Wrote %s. Stage it with: go run ./cmd/demo policy stage -dir %s -file %s\n", *out, state, *out)
 	fmt.Println("Then, in the Dashboard, give each operation its roles and rate limit, review the change and confirm it.")
 	return nil
 }
 
 // importDescriptions imports the description of every Fetch API in specs onto
-// the migration base, in work, and returns the final policy file. Each step's
-// report stays in work; a refused operation stops the migration.
-func importDescriptions(gateway, specs, work string) (string, error) {
+// the migration base of baseline, in work, and returns the final policy file.
+// Each step's report stays in work; a refused operation stops the migration.
+func importDescriptions(gateway, specs string, baseline map[string]any, work string) (string, error) {
 	current := filepath.Join(work, "base.json")
-	if err := os.WriteFile(current, indented(migrationBase(baselinePolicy())), 0o600); err != nil {
+	if err := os.WriteFile(current, indented(migrationBase(baseline)), 0o600); err != nil {
 		return "", err
 	}
 	for _, service := range fetchServices {

@@ -1,5 +1,6 @@
-// Command demo prepares and runs the local demonstration of the gateway. It
-// writes private demonstration configuration, runs Fetch Accounts, the four
+// Command demo prepares and runs the demonstration of the gateway, on one
+// machine or on two hosts (Fetch and the gateway). It writes private
+// demonstration configuration and certificates, runs Fetch Accounts, the four
 // business APIs and the gateway, resets synthetic data and prints security
 // events. Policy and key commands use the protected Admin API as the signed-in
 // operator. Application tokens are issued only by Fetch Accounts.
@@ -83,12 +84,16 @@ const (
 const usage = `usage:
   demo up     [-home H] [-fresh] [-stdin] [-apiward DIR]
   demo up     -standalone [-home H] [-stdin]   (no gateway: unprotected)
-  demo migrate -out F [-apiward DIR]
+  demo certs  -out DIR -fetch IP -gateway NAME[,NAME]   (files for two hosts)
+  demo up     -role fetch -bind IP -certs DIR [-home H] [-stdin]
+  demo up     -role gateway -fetch IP -certs DIR [-tls-cert F -tls-key F] [-home H] [-fresh] [-stdin] [-apiward DIR]
+  demo migrate -out F [-apiward DIR] [-openapi DIR] [-fetch IP]
   demo setup  -dir D -web W -gateway G [-admin NAME]
   demo run    -dir D -web W -gateway G -services S -accounts A [-stdin]
   demo token  -dir D -subject ID [-ttl 15m]
   demo reset  -dir D
   demo attack -dir D -scenario flood-search|flood-login|flood-orders [-from 127.0.0.50] [-count N]
+  demo attack -target https://HOST:PORT -scenario ... [-ca F] [-count N]
   demo keys rotate -dir D
   demo keys retire -dir D -kid K
   demo policy export -dir D -out F
@@ -106,6 +111,7 @@ func main() {
 	}
 	commands := map[string]func([]string) error{
 		"up":      up,
+		"certs":   certs,
 		"migrate": migrate,
 		"setup":   setup,
 		"run":     run,

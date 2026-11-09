@@ -6,7 +6,7 @@ Behind APIWard, the shop is reached only through the gateway: its pages and asse
 
 ## Layout
 
-- `cmd/services -service inventory|orders|reports|support -secret-file <service.secret>` runs a Fetch business API, with independent authenticated receipts, state and reset. Defaults honor `EAT_PORT_OFFSET`; `-listen` and `-control` select explicit loopback addresses. Orders uses `-inventory <http-origin>` and Reports uses `-orders <http-origin>` for authenticated internal calls.
+- `cmd/services -service inventory|orders|reports|support -secret-file <service.secret>` runs a Fetch business API, with independent authenticated receipts, state and reset. Defaults honor `EAT_PORT_OFFSET`; `-listen` and `-control` select explicit loopback addresses. Orders uses `-inventory <http-origin>` and Reports uses `-orders <http-origin>` for authenticated internal calls. With `-tls-cert`, `-tls-key` and `-client-ca` (all three, or none) the API serves TLS and admits only clients presenting a certificate issued by that CA; only then may `-listen` name an address other than loopback. Inventory and Orders then also answer their `/internal/` endpoints, and nothing else, on `127.0.0.1` at the same port, where the other services' calls arrive. The control listener is always loopback. Accounts takes the same TLS flags.
 - `cmd/accounts -secret-file <service.secret> -signing-settings <accounts.json>` runs Fetch Accounts. Signing settings contain `kid` and an absolute `private_key_file`. Only Accounts signs application tokens, which last 15 minutes. Account and signing secrets stay in the private demonstration state.
 - `cmd/demo` builds, sets up and runs the full local stack with `up`. `setup` writes `gateway.json`, complete baseline and deny-all policies, `service.secret`, a signing key pair and `accounts.json` into a new identified private directory, then installs the first administrator. `run` starts the five services and the gateway, serves the shop's built files on the website upstream, reports protected admission separately from listening, and stops its own children gracefully. `token` is an optional client of Accounts for a seeded subject; it cannot change the fixed 15-minute lifetime. `reset` restores every service's seed and clears its receipts. `events` prints request events from the gateway's active audit file; retained rotated files are not searched.
 - `cmd/measure -samples 30 -account cust-001` collects preliminary paired wallet latency against an isolated running stack, directly and through the gateway. It honors `EAT_PORT_OFFSET`, keeps credentials out of output, checks equivalent successful responses, and emits raw observations and aggregate JSON.
@@ -56,7 +56,21 @@ go run ./cmd/demo migrate -out <new-policy-file>
 go run ./cmd/demo policy stage -dir <home>/state -file <new-policy-file>
 ```
 
-`migrate` builds the gateway from the APIWard checkout and runs `gateway policy import-openapi` once per API, onto a base that holds the services' addresses, the roles and the shop's pages, and writes one policy file; it stops if any endpoint is refused. Staging saves it as a draft change in the running gateway; in the Dashboard, give each endpoint its roles and rate limit, put the change on trial and keep it. On a gateway elsewhere, copy the descriptions there and run `gateway policy import-openapi` directly; it reads only the files it is given.
+`migrate` builds the gateway from the APIWard checkout and runs `gateway policy import-openapi` once per API, onto a base that holds the services' addresses, the roles and the shop's pages, and writes one policy file; it stops if any endpoint is refused. Staging saves it as a draft change in the running gateway; in the Dashboard, give each endpoint its roles and rate limit, put the change on trial and keep it. `-openapi <folder>` reads the descriptions from another folder, such as a copy from the Fetch host; `-fetch <ip>` builds onto a gateway host's base, whose services are on the Fetch host over TLS (see Two hosts), and the file is then staged with `-dir <home>/gateway`. On any other gateway, copy the descriptions there and run `gateway policy import-openapi` directly; it reads only the files it is given.
+
+## Two hosts
+
+Fetch and the gateway can run on separate machines: the Fetch host serves the shop, the four APIs and Accounts on one network address over TLS, admitting only the gateway's client certificate; the gateway host runs APIWard, which reaches them with that certificate and serves the shop over HTTPS. Browsers reach only the gateway.
+
+```
+go run ./cmd/demo certs -out <new-folder> -fetch <fetch-ip> -gateway <gateway-name-or-ip>[,...]
+go run ./cmd/demo up -role fetch -bind <fetch-ip> -certs <folder>/fetch                (on the Fetch host)
+go run ./cmd/demo up -role gateway -fetch <fetch-ip> -certs <folder>/gateway           (on the gateway host)
+```
+
+`certs` writes two folders. `fetch` holds a new private CA's certificate, Fetch's server certificate for `<fetch-ip>` and the private key Accounts signs with; `gateway` holds the CA certificate, the gateway's client certificate, its certificate for the shop's names and the Accounts public key, which is how the gateway learns which tokens to trust. The CA's key is never written, so nothing else can be issued from it; the certificates last 30 days, and running `certs` again replaces both folders. Copy each folder to its host only.
+
+On the Fetch host, the APIs and Accounts listen on `<fetch-ip>` ports 9501 to 9505 and the shop on 9506; the control listeners and the calls between services stay on `127.0.0.1`. Every run starts from seed with a new service secret. On the gateway host, the shop and APIs are at `https://<gateway-name>:9480/` on every interface, while the Dashboard (`127.0.0.1:9440`) and metrics (`127.0.0.1:9450`) stay on loopback: reach the Dashboard through an SSH tunnel (`ssh -N -L 9440:127.0.0.1:9440 <user>@<gateway-host>`, then `http://127.0.0.1:9440/`). The first gateway run asks for the administrator password and establishes the baseline, whose services are `https://<fetch-ip>:<port>` with the client certificate; later runs reuse it (`-fresh` starts over). `-tls-cert` and `-tls-key` on the first run serve a public certificate, such as certbot's files, instead of the private one. With the private CA, browsers warn unless its `ca.pem` is trusted. `EAT_PORT_OFFSET` applies on both hosts. `deploy/README.md` describes firewall rules and running both hosts as systemd services on Linux.
 
 ## Demonstration commands
 
@@ -73,6 +87,8 @@ go run ./cmd/demo policy export -dir <home>/state -out <new-policy-file>
 go run ./cmd/demo policy stage -dir <home>/state -file <policy-file>
 go run ./cmd/demo events -dir <home>/state -last 20
 ```
+
+`attack -target https://<gateway-name>:9480 -scenario ... [-ca <folder>/gateway/ca.pem]` sends the same traffic to a gateway on another host from this machine's own address, checking the gateway's certificate against the CA file or the system's roots; it needs no `-dir`.
 
 The order flood signs in as Customer 2 (`cust-002`), keeping Customer 1's (`cust-001`) checkout quota separate. It creates real demonstration cash orders until limited; reset the demo afterwards. Different source addresses isolate the public search and login quotas.
 

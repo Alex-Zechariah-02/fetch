@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/Alex-Zechariah-02/fetch/internal/services"
 )
 
 // run starts the five Fetch services and the gateway, reports when all of them
@@ -55,14 +57,14 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 	if err := checkDemo(dir); err != nil {
 		return err
 	}
-	if err := checkPortsFree(); err != nil {
+	if err := checkFree(localAddresses()); err != nil {
 		return err
 	}
 	shop := filepath.Join(web, "demo")
 	if _, err := os.Stat(filepath.Join(shop, "index.html")); err != nil {
 		return fmt.Errorf("-web %s has no demo/index.html: build the shop first", web)
 	}
-	siteListener, err := net.Listen("tcp", siteListen)
+	siteListener, err := services.Listen(siteListen, services.Ingress{})
 	if err != nil {
 		return fmt.Errorf("the website address: %w", err)
 	}
@@ -80,18 +82,27 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 
 	running := newChildren(dir, len(fetchServices)+1)
 	defer func() { runErr = errors.Join(runErr, running.stop()) }()
-	addresses, err := running.startServices(dir, serviceBinary, accountsBinary)
+	addresses, err := running.startServices(dir, serviceBinary, accountsBinary, nil)
 	if err != nil {
 		return err
 	}
-	gatewayLogStart, err := running.start("gateway", gateway, "run", "--config", filepath.Join(dir, configFile))
+	shopURL := fmt.Sprintf("http://%s/ (served from %s through the gateway)", dataListen, siteListen)
+	return running.runGateway(ctx, gateway, addresses, siteDone, shopURL, ready)
+}
+
+// runGateway starts the gateway with the settings in the children's
+// directory, waits until it and every one of addresses listen and the gateway
+// reports its admission, calls ready (if not nil), and then supervises until
+// ctx ends, the gateway exits or the website stops (siteDone, nil when this
+// host serves none). A service that stops is reported and left stopped.
+func (c *children) runGateway(ctx context.Context, gateway string, addresses []string, siteDone chan error, shopURL string, ready func()) error {
+	logStart, err := c.start("gateway", gateway, "run", "--config", filepath.Join(c.dir, configFile))
 	if err != nil {
 		return err
 	}
 	addresses = append(addresses, adminListen, dataListen, metricsListen)
-
 	deadline := time.Now().Add(30 * time.Second)
-	if err := running.awaitListening(ctx, addresses, deadline); err != nil {
+	if err := c.awaitListening(ctx, addresses, deadline); err != nil {
 		if errors.Is(err, errCancelled) {
 			return nil
 		}
@@ -100,7 +111,7 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 	admission := ""
 	for admission == "" {
 		var err error
-		admission, err = readAdmission(filepath.Join(dir, "gateway.log"), gatewayLogStart)
+		admission, err = readAdmission(filepath.Join(c.dir, "gateway.log"), logStart)
 		if err != nil {
 			return err
 		}
@@ -108,9 +119,9 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 			break
 		}
 		select {
-		case result := <-running.exited:
-			running.received()
-			return fmt.Errorf("%s exited before admission status (%v); see its log in %s", result.name, result.err, dir)
+		case result := <-c.exited:
+			c.received()
+			return fmt.Errorf("%s exited before admission status (%v); see its log in %s", result.name, result.err, c.dir)
 		case <-ctx.Done():
 			return nil
 		case <-time.After(50 * time.Millisecond):
@@ -120,8 +131,8 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 		}
 	}
 	fmt.Printf("listening; protected admission: %s\n", admission)
-	fmt.Printf("  dashboard: http://%s/\n  website:   http://%s/ (served from %s through the gateway)\n", adminListen, dataListen, siteListen)
-	running.printProcesses()
+	fmt.Printf("  dashboard: http://%s/\n  website:   %s\n", adminListen, shopURL)
+	c.printProcesses()
 	if ready != nil {
 		ready()
 	}
@@ -134,22 +145,27 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 		case err := <-siteDone:
 			siteDone <- err
 			return fmt.Errorf("the website stopped (%v)", err)
-		case result := <-running.exited:
-			running.received()
+		case result := <-c.exited:
+			c.received()
 			if result.name == "gateway" {
-				return fmt.Errorf("the gateway exited (%v); see %s", result.err, filepath.Join(dir, "gateway.log"))
+				return fmt.Errorf("the gateway exited (%v); see %s", result.err, filepath.Join(c.dir, "gateway.log"))
 			}
 			fmt.Printf("service %s stopped (%v); its gateway requests can now fail\n", result.name, result.err)
 		}
 	}
 }
 
-// checkPortsFree refuses a second demonstration on the same addresses.
-func checkPortsFree() error {
+// localAddresses are every address of the one-machine demonstration.
+func localAddresses() []string {
 	addresses := []string{adminListen, dataListen, metricsListen, siteListen}
 	for _, service := range fetchServices {
 		addresses = append(addresses, service.listen, service.control)
 	}
+	return addresses
+}
+
+// checkFree refuses a second demonstration on any of the same addresses.
+func checkFree(addresses []string) error {
 	for _, address := range addresses {
 		if dialable(address) {
 			return fmt.Errorf("%s is already in use; refusing to start a second demonstration", address)

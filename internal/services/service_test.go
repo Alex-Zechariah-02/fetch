@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 )
@@ -135,12 +137,35 @@ func TestServiceRunStopsOwnedListeners(t *testing.T) {
 	s, _ := New(Config{Name: "inventory", Secret: []byte("01234567890123456789012345678901")})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", s.secret); err != nil {
+	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", s.secret, Ingress{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Run(context.Background(), s, "0.0.0.0:0", "127.0.0.1:0", s.secret); err == nil {
-		t.Fatal("wildcard service listener accepted")
+	// Every interface, and a network address this machine could bind, are
+	// refused without TLS.
+	for _, listen := range []string{"0.0.0.0:0", networkAddress(t)} {
+		if err := Run(ctx, s, listen, "127.0.0.1:0", s.secret, Ingress{}); err == nil {
+			t.Fatalf("service listener %s accepted without TLS", listen)
+		}
 	}
+}
+
+// networkAddress is a non-loopback IPv4 address of this machine with port 0.
+func networkAddress(t *testing.T) string {
+	addresses, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range addresses {
+		network, ok := address.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if ip, valid := netip.AddrFromSlice(network.IP); valid && ip.Unmap().Is4() && ip.IsGlobalUnicast() {
+			return netip.AddrPortFrom(ip.Unmap(), 0).String()
+		}
+	}
+	t.Skip("this machine has no non-loopback IPv4 address")
+	return ""
 }
 
 func TestInventoryRefusalsAndOwnership(t *testing.T) {

@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,12 @@ func TestMigrationMatchesBaseline(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the gateway: %v\n%s", err, out)
 	}
-	result, err := importDescriptions(gateway, filepath.Join(source.fetch, "openapi"), work)
+	// A gateway host's baseline reaches the same APIs on the Fetch host over
+	// TLS; the importer must accept it as it does the local one.
+	if _, err := importDescriptions(gateway, filepath.Join(source.fetch, "openapi"), deployedBaseline(netip.MustParseAddr("192.0.2.10")), t.TempDir()); err != nil {
+		t.Fatalf("gateway host baseline: %v", err)
+	}
+	result, err := importDescriptions(gateway, filepath.Join(source.fetch, "openapi"), baselinePolicy(), work)
 	if err != nil {
 		t.Fatal(err)
 	}
