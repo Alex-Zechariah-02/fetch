@@ -85,8 +85,10 @@ const usage = `usage:
   demo up     [-home H] [-fresh] [-stdin] [-apiward DIR]
   demo up     -standalone [-home H] [-stdin]   (no gateway: unprotected)
   demo certs  -out DIR -fetch IP -gateway NAME[,NAME]   (files for two hosts)
-  demo up     -role fetch -bind IP -certs DIR [-home H] [-stdin]
+  demo up     -role fetch -bind IP -certs DIR [-programs DIR] [-home H] [-stdin]
   demo up     -role gateway -fetch IP -certs DIR [-tls-cert F -tls-key F] [-home H] [-fresh] [-stdin] [-apiward DIR]
+  demo prepare -certs DIR   (a new gateway from the APIWard image: administrator and baseline)
+  demo health   (the Fetch services on this host answer)
   demo migrate -out F [-apiward DIR] [-openapi DIR] [-fetch IP]
   demo setup  -dir D -web W -gateway G [-admin NAME]
   demo run    -dir D -web W -gateway G -services S -accounts A [-stdin]
@@ -112,6 +114,8 @@ func main() {
 	commands := map[string]func([]string) error{
 		"up":      up,
 		"certs":   certs,
+		"prepare": prepare,
+		"health":  health,
 		"migrate": migrate,
 		"setup":   setup,
 		"run":     run,

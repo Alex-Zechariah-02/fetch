@@ -41,6 +41,7 @@ func up(args []string) error {
 	certs := set.String("certs", "", "-role: this host's folder from demo certs")
 	tlsCert := set.String("tls-cert", "", "-role gateway: the shop's certificate chain instead of the folder's data.pem, such as certbot's fullchain.pem")
 	tlsKey := set.String("tls-key", "", "-role gateway: the private key of -tls-cert")
+	programs := set.String("programs", "", "-role fetch: run the services, Accounts and shop already built in this folder (as in the container image) instead of building them")
 	if err := set.Parse(args); err != nil {
 		return err
 	}
@@ -59,10 +60,10 @@ func up(args []string) error {
 		}
 		return upStandalone(homeDir, *stdin)
 	case *role == "fetch":
-		if err := onlyFlags(set, "home", "stdin", "role", "bind", "certs"); err != nil {
+		if err := onlyFlags(set, "home", "stdin", "role", "bind", "certs", "programs"); err != nil {
 			return err
 		}
-		return upFetch(homeDir, *bind, *certs, *stdin)
+		return upFetch(homeDir, *bind, *certs, *programs, *stdin)
 	case *role == "gateway":
 		if err := onlyFlags(set, "home", "fresh", "stdin", "apiward", "role", "fetch", "certs", "tls-cert", "tls-key"); err != nil {
 			return err

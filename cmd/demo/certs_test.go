@@ -1,20 +1,24 @@
 // The two-host files: Fetch's listener admits the gateway's client
 // certificate and nothing else, the gateway can verify Fetch's certificate,
-// and both hosts name the Accounts key alike.
+// both hosts name the Accounts key alike, and the APIWard image's settings
+// in the gateway folder are a configuration the gateway accepts.
 
 package main
 
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Alex-Zechariah-02/apiward"
 	"github.com/Alex-Zechariah-02/fetch/internal/services"
 )
 
@@ -80,12 +84,58 @@ func TestCertsAdmitOnlyGateway(t *testing.T) {
 	}
 }
 
+// The APIWard image's settings from demo certs are a configuration the
+// gateway accepts once the folder is where the image reads it, and they
+// trust the key Accounts signs with.
+func TestCertsImageSettings(t *testing.T) {
+	dir := writeDeployment(t, "image")
+	gateway := filepath.Join(dir, "gateway")
+	data, err := os.ReadFile(filepath.Join(gateway, imageSettings))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mount the folder and a state folder where the image has them.
+	settings := string(data)
+	for image, local := range map[string]string{imageConfig: gateway, imageState: t.TempDir()} {
+		quoted, _ := json.Marshal(local)
+		settings = strings.ReplaceAll(settings, `"`+image+`/`, strings.TrimSuffix(string(quoted), `"`)+`/`)
+	}
+	if strings.Contains(settings, `"/etc/`) || strings.Contains(settings, `"/var/`) {
+		t.Fatalf("a path is outside the image's folders:\n%s", settings)
+	}
+	mounted := filepath.Join(t.TempDir(), imageSettings)
+	if err := os.WriteFile(mounted, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apiward.LoadConfig(mounted); err != nil {
+		t.Fatalf("the gateway refuses the image settings: %v", err)
+	}
+	var parsed struct {
+		Gateway struct {
+			JWT struct {
+				Keys []trustedKey `json:"keys"`
+			} `json:"jwt"`
+		} `json:"gateway"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil || len(parsed.Gateway.JWT.Keys) != 1 {
+		t.Fatalf("trusted keys: %v %+v", err, parsed)
+	}
+	signing, err := signingKeyID(filepath.Join(dir, "fetch", privateKeyFile))
+	if err != nil || parsed.Gateway.JWT.Keys[0].Kid != signing {
+		t.Fatalf("the image trusts %q, Accounts signs as %q (%v)", parsed.Gateway.JWT.Keys[0].Kid, signing, err)
+	}
+}
+
 // writeDeployment writes a new pair of host folders for a Fetch host on
-// 127.0.0.1 and returns their parent.
+// 127.0.0.1, as demo certs does, and returns their parent.
 func writeDeployment(t *testing.T, name string) string {
 	t.Helper()
-	folders, err := deploymentFiles(netip.MustParseAddr("127.0.0.1"), nil, []string{"shop.example"}, time.Now())
+	fetch := netip.MustParseAddr("127.0.0.1")
+	folders, err := deploymentFiles(fetch, nil, []string{"shop.example"}, time.Now())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := addImageFiles(folders["gateway"], fetch); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(t.TempDir(), name)

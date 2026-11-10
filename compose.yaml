@@ -1,0 +1,58 @@
+# Fetch and APIWard in containers on one Linux host with Docker Engine. Both
+# use the host's network, so the Dashboard and the metrics stay on the host's
+# loopback address (from another machine, through an SSH tunnel) and no
+# address translation sits in the request path. The first run and the
+# two-host variant are in the README, "Containers".
+name: fetch
+
+x-hardened: &hardened
+  network_mode: host
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  environment:
+    EAT_PORT_OFFSET: ${EAT_PORT_OFFSET:-0}
+
+services:
+  fetch:
+    <<: *hardened
+    build: .
+    image: fetch:dev
+    command: [up, -role, fetch, -bind, "${FETCH_IP:?set FETCH_IP to the -fetch address given to demo certs}", -certs, /certs, -programs, /opt/fetch, -home, /tmp]
+    tmpfs: [/tmp]
+    volumes:
+      - ${CERTS:?set CERTS to the folder demo certs wrote, outside this checkout}/fetch:/certs:ro
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  gateway:
+    <<: *hardened
+    build: ${APIWARD:-../apiward}
+    image: apiward:dev
+    volumes:
+      - gateway:/var/lib/apiward
+      - ${CERTS}/gateway:/etc/apiward:ro
+    stop_grace_period: 30s
+    restart: unless-stopped
+    depends_on:
+      fetch:
+        condition: service_healthy
+
+  # Run once after the first start: docker compose run --rm setup. The
+  # gateway reports healthy only once it has a policy, which this sets up.
+  setup:
+    <<: *hardened
+    image: fetch:dev
+    pull_policy: never
+    profiles: [setup]
+    command: [prepare, -certs, /certs]
+    # Only the two policy documents: the folder's keys stay with the gateway.
+    volumes:
+      - ${CERTS}/gateway/baseline.json:/certs/baseline.json:ro
+      - ${CERTS}/gateway/deny-all.json:/certs/deny-all.json:ro
+    depends_on:
+      gateway:
+        condition: service_started
+
+volumes:
+  gateway:

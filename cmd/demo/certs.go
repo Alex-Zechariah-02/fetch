@@ -35,7 +35,8 @@ const clockSkew = 5 * time.Minute
 
 // The files of the two folders demo certs writes. Both hold the CA
 // certificate; fetch/ also holds the Accounts private key (privateKeyFile)
-// and gateway/ its public key (publicKeyFile).
+// and gateway/ its public key (publicKeyFile) and the APIWard image's files
+// (addImageFiles).
 const (
 	caFile         = "ca.pem"
 	serverCertFile = "server.pem"     // fetch/: the APIs' and the shop's
@@ -71,12 +72,16 @@ func certs(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := addImageFiles(folders["gateway"], fetch); err != nil {
+		return err
+	}
 	if err := writeFolders(*out, folders); err != nil {
 		return err
 	}
 	fmt.Printf("Wrote %s. Copy its fetch folder to the Fetch host and its gateway folder to the gateway host, then run:\n", *out)
 	fmt.Printf("  Fetch host:   go run ./cmd/demo up -role fetch -bind %s -certs <fetch folder>\n", fetch)
 	fmt.Printf("  gateway host: go run ./cmd/demo up -role gateway -fetch %s -certs <gateway folder>\n", fetch)
+	fmt.Printf("or run the container images with these folders (README, \"Containers\").\n")
 	fmt.Printf("The certificates expire on %s.\n", time.Now().Add(certLifetime).UTC().Format(time.DateOnly))
 	return nil
 }

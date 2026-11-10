@@ -162,14 +162,24 @@ type trustedKey struct {
 // gatewayConfig is the one-machine gateway settings: HTTP on the data
 // address and this directory's signing key.
 func gatewayConfig(dir, web string) map[string]any {
-	return gatewaySettings(dir, web, trustedKey{localKid, filepath.Join(dir, publicKeyFile)}, map[string]any{"listen": dataListen}, nil)
+	return gatewaySettings(stateFiles(dir, web), trustedKey{localKid, filepath.Join(dir, publicKeyFile)}, map[string]any{"listen": dataListen}, nil)
+}
+
+// gatewayFiles are the files a gateway's settings name besides its keys and
+// certificates. An empty dashboard serves the build embedded in the gateway.
+type gatewayFiles struct{ database, audit, dashboard string }
+
+// stateFiles are the files of a gateway whose state is in dir and whose
+// Dashboard build is in web.
+func stateFiles(dir, web string) gatewayFiles {
+	return gatewayFiles{filepath.Join(dir, databaseFile), filepath.Join(dir, auditFile), filepath.Join(web, "admin")}
 }
 
 // gatewaySettings names the native controller, data listener and proxy
 // settings: data holds the data listener's own members and profiles the
 // upstream TLS profiles, if any. The native gateway validates this file
 // before opening deployment state.
-func gatewaySettings(dir, web string, key trustedKey, data map[string]any, profiles []tlsProfile) map[string]any {
+func gatewaySettings(files gatewayFiles, key trustedKey, data map[string]any, profiles []tlsProfile) map[string]any {
 	data["max_body_bytes"] = 16384
 	data["read_header_timeout"] = "5s"
 	data["read_timeout"] = "10s"
@@ -178,19 +188,17 @@ func gatewaySettings(dir, web string, key trustedKey, data map[string]any, profi
 	if len(profiles) > 0 {
 		upstream["tls_profiles"] = profiles
 	}
-	return map[string]any{
-		"version": 1,
-		"gateway": map[string]any{
-			"database":       filepath.Join(dir, databaseFile),
-			"audit_log":      filepath.Join(dir, auditFile),
-			"admin_listen":   adminListen,
-			"metrics_listen": metricsListen,
-			"admin_ui":       filepath.Join(web, "admin"),
-			"jwt":            map[string]any{"issuer": issuerName, "audience": audience, "keys": []trustedKey{key}},
-		},
-		"data":     data,
-		"upstream": upstream,
+	controller := map[string]any{
+		"database":       files.database,
+		"audit_log":      files.audit,
+		"admin_listen":   adminListen,
+		"metrics_listen": metricsListen,
+		"jwt":            map[string]any{"issuer": issuerName, "audience": audience, "keys": []trustedKey{key}},
 	}
+	if files.dashboard != "" {
+		controller["admin_ui"] = files.dashboard
+	}
+	return map[string]any{"version": 1, "gateway": controller, "data": data, "upstream": upstream}
 }
 
 // denyAll is the baseline with every operation denied and no permits.

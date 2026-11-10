@@ -34,9 +34,10 @@ type tlsProfile struct {
 }
 
 // upFetch is demo up -role fetch: it builds the services, Accounts and the
-// shop, makes a new folder in home for this run and serves everything on
-// bindIP until interrupted. Services restart from seed on every run.
-func upFetch(home, bindIP, certs string, stdin bool) error {
+// shop (or takes them from programs), makes a new folder in home for this run
+// and serves everything on bindIP until interrupted. Services restart from
+// seed on every run.
+func upFetch(home, bindIP, certs, programs string, stdin bool) error {
 	bind, err := netip.ParseAddr(bindIP)
 	if err != nil || bind.IsUnspecified() {
 		return errors.New("-role fetch takes -bind: this host's IP address, which the gateway connects to")
@@ -67,16 +68,8 @@ func upFetch(home, bindIP, certs string, stdin bool) error {
 		return err
 	}
 
-	fetch, err := fetchRepository()
+	serviceBinary, accountsBinary, shop, err := fetchPrograms(home, programs)
 	if err != nil {
-		return err
-	}
-	bin, shop := filepath.Join(home, "bin"), filepath.Join(home, "web", "demo")
-	serviceBinary, accountsBinary, err := buildServices(fetch, bin)
-	if err != nil {
-		return err
-	}
-	if err := buildWebsite(filepath.Join(fetch, "client"), shop); err != nil {
 		return err
 	}
 	dir := filepath.Join(home, "fetch")
@@ -164,15 +157,24 @@ func createGatewayState(dir, web, gateway string, fetch netip.Addr, folder, tlsC
 	if err != nil {
 		return err
 	}
+	in := func(name string) string { return filepath.Join(folder, name) }
+	settings := hostSettings(stateFiles(dir, web), kid, in, tlsCert, tlsKey)
+	return createState(dir, map[string][]byte{configFile: indented(settings)}, deployedBaseline(fetch), gateway, upAdmin, out)
+}
+
+// hostSettings are the settings of a two-host setup's gateway: in names a
+// file of the gateway folder from demo certs where the gateway reads it; the
+// data listener serves certificate and key over TLS on every interface and
+// the Accounts key is identified by kid.
+func hostSettings(files gatewayFiles, kid string, in func(string) string, certificate, key string) map[string]any {
 	port := strconv.Itoa(int(netip.MustParseAddrPort(dataListen).Port()))
 	data := map[string]any{
 		"listen":                net.JoinHostPort("0.0.0.0", port),
 		"listen_all_interfaces": true,
-		"tls":                   map[string]any{"files": map[string]string{"certificate_file": tlsCert, "key_file": tlsKey}},
+		"tls":                   map[string]any{"files": map[string]string{"certificate_file": certificate, "key_file": key}},
 	}
-	profile := tlsProfile{fetchProfile, filepath.Join(folder, caFile), filepath.Join(folder, clientCertFile), filepath.Join(folder, clientKeyFile)}
-	settings := gatewaySettings(dir, web, trustedKey{kid, filepath.Join(folder, publicKeyFile)}, data, []tlsProfile{profile})
-	return createState(dir, map[string][]byte{configFile: indented(settings)}, deployedBaseline(fetch), gateway, upAdmin, out)
+	profile := tlsProfile{fetchProfile, in(caFile), in(clientCertFile), in(clientKeyFile)}
+	return gatewaySettings(files, trustedKey{kid, in(publicKeyFile)}, data, []tlsProfile{profile})
 }
 
 // runGatewayHost runs the gateway alone with the settings in dir until ctx
@@ -190,7 +192,7 @@ func runGatewayHost(ctx context.Context, dir, gateway, shopURL string, ready fun
 // once it holds every one of files.
 func certFolder(dir string, files ...string) (string, error) {
 	if dir == "" {
-		return "", errors.New("-role takes -certs: this host's folder from demo certs")
+		return "", errors.New("-certs is required: this host's folder from demo certs")
 	}
 	folder, err := filepath.Abs(dir)
 	if err != nil {
@@ -212,9 +214,18 @@ func signingKeyID(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	kid, err := keyID(data)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	return kid, nil
+}
+
+// keyID is signingKeyID for the PEM key in data.
+func keyID(data []byte) (string, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return "", fmt.Errorf("%s holds no PEM key", path)
+		return "", errors.New("no PEM key")
 	}
 	var public any
 	switch block.Type {
@@ -222,15 +233,16 @@ func signingKeyID(path string) (string, error) {
 		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 		signer, ok := key.(crypto.Signer)
 		if err != nil || !ok {
-			return "", fmt.Errorf("%s: not a private signing key", path)
+			return "", errors.New("not a private signing key")
 		}
 		public = signer.Public()
 	case "PUBLIC KEY":
+		var err error
 		if public, err = x509.ParsePKIXPublicKey(block.Bytes); err != nil {
-			return "", fmt.Errorf("%s: %w", path, err)
+			return "", err
 		}
 	default:
-		return "", fmt.Errorf("%s holds a %s, not a key", path, block.Type)
+		return "", fmt.Errorf("a %s, not a key", block.Type)
 	}
 	der, err := x509.MarshalPKIXPublicKey(public)
 	if err != nil {

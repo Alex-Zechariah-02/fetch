@@ -163,16 +163,8 @@ func upStandalone(home string, stdin bool) error {
 	if err := checkFree(localAddresses()); err != nil {
 		return err
 	}
-	fetch, err := fetchRepository()
+	services, accounts, shop, err := fetchPrograms(home, "")
 	if err != nil {
-		return err
-	}
-	bin, shop := filepath.Join(home, "bin"), filepath.Join(home, "web", "demo")
-	services, accounts, err := buildServices(fetch, bin)
-	if err != nil {
-		return err
-	}
-	if err := buildWebsite(filepath.Join(fetch, "client"), shop); err != nil {
 		return err
 	}
 	dir := filepath.Join(home, "standalone")

@@ -1,0 +1,17 @@
+# Only the sources the image is built from enter the build context; every
+# other file in the checkout stays out, whatever its name.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!client/package.json
+!client/package-lock.json
+!client/index.html
+!client/tsconfig.json
+!client/vite.config.ts
+!client/src/
+!e2e/package.json
+!e2e/ports.ts
+**/*_test.go
+**/testdata/

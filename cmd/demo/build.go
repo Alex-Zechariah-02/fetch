@@ -37,6 +37,31 @@ func buildServices(fetch, bin string) (services, accounts string, err error) {
 	return services, accounts, err
 }
 
+// fetchPrograms are the services and Accounts programs and the shop's folder
+// a Fetch host runs: built into home from this checkout, or, when programs is
+// set, the ones already built in that folder (the container image's), which
+// holds services, accounts and shop/.
+func fetchPrograms(home, programs string) (services, accounts, shop string, err error) {
+	if programs != "" {
+		services, accounts, shop = filepath.Join(programs, executable("services")), filepath.Join(programs, executable("accounts")), filepath.Join(programs, "shop")
+		for _, file := range []string{services, accounts, filepath.Join(shop, "index.html")} {
+			if _, err := os.Stat(file); err != nil {
+				return "", "", "", fmt.Errorf("-programs: %w", err)
+			}
+		}
+		return services, accounts, shop, os.MkdirAll(home, 0o700)
+	}
+	fetch, err := fetchRepository()
+	if err != nil {
+		return "", "", "", err
+	}
+	shop = filepath.Join(home, "web", "demo")
+	if services, accounts, err = buildServices(fetch, filepath.Join(home, "bin")); err != nil {
+		return "", "", "", err
+	}
+	return services, accounts, shop, buildWebsite(filepath.Join(fetch, "client"), shop)
+}
+
 // buildProgram builds ./cmd/<name> of the module in folder into bin.
 func buildProgram(name, folder, bin string) (string, error) {
 	if err := os.MkdirAll(bin, 0o700); err != nil {
