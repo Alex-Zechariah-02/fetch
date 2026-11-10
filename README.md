@@ -106,7 +106,7 @@ docker compose run --rm setup
 5. `up -d` starts the gateway once Fetch is healthy. Until step 6 the gateway shows `starting`, then `unhealthy`: it has no policy yet.
 6. `setup` runs `demo prepare` once, reading only `baseline.json` and `deny-all.json` from the gateway folder (the keys stay with the gateway): it asks for the enrolment secret and then a new Dashboard password twice, without showing them, establishes deny-all genesis, confirms the Fetch baseline and prints the demo accounts.
 
-The shop is then at `https://localhost:9480/` (browsers warn unless the folder's `gateway/ca.pem` is trusted), the Dashboard at `http://127.0.0.1:9440/` (sign in as `root`) and the metrics, `/livez` and `/readyz` at `http://127.0.0.1:9450`. From another machine, reach the Dashboard through an SSH tunnel as in Two hosts.
+The shop is then at `https://localhost:9480/` (browsers warn unless the folder's `gateway/ca.pem` is trusted), the Dashboard at `http://127.0.0.1:9440/` (sign in as `root`) and the metrics, `/livez` and `/readyz` at `http://127.0.0.1:9450`. From another machine, reach the Dashboard through an SSH tunnel as in Two hosts. `deploy/README.md`, "One host", gives the network rules for running this setup on a server.
 
 Later:
 

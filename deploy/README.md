@@ -1,6 +1,27 @@
-# Two hosts on Linux
+# Running on Linux servers
 
-How to run Fetch and APIWard on two Linux machines, for example two virtual machines of one cloud provider in one private network. Browsers reach only the gateway. The Fetch host admits only the gateway's client certificate, and its firewall admits only the gateway's address. The commands are those of the README's "Two hosts" section; this page adds the network rules, the installation and systemd.
+Fetch and APIWard run either on one Linux machine (the smaller setup) or on two, when the gateway and the APIs must not share a machine. In both, browsers reach only the gateway, and Fetch admits only the gateway's client certificate.
+
+## One host
+
+The containers of the README's "Containers" section on one machine with Docker Engine. Only the gateway is on the network:
+
+| Listens on | What |
+|---|---|
+| every interface, TCP 9480 | APIWard: the shop and the APIs over HTTPS |
+| `127.0.0.1:9440`, `127.0.0.1:9450` | the Dashboard; metrics, `/livez` and `/readyz` |
+| `127.0.0.3`, TCP 9501 to 9506 | the APIs, Accounts and the shop's files, over TLS that admits only the gateway's client certificate |
+| `127.0.0.1`, TCP 9501 and 9502; 9601 to 9605 | the calls between services; Fetch's control listeners |
+
+Allow only two inbound connections: TCP 22 (SSH) from your own address and TCP 9480 from the addresses that open the shop. On AWS that is one security group with those two rules; Fetch's ports need none, since they are not on the network.
+
+Make the folders with `go run ./cmd/demo certs -out $HOME/fetch-certs -fetch 127.0.0.3 -gateway <public-name>` and run the README's first run with `FETCH_IP=127.0.0.3`; the shop is then at `https://<public-name>:9480/`. `127.0.0.3` is a loopback address, which keeps Fetch off the network. Both containers use the host's network, so Docker's isolation does not apply to their ports: the addresses they bind are what keep Fetch, the Dashboard and the metrics off the network. After the start, `sudo ss -tlnp` must list only 9480 and SSH on addresses outside `127.0.0.0/8`. Fetch still requires the gateway's client certificate on loopback, because any process on the machine can connect there. To serve a public certificate, put its chain and key in the gateway folder as `data.pem` and `data-key.pem` (owned by 65532, the key mode 600) before the gateway first starts.
+
+What one machine gives up: both images run as user 65532, so root or that user on the machine can read both certificate folders, including the gateway's client key and the key Accounts signs tokens with; keep shell access to administrators. The gateway and Fetch share CPU, memory and disk, stop together and cannot be resized apart. Building both images runs Node.js and Go; on a small machine, build them elsewhere and copy them with `docker save` and `docker load` (same CPU architecture). For separate machines, use the two hosts below.
+
+## Two hosts
+
+How to run Fetch and APIWard on two Linux machines, for example two virtual machines of one cloud provider in one private network. The Fetch host admits only the gateway's client certificate, and its firewall admits only the gateway's address. The commands are those of the README's "Two hosts" section; this page adds the network rules, the installation and systemd.
 
 | Host | Runs | Listens on |
 |---|---|---|
