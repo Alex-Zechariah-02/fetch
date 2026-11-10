@@ -1,5 +1,14 @@
 package services
 
+import "fmt"
+
+// walletSeed is every seeded customer's opening wallet balance, in sen.
+const walletSeed = 10000
+
+// loadAccounts is the number of measurement-mode accounts: enough that a
+// 500 requests/s run stays under each account's own rate limit.
+const loadAccounts = 1000
+
 type User struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
@@ -27,6 +36,16 @@ func Users() []User {
 		{"ops-01", "Admin 1", "admin1@fetch.test", []string{"OPERATIONS"}, nil, "/ops"},
 		{"lead-01", "Admin 2", "admin2@fetch.test", []string{"SUPPORT", "OPERATIONS"}, nil, "/ops"},
 	}
+}
+
+// loadUsers are the CUSTOMER accounts load-0001 to load-1000, which exist
+// only in measurement mode and share the demo password.
+func loadUsers() []User {
+	users := make([]User, 0, loadAccounts)
+	for i := 1; i <= loadAccounts; i++ {
+		users = append(users, User{fmt.Sprintf("load-%04d", i), fmt.Sprintf("Load %d", i), fmt.Sprintf("load%04d@fetch.test", i), []string{"CUSTOMER"}, nil, "/"})
+	}
+	return users
 }
 
 func userByID(id string) (User, bool) {

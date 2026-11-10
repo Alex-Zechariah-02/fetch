@@ -61,6 +61,7 @@ type orders struct {
 	idempotency    map[string]savedOrderResult
 	reservations   map[string]string
 	pendingRelease map[string]bool
+	measure        bool // also the load accounts' wallets
 }
 
 var orderStatuses = []string{"placed", "accepted", "ready", "picked_up", "delivered", "cancelled"}
@@ -68,7 +69,12 @@ var states = []string{"Johor", "Kedah", "Kelantan", "Melaka", "Negeri Sembilan",
 
 func (d *orders) reset() {
 	d.list = seedOrders()
-	d.wallets = map[string]int64{"cust-001": 10000, "cust-002": 10000, "cust-003": 10000}
+	d.wallets = map[string]int64{"cust-001": walletSeed, "cust-002": walletSeed, "cust-003": walletSeed}
+	if d.measure {
+		for _, user := range loadUsers() {
+			d.wallets[user.ID] = walletSeed
+		}
+	}
 	d.next = 1005
 	d.idempotency = map[string]savedOrderResult{}
 	d.reservations = map[string]string{}

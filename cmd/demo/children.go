@@ -105,6 +105,7 @@ func (c *children) stop() error {
 type fetchHost struct {
 	bind    netip.Addr
 	ingress services.Ingress
+	measure bool // the services and Accounts run in measurement mode
 }
 
 // startServices starts the four Fetch APIs and Accounts with the secret and
@@ -126,6 +127,9 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 		args = append(args, "-listen", listen)
 		if protect {
 			args = append(args, "-local-security", dir)
+		}
+		if host != nil && host.measure {
+			args = append(args, "-measure")
 		}
 		switch f.name {
 		case "accounts":

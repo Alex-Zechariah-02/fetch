@@ -38,20 +38,26 @@ type accounts struct {
 	signingFile  string
 	salt         []byte
 	passwordHash []byte
+	measure      bool // also the load accounts
 }
 
-func newAccounts(file string) (*accounts, error) {
+func newAccounts(file string, measure bool) (*accounts, error) {
 	if _, _, err := loadSigningKey(file); err != nil {
 		return nil, err
 	}
 	salt := make([]byte, 16)
 	rand.Read(salt)
-	return &accounts{signingFile: file, salt: salt, passwordHash: passwordKey(demoPassword, salt)}, nil
+	return &accounts{signingFile: file, salt: salt, passwordHash: passwordKey(demoPassword, salt), measure: measure}, nil
 }
 func passwordKey(password string, salt []byte) []byte {
 	return argon2.IDKey([]byte(password), salt, 2, 64*1024, 2, 32)
 }
-func (d *accounts) reset()        { d.users = Users() }
+func (d *accounts) reset() {
+	d.users = Users()
+	if d.measure {
+		d.users = append(d.users, loadUsers()...)
+	}
+}
 func (d *accounts) snapshot() any { return map[string]any{"users": d.users} }
 func readBoundedFile(path string) ([]byte, error) {
 	file, err := os.Open(path)

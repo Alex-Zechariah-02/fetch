@@ -35,6 +35,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	ordersURL := flags.String("orders", "", "Orders internal HTTP origin")
 	signingFile := flags.String("signing-settings", "", "Accounts signing settings file")
 	protection := flags.String("local-security", "", "built-in protection: check tokens, roles, blocked accounts, rates and bodies here, with the trusted keys and blocked list in this folder and the security log written there")
+	measure := flags.Bool("measure", false, "measurement mode: receipts kept as counts with no cap, and the accounts load-0001 to load-1000 seeded")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -82,7 +83,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 		return fmt.Errorf("reading service secret: %w", err)
 	}
 	secret = []byte(strings.TrimSpace(string(secret)))
-	service, err := New(Config{Name: name, Secret: secret, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection})
+	service, err := New(Config{Name: name, Secret: secret, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection, Measure: *measure})
 	if err != nil {
 		return err
 	}
@@ -92,6 +93,9 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	}
 	if *protection != "" {
 		transport += ", built-in protection"
+	}
+	if *measure {
+		transport += ", measurement mode"
 	}
 	fmt.Fprintf(output, "starting %s; api %s (%s); control %s\n", name, *listen, transport, *control)
 	return Run(ctx, service, *listen, *control, secret, ingress)

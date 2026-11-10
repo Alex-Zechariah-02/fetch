@@ -30,6 +30,9 @@ type Config struct {
 	// Protection is the settings folder of built-in protection; empty runs
 	// the service behind a gateway, trusting its identity headers.
 	Protection string
+	// Measure keeps receipts as counts with no cap and seeds the load
+	// accounts, so a long load run measures the gateway, not this record.
+	Measure bool
 }
 
 type result struct {
@@ -69,12 +72,25 @@ type Receipt struct {
 	BodyBytes     int       `json:"body_bytes"`
 }
 
+// maxReceipts bounds the receipt list outside measurement mode.
+const maxReceipts = 10000
+
+// counts replace the receipt list in measurement mode: answers per status.
+type counts struct {
+	Mode     string      `json:"mode"`
+	Total    int         `json:"total"`
+	ByStatus map[int]int `json:"by_status"`
+}
+
+func newCounts() *counts { return &counts{Mode: "count", ByStatus: map[int]int{}} }
+
 type Service struct {
 	mu             sync.Mutex
 	name, instance string
 	secret         []byte
 	data           resource
 	receipts       []Receipt
+	counts         *counts      // nil outside measurement mode
 	guard          *guard.Guard // nil without built-in protection
 }
 
@@ -91,7 +107,7 @@ func New(cfg Config) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.data = &orders{inventory: client}
+		s.data = &orders{inventory: client, measure: cfg.Measure}
 	case "support":
 		s.data = &support{}
 	case "reports":
@@ -101,7 +117,7 @@ func New(cfg Config) (*Service, error) {
 		}
 		s.data = &reports{orders: client}
 	case "accounts":
-		accounts, err := newAccounts(cfg.SigningSettingsFile)
+		accounts, err := newAccounts(cfg.SigningSettingsFile, cfg.Measure)
 		if err != nil {
 			return nil, err
 		}
@@ -110,6 +126,9 @@ func New(cfg Config) (*Service, error) {
 		return nil, fmt.Errorf("unknown service %q", cfg.Name)
 	}
 	s.data.reset()
+	if cfg.Measure {
+		s.counts = newCounts()
+	}
 	if cfg.Protection != "" {
 		g, err := guard.New(guard.Config{Dir: cfg.Protection, API: cfg.Name, Operations: operationsOf(cfg.Name), Roles: Roles})
 		if err != nil {
@@ -155,7 +174,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case keyRequired:
 		res = failure(401, "service_key_required", "A service key is required.", "")
-	case len(s.receipts) >= 10000:
+	case s.counts == nil && len(s.receipts) >= maxReceipts:
 		res = failure(503, "receipts_full", "The request record is full. Reset this service before continuing.", "")
 	case errors.As(err, &tooLarge):
 		res = failure(413, "payload_too_large", "The request body is too large.", "")
@@ -168,7 +187,11 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		res = s.data.handle(r, body)
 	}
-	if len(s.receipts) < 10000 {
+	switch {
+	case s.counts != nil:
+		s.counts.Total++
+		s.counts.ByStatus[res.status]++
+	case len(s.receipts) < maxReceipts:
 		s.receipts = append(s.receipts, Receipt{Seq: len(s.receipts) + 1, Time: time.Now().UTC(), RequestID: bounded(r.Header.Get("X-Request-Id"), 128), Generation: bounded(r.Header.Get("X-Gateway-Generation"), 256), Method: r.Method, Target: bounded(r.URL.EscapedPath(), 512), Status: res.status, Effect: res.effect, Authorization: r.Header.Get("Authorization") != "", Subject: bounded(r.Header.Get("X-Gateway-Subject"), 128), Roles: bounded(r.Header.Get("X-Gateway-Roles"), 4096), BodyBytes: len(body)})
 	}
 	writeJSON(w, res)
@@ -223,12 +246,19 @@ func (s *Service) Control(secret []byte) http.Handler {
 		defer s.mu.Unlock()
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/receipts":
+			if s.counts != nil {
+				writeJSON(w, result{status: 200, body: s.counts})
+				return
+			}
 			writeJSON(w, result{status: 200, body: map[string]any{"service": s.name, "instance": s.instance, "receipts": append([]Receipt{}, s.receipts...)}})
 		case r.Method == "GET" && r.URL.Path == "/state":
 			writeJSON(w, result{status: 200, body: s.state()})
 		case r.Method == "POST" && r.URL.Path == "/reset":
 			s.data.reset()
 			s.receipts = nil
+			if s.counts != nil {
+				s.counts = newCounts()
+			}
 			writeJSON(w, result{status: 200, body: s.state()})
 		default:
 			writeJSON(w, notFound())

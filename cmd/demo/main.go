@@ -87,7 +87,7 @@ const usage = `usage:
   demo up     -local [-home H] [-stdin]   (no gateway: built-in protection in each API)
   demo block  -local [-home H] [-unblock] ACCOUNT   (blocked list of every API of demo up -local)
   demo certs  -out DIR -fetch IP -gateway NAME[,NAME]   (files for two hosts)
-  demo up     -role fetch -bind IP -certs DIR [-programs DIR] [-home H] [-stdin]
+  demo up     -role fetch -bind IP -certs DIR [-programs DIR] [-measure] [-home H] [-stdin]
   demo up     -role gateway -fetch IP -certs DIR [-tls-cert F -tls-key F] [-home H] [-fresh] [-stdin] [-apiward DIR]
   demo prepare -certs DIR   (a new gateway from the APIWard image: administrator and baseline)
   demo health   (the Fetch services on this host answer)

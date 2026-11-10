@@ -36,8 +36,8 @@ type tlsProfile struct {
 // upFetch is demo up -role fetch: it builds the services, Accounts and the
 // shop (or takes them from programs), makes a new folder in home for this run
 // and serves everything on bindIP until interrupted. Services restart from
-// seed on every run.
-func upFetch(home, bindIP, certs, programs string, stdin bool) error {
+// seed on every run; with measure, in measurement mode.
+func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 	bind, err := netip.ParseAddr(bindIP)
 	if err != nil || bind.IsUnspecified() {
 		return errors.New("-role fetch takes -bind: this host's IP address, which the gateway connects to")
@@ -53,7 +53,7 @@ func upFetch(home, bindIP, certs, programs string, stdin bool) error {
 		Certificate: filepath.Join(folder, serverCertFile),
 		Key:         filepath.Join(folder, serverKeyFile),
 		ClientCA:    filepath.Join(folder, caFile),
-	}}
+	}, measure: measure}
 	site := deployedAddress(siteListen, bind)
 	// The Inventory and Orders loopback addresses carry the internal calls.
 	addresses := []string{site, fetchServices[0].listen, fetchServices[1].listen}
