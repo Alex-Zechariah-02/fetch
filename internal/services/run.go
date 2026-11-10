@@ -74,9 +74,13 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 		}
 		listeners = append(listeners, listener)
 	}
+	// A gateway reuses its connections to the APIs and must close them
+	// before the API does; without IdleTimeout, net/http would close idle
+	// connections after the 10 s ReadTimeout.
+	const idleTimeout = 2 * time.Minute
 	var servers []*http.Server
 	for _, handler := range handlers {
-		servers = append(servers, &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second})
+		servers = append(servers, &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: idleTimeout})
 	}
 	errs := make(chan error, len(servers))
 	for i, server := range servers {
