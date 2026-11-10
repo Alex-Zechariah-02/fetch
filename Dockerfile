@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download && go mod verify
 COPY cmd ./cmd
 COPY internal ./internal
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -o /out/ ./cmd/demo ./cmd/services ./cmd/accounts
+    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/demo ./cmd/services ./cmd/accounts
 COPY --from=shop /src/client/dist /out/shop
 
 # The nonroot user of this image is UID and GID 65532 (its /etc/passwd).
