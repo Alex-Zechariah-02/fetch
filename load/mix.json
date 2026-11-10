@@ -1,0 +1,21 @@
+{
+  "name": "fetch-mix-1",
+  "note": "Shares are percent of requests. as: customer = load-0001 to load-0999, merchant = merchant5 and merchant6 (stock of their first item; the other stores sell made-to-order items without a stock count), limited = load-1000 (over its per-account rate), none = no token. Never change this file; write a new name instead.",
+  "kinds": [
+    {"share": 29, "class": "read", "method": "GET", "path": "/orders/mine", "as": "customer", "expect": 200},
+    {"share": 30.5, "class": "read", "method": "GET", "path": "/orders/wallet", "as": "customer", "expect": 200},
+    {"share": 0.5, "class": "read", "method": "GET", "path": "/inventory/stock/{item}", "as": "merchant", "expect": 200},
+    {"share": 10, "class": "public", "method": "GET", "path": "/inventory/search?q=nasi", "as": "none", "expect": 200},
+    {"share": 10, "class": "public", "method": "GET", "path": "/inventory/items/ITM-001", "as": "none", "expect": 200},
+    {"share": 15, "class": "write", "method": "POST", "path": "/orders", "as": "customer", "body": "order", "expect": 201},
+    {"share": 1.25, "class": "refusal", "method": "GET", "path": "/orders/mine", "as": "none", "expect": 401},
+    {"share": 1.25, "class": "refusal", "method": "GET", "path": "/orders/merchant", "as": "customer", "expect": 403},
+    {"share": 1.25, "class": "refusal", "method": "POST", "path": "/orders", "as": "customer", "body": "invalid", "expect": 400},
+    {"share": 1.25, "class": "refusal", "method": "GET", "path": "/orders/wallet", "as": "limited", "expect": 429}
+  ],
+  "bodies": {
+    "order": {"merchant": "MER-001", "items": [{"item": "ITM-001", "quantity": 1}, {"item": "ITM-002", "quantity": 1}], "address": {"line1": "12 Jalan Telawi 3", "line2": "", "postcode": "59100", "city": "Kuala Lumpur", "state": "Wilayah Persekutuan Kuala Lumpur"}, "payment": "cash", "note": ""},
+    "invalid": {"merchant": 1}
+  },
+  "merchant_items": {"MER-005": "ITM-501", "MER-006": "ITM-601"}
+}
