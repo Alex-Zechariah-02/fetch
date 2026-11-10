@@ -1,6 +1,6 @@
 // Demo up: the one-command demonstration and its modes (one machine,
-// standalone, either host of a two-host setup), the sources it builds from,
-// and the administrator password prompts.
+// standalone, built-in protection, either host of a two-host setup), the
+// sources it builds from, and the administrator password prompts.
 
 package main
 
@@ -26,8 +26,8 @@ const upAdmin = "root"
 type sources struct{ apiward, fetch string }
 
 // up runs the demonstration with one command: on one machine by default,
-// with -standalone without a gateway, or as one host of a two-host setup
-// with -role.
+// with -standalone or -local without a gateway, or as one host of a two-host
+// setup with -role.
 func up(args []string) error {
 	set := flag.NewFlagSet("up", flag.ContinueOnError)
 	home := set.String("home", defaultHome(), "folder for the built programs, websites and demonstration state")
@@ -35,6 +35,7 @@ func up(args []string) error {
 	stdin := set.Bool("stdin", false, "also stop when standard input closes")
 	apiward := set.String("apiward", "", "APIWard checkout that builds the gateway and the Dashboard (default: ../apiward beside this repository)")
 	standalone := set.Bool("standalone", false, "run the shop and services with no gateway: nothing is checked (unprotected)")
+	local := set.Bool("local", false, "run the shop and services with no gateway, each API checking requests itself (built-in protection)")
 	role := set.String("role", "", "run one host of a two-host setup: fetch (the shop, APIs and Accounts) or gateway (APIWard)")
 	bind := set.String("bind", "", "-role fetch: this host's IP address, which the gateway connects to")
 	fetch := set.String("fetch", "", "-role gateway: the Fetch host's IP address")
@@ -59,6 +60,11 @@ func up(args []string) error {
 			return err
 		}
 		return upStandalone(homeDir, *stdin)
+	case *local:
+		if err := onlyFlags(set, "home", "stdin", "local"); err != nil {
+			return err
+		}
+		return upLocal(homeDir, *stdin)
 	case *role == "fetch":
 		if err := onlyFlags(set, "home", "stdin", "role", "bind", "certs", "programs"); err != nil {
 			return err

@@ -1,3 +1,7 @@
+// Fetch Accounts: sign-in with the demo password, RS256 token issue and
+// refresh with the signing key named in its settings file, and the signed-in
+// account's profile.
+
 package services
 
 import (
@@ -17,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Alex-Zechariah-02/fetch/internal/guard"
 	"github.com/go-jose/go-jose/v4"
 	josejson "github.com/go-jose/go-jose/v4/json"
 	"golang.org/x/crypto/argon2"
@@ -70,7 +75,7 @@ func loadSigningKey(file string) (signingSettings, *rsa.PrivateKey, error) {
 		return settings, nil, err
 	}
 	var document any
-	if !utf8.Valid(data) || hasLoneSurrogate(data) || josejson.Unmarshal(data, &document) != nil || !validMembers(document, 0) {
+	if !utf8.Valid(data) || guard.LoneSurrogate(data) || josejson.Unmarshal(data, &document) != nil || !validMembers(document, 0) {
 		return settings, nil, errors.New("invalid signing settings")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))

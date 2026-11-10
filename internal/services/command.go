@@ -1,5 +1,6 @@
 // The command line of one Fetch service or Accounts: its addresses, secret,
-// signing settings, internal call origins and the API's TLS files.
+// signing settings, internal call origins, the API's TLS files and the
+// folder of built-in protection.
 
 package services
 
@@ -33,6 +34,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	inventoryURL := flags.String("inventory", "", "Inventory internal HTTP origin")
 	ordersURL := flags.String("orders", "", "Orders internal HTTP origin")
 	signingFile := flags.String("signing-settings", "", "Accounts signing settings file")
+	protection := flags.String("local-security", "", "built-in protection: check tokens, roles, blocked accounts, rates and bodies here, with the trusted keys and blocked list in this folder and the security log written there")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -80,13 +82,16 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 		return fmt.Errorf("reading service secret: %w", err)
 	}
 	secret = []byte(strings.TrimSpace(string(secret)))
-	service, err := New(Config{Name: name, Secret: secret, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile})
+	service, err := New(Config{Name: name, Secret: secret, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection})
 	if err != nil {
 		return err
 	}
 	transport := "HTTP"
 	if ingress != (Ingress{}) {
 		transport = "TLS, client certificate required"
+	}
+	if *protection != "" {
+		transport += ", built-in protection"
 	}
 	fmt.Fprintf(output, "starting %s; api %s (%s); control %s\n", name, *listen, transport, *control)
 	return Run(ctx, service, *listen, *control, secret, ingress)

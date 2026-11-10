@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Alex-Zechariah-02/fetch/internal/guard"
 	josejson "github.com/go-jose/go-jose/v4/json"
 )
 
@@ -38,7 +39,7 @@ func decodeBody(r *http.Request, body []byte, limit int, value any) *result {
 	// Reject duplicate names before decoding and permit only the lowercase
 	// member names used by the service contracts, including nested objects.
 	var document any
-	if !utf8.Valid(body) || hasLoneSurrogate(body) || josejson.Unmarshal(body, &document) != nil || !validMembers(document, 0) {
+	if !utf8.Valid(body) || guard.LoneSurrogate(body) || josejson.Unmarshal(body, &document) != nil || !validMembers(document, 0) {
 		v := failure(400, "invalid_request", "The JSON request is invalid.", "")
 		return &v
 	}
@@ -88,37 +89,6 @@ func validMembers(value any, depth int) bool {
 		}
 	}
 	return true
-}
-
-// Preserve the gateway's strict Unicode profile instead of letting JSON
-// decoders silently replace an unpaired UTF-16 escape with U+FFFD.
-func hasLoneSurrogate(data []byte) bool {
-	surrogate := func(i int) (rune, bool) {
-		if i+6 > len(data) || data[i] != '\\' || data[i+1] != 'u' {
-			return 0, false
-		}
-		code, err := strconv.ParseUint(string(data[i+2:i+6]), 16, 16)
-		return rune(code), err == nil && code >= 0xd800 && code <= 0xdfff
-	}
-	for i := 0; i < len(data); i++ {
-		if data[i] != '\\' {
-			continue
-		}
-		code, found := surrogate(i)
-		switch {
-		case !found:
-			i++
-		case code >= 0xdc00:
-			return true
-		default:
-			low, ok := surrogate(i + 6)
-			if !ok || low < 0xdc00 {
-				return true
-			}
-			i += 11
-		}
-	}
-	return false
 }
 
 func query(r *http.Request, names ...string) (url.Values, bool) {

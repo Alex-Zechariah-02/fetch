@@ -10,6 +10,7 @@ ignore ./client
 require (
 	github.com/Alex-Zechariah-02/apiward v0.1.1-0.20261109161927-ccff2f8499fc
 	github.com/go-jose/go-jose/v4 v4.1.9
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
@@ -22,7 +23,6 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

@@ -48,14 +48,15 @@ func runStandalone(ctx context.Context, dir string, shop fs.FS, serviceBinary, a
 		return fmt.Errorf("the shop address: %w", err)
 	}
 	banner := fmt.Sprintf("%s\n\nShop: http://%s/  (unprotected)\nPress Ctrl+C to stop.", standaloneWarning, dataListen)
-	return serveFetch(ctx, dir, listener, standaloneHandler(shop), serviceBinary, accountsBinary, nil, banner)
+	return serveFetch(ctx, dir, listener, apiRouter(shop, copyIdentity), serviceBinary, accountsBinary, nil, false, banner)
 }
 
 // serveFetch serves handler on listener and runs the services and Accounts
-// with the files in dir (on host's address when host is not nil) until ctx
-// ends; the server stops last, after every child, mirroring demo run. Once
-// everything listens it lists the processes and prints banner.
-func serveFetch(ctx context.Context, dir string, listener net.Listener, handler http.Handler, serviceBinary, accountsBinary string, host *fetchHost, banner string) (runErr error) {
+// with the files in dir (on host's address when host is not nil, with
+// built-in protection when protect is set) until ctx ends; the server stops
+// last, after every child, mirroring demo run. Once everything listens it
+// lists the processes and prints banner.
+func serveFetch(ctx context.Context, dir string, listener net.Listener, handler http.Handler, serviceBinary, accountsBinary string, host *fetchHost, protect bool, banner string) (runErr error) {
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
@@ -67,7 +68,7 @@ func serveFetch(ctx context.Context, dir string, listener net.Listener, handler 
 
 	running := newChildren(dir, len(fetchServices))
 	defer func() { runErr = errors.Join(runErr, running.stop()) }()
-	addresses, err := running.startServices(dir, serviceBinary, accountsBinary, host)
+	addresses, err := running.startServices(dir, serviceBinary, accountsBinary, host, protect)
 	if err != nil {
 		return err
 	}
@@ -93,17 +94,19 @@ func serveFetch(ctx context.Context, dir string, listener net.Listener, handler 
 	}
 }
 
-// standaloneHandler sends the API paths the shop calls to their services,
-// with the same split as the shop's development proxy, and serves the shop
-// for every other path.
-func standaloneHandler(shop fs.FS) http.Handler {
+// apiRouter sends the API paths the shop calls to their services, with the
+// same split as the shop's development proxy, and serves the shop for every
+// other path. rewrite, when not nil, changes each forwarded request.
+func apiRouter(shop fs.FS, rewrite func(*http.Request)) http.Handler {
 	site := website(shop)
 	proxies := map[string]http.Handler{}
 	for _, service := range fetchServices {
 		target := &url.URL{Scheme: "http", Host: service.listen}
 		proxies[service.name] = &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)
-			copyIdentity(r.Out)
+			if rewrite != nil {
+				rewrite(r.Out)
+			}
 		}}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -86,7 +86,7 @@ func upFetch(home, bindIP, certs, programs string, stdin bool) error {
 	first, last := deployedAddress(fetchServices[0].listen, bind), deployedAddress(fetchServices[len(fetchServices)-1].listen, bind)
 	banner := fmt.Sprintf("Fetch admits only the gateway's client certificate:\n  APIs and Accounts: https://%s to %s\n  shop:              https://%s/\n"+
 		"On the gateway host: go run ./cmd/demo up -role gateway -fetch %s -certs <gateway folder>\nPress Ctrl+C to stop.", first, last, site, bind)
-	return serveFetch(ctx, dir, listener, website(os.DirFS(shop)), serviceBinary, accountsBinary, host, banner)
+	return serveFetch(ctx, dir, listener, website(os.DirFS(shop)), serviceBinary, accountsBinary, host, false, banner)
 }
 
 // gatewayRole is demo up -role gateway: the gateway alone, with its state in

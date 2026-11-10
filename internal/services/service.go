@@ -1,10 +1,9 @@
-// A Fetch service: its configuration, receipts, HTTP handler, protected
-// control listener and lifecycle.
+// A Fetch service: its configuration, receipts, HTTP handler and protected
+// control listener, with built-in protection in front when configured.
 
 package services
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -13,14 +12,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/netip"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Alex-Zechariah-02/fetch/internal/guard"
 )
 
 type Config struct {
@@ -29,6 +27,9 @@ type Config struct {
 	InventoryURL        string
 	OrdersURL           string
 	SigningSettingsFile string
+	// Protection is the settings folder of built-in protection; empty runs
+	// the service behind a gateway, trusting its identity headers.
+	Protection string
 }
 
 type result struct {
@@ -74,6 +75,7 @@ type Service struct {
 	secret         []byte
 	data           resource
 	receipts       []Receipt
+	guard          *guard.Guard // nil without built-in protection
 }
 
 func New(cfg Config) (*Service, error) {
@@ -108,7 +110,24 @@ func New(cfg Config) (*Service, error) {
 		return nil, fmt.Errorf("unknown service %q", cfg.Name)
 	}
 	s.data.reset()
+	if cfg.Protection != "" {
+		g, err := guard.New(guard.Config{Dir: cfg.Protection, API: cfg.Name, Operations: operationsOf(cfg.Name), Roles: Roles})
+		if err != nil {
+			return nil, fmt.Errorf("built-in protection: %w", err)
+		}
+		s.guard = g
+	}
 	return s, nil
+}
+
+// api is the handler of the API listener: the service, behind its guard when
+// built-in protection is on. The guard's checks run before ServeHTTP takes
+// the service lock, so verification and log syncs are never serialised.
+func (s *Service) api() http.Handler {
+	if s.guard == nil {
+		return s
+	}
+	return s.guard.Wrap(s)
 }
 
 func randomID() string {
@@ -187,19 +206,6 @@ func (s *Service) state() State {
 	return State{s.name, "fetch-1", s.instance, hex.EncodeToString(sum[:]), data}
 }
 
-// internal serves only the /internal/ endpoints, each still requiring the
-// service key; every other path is not found.
-func (s *Service) internal() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/internal/") {
-			w.Header().Set("X-Service", s.name)
-			writeJSON(w, notFound())
-			return
-		}
-		s.ServeHTTP(w, r)
-	})
-}
-
 func (s *Service) Control(secret []byte) http.Handler {
 	secret = slices.Clone(secret)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +213,10 @@ func (s *Service) Control(secret []byte) http.Handler {
 		values := r.Header.Values("Authorization")
 		if len(secret) < 32 || len(secret) > 4096 || len(values) != 1 || subtle.ConstantTimeCompare([]byte(values[0]), append([]byte("Bearer "), secret...)) != 1 {
 			writeJSON(w, failure(401, "unauthenticated", "Control authentication is required.", ""))
+			return
+		}
+		if r.Method == "PUT" && r.URL.Path == "/blocked" && s.guard != nil {
+			s.guard.Blocked(w, r)
 			return
 		}
 		s.mu.Lock()
@@ -224,73 +234,4 @@ func (s *Service) Control(secret []byte) http.Handler {
 			writeJSON(w, notFound())
 		}
 	})
-}
-
-// internalCallees are the services another one calls under /internal/ (Orders
-// calls Inventory, Reports calls Orders), always over loopback.
-var internalCallees = []string{"inventory", "orders"}
-
-// Run serves the API on listen (see Listen for ingress) and the control
-// endpoints on the loopback address control until ctx ends. When the API takes
-// only the gateway's certificate, a callee of the other services also serves
-// /internal/ alone on 127.0.0.1 at the API's port, where those calls arrive.
-func Run(ctx context.Context, s *Service, listen, control string, secret []byte, ingress Ingress) error {
-	if closer, ok := s.data.(interface{ close() }); ok {
-		defer closer.close()
-	}
-	if len(secret) < 32 || len(secret) > 4096 {
-		return errors.New("control secret must contain 32 to 4096 bytes")
-	}
-	if address, err := netip.ParseAddrPort(control); err != nil || !address.Addr().IsLoopback() {
-		return errors.New("the control listener must be a literal loopback address")
-	}
-	listeners := []net.Listener{}
-	defer func() {
-		for _, l := range listeners {
-			l.Close()
-		}
-	}()
-	api, err := Listen(listen, ingress)
-	if err != nil {
-		return err
-	}
-	listeners = append(listeners, api)
-	handlers := []http.Handler{s, s.Control(secret)}
-	addresses := []string{control}
-	if ingress != (Ingress{}) && slices.Contains(internalCallees, s.name) {
-		port := api.Addr().(*net.TCPAddr).Port
-		handlers = append(handlers, s.internal())
-		addresses = append(addresses, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-	}
-	for _, address := range addresses {
-		listener, err := Listen(address, Ingress{})
-		if err != nil {
-			return err
-		}
-		listeners = append(listeners, listener)
-	}
-	var servers []*http.Server
-	for _, handler := range handlers {
-		servers = append(servers, &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second})
-	}
-	errs := make(chan error, len(servers))
-	for i, server := range servers {
-		go func() { errs <- server.Serve(listeners[i]) }()
-	}
-	var result error
-	select {
-	case <-ctx.Done():
-	case result = <-errs:
-	}
-	stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	for _, server := range servers {
-		if err := server.Shutdown(stop); err != nil {
-			result = errors.Join(result, err, server.Close())
-		}
-	}
-	if errors.Is(result, http.ErrServerClosed) {
-		return nil
-	}
-	return result
 }

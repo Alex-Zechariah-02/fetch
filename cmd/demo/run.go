@@ -82,7 +82,7 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 
 	running := newChildren(dir, len(fetchServices)+1)
 	defer func() { runErr = errors.Join(runErr, running.stop()) }()
-	addresses, err := running.startServices(dir, serviceBinary, accountsBinary, nil)
+	addresses, err := running.startServices(dir, serviceBinary, accountsBinary, nil, false)
 	if err != nil {
 		return err
 	}

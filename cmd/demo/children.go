@@ -1,5 +1,5 @@
-// The child processes of demo run and of the standalone mode: started with
-// their output in log files, each reaped exactly once, stopped together.
+// The child processes of demo run and of the modes without a gateway: started
+// with their output in log files, each reaped exactly once, stopped together.
 
 package main
 
@@ -110,8 +110,9 @@ type fetchHost struct {
 // startServices starts the four Fetch APIs and Accounts with the secret and
 // signing settings in dir, on this machine's loopback addresses or, with host,
 // on the Fetch host's address, and returns every address they listen on. The
-// calls between services stay on loopback either way.
-func (c *children) startServices(dir, serviceBinary, accountsBinary string, host *fetchHost) ([]string, error) {
+// calls between services stay on loopback either way. With protect, each
+// checks requests itself with the settings in dir (built-in protection).
+func (c *children) startServices(dir, serviceBinary, accountsBinary string, host *fetchHost, protect bool) ([]string, error) {
 	secret := filepath.Join(dir, secretFile)
 	var addresses []string
 	for _, f := range fetchServices {
@@ -123,6 +124,9 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 			args = append(args, "-tls-cert", host.ingress.Certificate, "-tls-key", host.ingress.Key, "-client-ca", host.ingress.ClientCA)
 		}
 		args = append(args, "-listen", listen)
+		if protect {
+			args = append(args, "-local-security", dir)
+		}
 		switch f.name {
 		case "accounts":
 			binary = accountsBinary
