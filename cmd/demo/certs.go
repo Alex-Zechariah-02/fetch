@@ -35,8 +35,9 @@ const clockSkew = 5 * time.Minute
 
 // The files of the two folders demo certs writes. Both hold the CA
 // certificate; fetch/ also holds the Accounts private key (privateKeyFile)
-// and gateway/ its public key (publicKeyFile) and the APIWard image's files
-// (addImageFiles).
+// and the public key of the gateway's identity assertion (assertionSetFile);
+// gateway/ holds the other half of each (publicKeyFile, assertionKeyFile)
+// and the APIWard image's files (addImageFiles).
 const (
 	caFile         = "ca.pem"
 	serverCertFile = "server.pem"     // fetch/: the APIs' and the shop's
@@ -81,7 +82,7 @@ func certs(args []string) error {
 	fmt.Printf("Wrote %s. Copy its fetch folder to the Fetch host and its gateway folder to the gateway host, then run:\n", *out)
 	fmt.Printf("  Fetch host:   go run ./cmd/demo up -role fetch -bind %s -certs <fetch folder>\n", fetch)
 	fmt.Printf("  gateway host: go run ./cmd/demo up -role gateway -fetch %s -certs <gateway folder>\n", fetch)
-	fmt.Printf("or run the container images with these folders (README, \"Containers\").\n")
+	fmt.Printf("or run the container images with these folders (reference/hosts.md, \"Containers\").\n")
 	fmt.Printf("The certificates expire on %s.\n", time.Now().Add(certLifetime).UTC().Format(time.DateOnly))
 	return nil
 }
@@ -154,8 +155,9 @@ func isDNSName(name string) bool {
 	return true
 }
 
-// deploymentFiles makes the CA, the three certificates and the signing key
-// pair, keyed by folder and file name.
+// deploymentFiles makes the CA, the three certificates, the Accounts signing
+// key pair and the gateway's assertion key pair, keyed by folder and file
+// name.
 func deploymentFiles(fetch netip.Addr, gatewayIPs []net.IP, gatewayDNS []string, now time.Time) (map[string]map[string][]byte, error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -206,10 +208,14 @@ func deploymentFiles(fetch netip.Addr, gatewayIPs []net.IP, gatewayDNS []string,
 	if err != nil {
 		return nil, err
 	}
+	asserting, assertionSet, err := assertionKeys()
+	if err != nil {
+		return nil, err
+	}
 	caPEM := pemBlock("CERTIFICATE", caDER)
 	return map[string]map[string][]byte{
-		"fetch":   {caFile: caPEM, serverCertFile: server, serverKeyFile: serverKey, privateKeyFile: signing},
-		"gateway": {caFile: caPEM, clientCertFile: client, clientKeyFile: clientKey, dataCertFile: data, dataKeyFile: dataKey, publicKeyFile: verifying},
+		"fetch":   {caFile: caPEM, serverCertFile: server, serverKeyFile: serverKey, privateKeyFile: signing, assertionSetFile: assertionSet},
+		"gateway": {caFile: caPEM, clientCertFile: client, clientKeyFile: clientKey, dataCertFile: data, dataKeyFile: dataKey, publicKeyFile: verifying, assertionKeyFile: asserting},
 	}, nil
 }
 

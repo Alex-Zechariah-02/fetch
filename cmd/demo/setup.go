@@ -5,11 +5,13 @@
 package main
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +22,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/go-jose/go-jose/v4"
 )
 
 // setup creates a new demonstration directory: a signing key pair whose
@@ -64,44 +68,34 @@ func createDemo(dir, webDir, gateway, admin string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if files[assertionKeyFile], err = assertionKey(); err != nil {
+	if files[assertionKeyFile], files[assertionSetFile], err = assertionKeys(); err != nil {
 		return err
 	}
 	files[configFile] = indented(gatewayConfig(dir, webDir))
-	if err := createState(dir, files, baselinePolicy(), gateway, admin, out); err != nil {
-		return err
-	}
-	if err := exportKeySet(dir, gateway); err != nil {
-		os.RemoveAll(dir)
-		return err
-	}
-	return nil
+	return createState(dir, files, baselinePolicy(), gateway, admin, out)
 }
 
-// assertionKey makes the key the gateway signs its identity assertion with:
-// ECDSA P-256 as PKCS #8, PEM.
-func assertionKey() ([]byte, error) {
+// assertionKeys makes the key the gateway signs its identity assertion with
+// (ECDSA P-256 as PKCS #8, PEM) and the JSON Web Key Set of its public half,
+// which the APIs verify assertions with. The set names the key as the gateway
+// does: by its RFC 7638 thumbprint.
+func assertionKeys() (private, set []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	der, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return pemBlock("PRIVATE KEY", der), nil
-}
-
-// exportKeySet writes the public half of the assertion key in dir as the
-// gateway prints it, for the services to verify assertions with.
-func exportKeySet(dir, gateway string) error {
-	export := exec.Command(gateway, "jwks", "--config", filepath.Join(dir, configFile))
-	export.Stderr = os.Stderr
-	set, err := export.Output()
+	public := jose.JSONWebKey{Key: &key.PublicKey, Algorithm: string(jose.ES256), Use: "sig"}
+	thumbprint, err := public.Thumbprint(crypto.SHA256)
 	if err != nil {
-		return fmt.Errorf("gateway jwks: %w", err)
+		return nil, nil, err
 	}
-	return os.WriteFile(filepath.Join(dir, assertionSetFile), set, 0o600)
+	public.KeyID = base64.RawURLEncoding.EncodeToString(thumbprint)
+	set, err = json.Marshal(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{public}})
+	return pemBlock("PRIVATE KEY", der), set, err
 }
 
 // createState makes the new private directory dir holding files, the
@@ -200,9 +194,16 @@ type trustedKey struct {
 // gatewayConfig is the one-machine gateway settings: HTTP on the data
 // address, this directory's signing key and its assertion key.
 func gatewayConfig(dir, web string) map[string]any {
-	settings := gatewaySettings(stateFiles(dir, web), trustedKey{localKid, filepath.Join(dir, publicKeyFile)}, map[string]any{"listen": dataListen}, nil)
-	settings["upstream"].(map[string]any)["identity_key"] = filepath.Join(dir, assertionKeyFile)
-	return settings
+	keys := gatewayKeys{trustedKey{localKid, filepath.Join(dir, publicKeyFile)}, filepath.Join(dir, assertionKeyFile)}
+	return gatewaySettings(stateFiles(dir, web), keys, map[string]any{"listen": dataListen}, nil)
+}
+
+// gatewayKeys are the key files a gateway's settings name: the public key it
+// verifies Accounts tokens with and the private key it signs its identity
+// assertion with.
+type gatewayKeys struct {
+	accounts  trustedKey
+	assertion string
 }
 
 // gatewayFiles are the files a gateway's settings name besides its keys and
@@ -219,12 +220,12 @@ func stateFiles(dir, web string) gatewayFiles {
 // settings: data holds the data listener's own members and profiles the
 // upstream TLS profiles, if any. The native gateway validates this file
 // before opening deployment state.
-func gatewaySettings(files gatewayFiles, key trustedKey, data map[string]any, profiles []tlsProfile) map[string]any {
+func gatewaySettings(files gatewayFiles, keys gatewayKeys, data map[string]any, profiles []tlsProfile) map[string]any {
 	data["max_body_bytes"] = 16384
 	data["read_header_timeout"] = "5s"
 	data["read_timeout"] = "10s"
 	data["write_timeout"] = "30s"
-	upstream := map[string]any{"dial_timeout": "2s", "response_header_timeout": "5s", "read_idle_timeout": "5s"}
+	upstream := map[string]any{"dial_timeout": "2s", "response_header_timeout": "5s", "read_idle_timeout": "5s", "identity_key": keys.assertion}
 	if len(profiles) > 0 {
 		upstream["tls_profiles"] = profiles
 	}
@@ -233,7 +234,7 @@ func gatewaySettings(files gatewayFiles, key trustedKey, data map[string]any, pr
 		"audit_log":      files.audit,
 		"admin_listen":   adminListen,
 		"metrics_listen": metricsListen,
-		"jwt":            map[string]any{"issuer": issuerName, "audience": audience, "keys": []trustedKey{key}},
+		"jwt":            map[string]any{"issuer": issuerName, "audience": audience, "keys": []trustedKey{keys.accounts}},
 	}
 	if files.dashboard != "" {
 		controller["admin_ui"] = files.dashboard

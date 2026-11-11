@@ -15,8 +15,9 @@ import (
 )
 
 // A service given the gateway's keys answers only requests whose assertion
-// those keys verify, made for it and still fresh, and reads the account from
-// the assertion: plain identity headers alone, or beside it, count for nothing.
+// those keys verify, made for it, for the request's method and path, and
+// still fresh, and reads the account from the assertion: plain identity
+// headers alone, or beside it, count for nothing.
 func TestServiceRequiresGatewayAssertion(t *testing.T) {
 	newKey := func() *ecdsa.PrivateKey {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -40,13 +41,13 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 	}
 
 	now := time.Now()
-	sign := func(key *ecdsa.PrivateKey, audience, subject string, issued time.Time) string {
+	sign := func(key *ecdsa.PrivateKey, audience, method, path string, issued time.Time) string {
 		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "gateway-a"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		payload, _ := json.Marshal(map[string]any{"iss": "apiward", "aud": audience, "sub": subject, "roles": []string{"CUSTOMER"},
-			"iat": issued.Unix(), "exp": issued.Add(30 * time.Second).Unix(), "jti": "request-1"})
+		payload, _ := json.Marshal(map[string]any{"iss": "apiward", "aud": audience, "sub": "cust-001", "roles": []string{"CUSTOMER"},
+			"method": method, "path": path, "iat": issued.Unix(), "exp": issued.Add(30 * time.Second).Unix(), "jti": "request-1"})
 		signed, err := signer.Sign(payload)
 		if err != nil {
 			t.Fatal(err)
@@ -57,7 +58,7 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 		}
 		return token
 	}
-	valid := sign(gateway, "support", "cust-001", now)
+	valid := sign(gateway, "support", "GET", "/support/mine", now)
 	for _, tc := range []struct {
 		name       string
 		assertions []string
@@ -65,10 +66,12 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 	}{
 		{"valid", []string{valid}, 200},
 		{"none, identity headers only", nil, 401},
-		{"made for another API", []string{sign(gateway, "orders", "cust-001", now)}, 401},
-		{"expired", []string{sign(gateway, "support", "cust-001", now.Add(-time.Minute))}, 401},
-		{"issued in the future", []string{sign(gateway, "support", "cust-001", now.Add(time.Minute))}, 401},
-		{"signed by another key", []string{sign(other, "support", "cust-001", now)}, 401},
+		{"made for another API", []string{sign(gateway, "orders", "GET", "/support/mine", now)}, 401},
+		{"made for another method", []string{sign(gateway, "support", "POST", "/support/mine", now)}, 401},
+		{"made for another path", []string{sign(gateway, "support", "GET", "/support/tickets", now)}, 401},
+		{"expired", []string{sign(gateway, "support", "GET", "/support/mine", now.Add(-time.Minute))}, 401},
+		{"issued in the future", []string{sign(gateway, "support", "GET", "/support/mine", now.Add(time.Minute))}, 401},
+		{"signed by another key", []string{sign(other, "support", "GET", "/support/mine", now)}, 401},
 		{"two assertions", []string{valid, valid}, 401},
 	} {
 		// The plain headers claim support staff, to whom a customer's own

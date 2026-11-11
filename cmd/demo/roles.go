@@ -45,7 +45,7 @@ func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 	if bind == netip.AddrFrom4([4]byte{127, 0, 0, 1}) {
 		return errors.New("-bind 127.0.0.1 is where the services call each other; use this host's network address")
 	}
-	folder, err := certFolder(certs, caFile, serverCertFile, serverKeyFile, privateKeyFile)
+	folder, err := certFolder(certs, caFile, serverCertFile, serverKeyFile, privateKeyFile, assertionSetFile)
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 		Certificate: filepath.Join(folder, serverCertFile),
 		Key:         filepath.Join(folder, serverKeyFile),
 		ClientCA:    filepath.Join(folder, caFile),
-	}, measure: measure}
+	}, keySet: filepath.Join(folder, assertionSetFile), measure: measure}
 	site := deployedAddress(siteListen, bind)
 	// The Inventory and Orders loopback addresses carry the internal calls.
 	addresses := []string{site, fetchServices[0].listen, fetchServices[1].listen}
@@ -84,7 +84,7 @@ func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 	ctx, stop := stopContext(stdin)
 	defer stop()
 	first, last := deployedAddress(fetchServices[0].listen, bind), deployedAddress(fetchServices[len(fetchServices)-1].listen, bind)
-	banner := fmt.Sprintf("Fetch admits only the gateway's client certificate:\n  APIs and Accounts: https://%s to %s\n  shop:              https://%s/\n"+
+	banner := fmt.Sprintf("Fetch admits only the gateway's client certificate, and its four APIs only requests the gateway signed:\n  APIs and Accounts: https://%s to %s\n  shop:              https://%s/\n"+
 		"On the gateway host: go run ./cmd/demo up -role gateway -fetch %s -certs <gateway folder>\nPress Ctrl+C to stop.", first, last, site, bind)
 	return serveFetch(ctx, dir, listener, website(os.DirFS(shop)), serviceBinary, accountsBinary, host, false, banner)
 }
@@ -101,7 +101,7 @@ func gatewayRole(home, fetchIP, certs, tlsCert, tlsKey string) (gatewayHost, err
 	if (tlsCert == "") != (tlsKey == "") {
 		return gatewayHost{}, errors.New("-tls-cert and -tls-key are set together")
 	}
-	required := []string{caFile, clientCertFile, clientKeyFile, publicKeyFile}
+	required := []string{caFile, clientCertFile, clientKeyFile, publicKeyFile, assertionKeyFile}
 	if tlsCert == "" {
 		required = append(required, dataCertFile, dataKeyFile)
 	}
@@ -174,7 +174,8 @@ func hostSettings(files gatewayFiles, kid string, in func(string) string, certif
 		"tls":                   map[string]any{"files": map[string]string{"certificate_file": certificate, "key_file": key}},
 	}
 	profile := tlsProfile{fetchProfile, in(caFile), in(clientCertFile), in(clientKeyFile)}
-	return gatewaySettings(files, trustedKey{kid, in(publicKeyFile)}, data, []tlsProfile{profile})
+	keys := gatewayKeys{trustedKey{kid, in(publicKeyFile)}, in(assertionKeyFile)}
+	return gatewaySettings(files, keys, data, []tlsProfile{profile})
 }
 
 // runGatewayHost runs the gateway alone with the settings in dir until ctx

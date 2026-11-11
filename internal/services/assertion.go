@@ -1,7 +1,8 @@
 // Verification of the gateway's signed identity assertion. A service given
 // the gateway's public keys answers an API request only when it carries an
-// assertion those keys verify, made for this service and still fresh, and
-// takes the account and roles from it instead of the plain identity headers.
+// assertion those keys verify, made for this service, for the request's own
+// method and path, and still fresh, and takes the account and roles from it
+// instead of the plain identity headers.
 
 package services
 
@@ -58,8 +59,9 @@ func loadAssertions(path, audience string) (*assertions, error) {
 }
 
 // admit reports whether r carries exactly one valid assertion for this
-// service at now. It then replaces the plain identity headers with the
-// assertion's account and roles, so the handlers read only verified values.
+// service and for r's method and path at now. It then replaces the plain
+// identity headers with the assertion's account and roles, so the handlers
+// read only verified values.
 func (a *assertions) admit(r *http.Request, now time.Time) bool {
 	values := r.Header.Values(assertionHeader)
 	if len(values) != 1 || len(values[0]) > maxAssertion {
@@ -83,10 +85,17 @@ func (a *assertions) admit(r *http.Request, now time.Time) bool {
 		Audience string   `json:"aud"`
 		Subject  string   `json:"sub"`
 		Roles    []string `json:"roles"`
+		Method   string   `json:"method"`
+		Path     string   `json:"path"`
 		IssuedAt int64    `json:"iat"`
 		Expires  int64    `json:"exp"`
 	}
 	if json.Unmarshal(payload, &claims) != nil || claims.Audience != a.audience {
+		return false
+	}
+	// The gateway signed this one request: on any other method or path the
+	// assertion is a copy taken from it.
+	if claims.Method != r.Method || claims.Path != r.URL.Path {
 		return false
 	}
 	issued, expires := time.Unix(claims.IssuedAt, 0), time.Unix(claims.Expires, 0)

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # The Fetch image: the shop's build and the demo, services and Accounts
-# programs, run as a non-root user. demo up -role fetch -programs /opt/fetch
+# programs, run as a non-root user of its own. demo up -role fetch -programs /opt/fetch
 # serves them over TLS that admits only the gateway's client certificate (the
 # fetch folder of demo certs, mounted read-only); every run starts from seed
 # in a temporary folder, so the root filesystem stays read-only.
@@ -28,7 +28,10 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/demo ./cmd/services ./cmd/accounts
 COPY --from=shop /src/client/dist /out/shop
 
-# The nonroot user of this image is UID and GID 65532 (its /etc/passwd).
+# Fetch runs as UID and GID 65531, which the base image does not name. The
+# APIWard image runs as 65532: on a shared host, files owned by one and
+# closed to others are out of the other container's reach even outside its
+# own mounts.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 ARG REVISION=""
 LABEL org.opencontainers.image.title="Fetch" \
@@ -37,7 +40,7 @@ LABEL org.opencontainers.image.title="Fetch" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.revision="${REVISION}"
 COPY --from=programs /out /opt/fetch
-USER 65532:65532
+USER 65531:65531
 EXPOSE 9501-9506
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --start-interval=2s --retries=3 \

@@ -1,16 +1,21 @@
 // The two-host files: Fetch's listener admits the gateway's client
 // certificate and nothing else, the gateway can verify Fetch's certificate,
-// both hosts name the Accounts key alike, and the APIWard image's settings
+// an API verifies the gateway's assertion, both hosts name the Accounts key
+// alike, and the APIWard image's settings
 // in the gateway folder are a configuration the gateway accepts.
 
 package main
 
 import (
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -20,6 +25,7 @@ import (
 
 	"github.com/Alex-Zechariah-02/apiward"
 	"github.com/Alex-Zechariah-02/fetch/internal/services"
+	"github.com/go-jose/go-jose/v4"
 )
 
 func TestCertsAdmitOnlyGateway(t *testing.T) {
@@ -74,6 +80,24 @@ func TestCertsAdmitOnlyGateway(t *testing.T) {
 		t.Error("a client certificate from another CA was admitted")
 	}
 
+	// An API started with the Fetch folder's key set answers a request the
+	// gateway folder's assertion key signed, and no request without one.
+	support, err := services.New(services.Config{Name: "support", Secret: []byte("0123456789abcdef0123456789abcdef"), GatewayKey: filepath.Join(fetch, assertionSetFile)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for assertion, want := range map[string]int{signedAssertion(t, filepath.Join(gateway, assertionKeyFile)): http.StatusOK, "": http.StatusUnauthorized} {
+		request := httptest.NewRequest(http.MethodGet, "/support/mine", nil)
+		if assertion != "" {
+			request.Header.Set("X-Gateway-Assertion", assertion)
+		}
+		recorder := httptest.NewRecorder()
+		support.ServeHTTP(recorder, request)
+		if recorder.Code != want {
+			t.Errorf("assertion %q: status %d, want %d", assertion, recorder.Code, want)
+		}
+	}
+
 	private, err := signingKeyID(filepath.Join(fetch, privateKeyFile))
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +148,46 @@ func TestCertsImageSettings(t *testing.T) {
 	if err != nil || parsed.Gateway.JWT.Keys[0].Kid != signing {
 		t.Fatalf("the image trusts %q, Accounts signs as %q (%v)", parsed.Gateway.JWT.Keys[0].Kid, signing, err)
 	}
+}
+
+// signedAssertion signs, as the gateway does with the PKCS #8 key at path, an
+// assertion for a customer reading their own Support tickets now.
+func signedAssertion(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		t.Fatalf("%s holds no PEM block", path)
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The gateway names its key by the RFC 7638 thumbprint.
+	thumbprint, err := (&jose.JSONWebKey{Key: key}).Thumbprint(crypto.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: key},
+		(&jose.SignerOptions{}).WithHeader("kid", base64.RawURLEncoding.EncodeToString(thumbprint)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	payload, _ := json.Marshal(map[string]any{"aud": "support", "sub": "cust-001", "roles": []string{"CUSTOMER"},
+		"method": "GET", "path": "/support/mine", "iat": now.Unix(), "exp": now.Add(30 * time.Second).Unix()})
+	signed, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := signed.CompactSerialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
 }
 
 // writeDeployment writes a new pair of host folders for a Fetch host on

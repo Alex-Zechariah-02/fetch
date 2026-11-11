@@ -47,6 +47,8 @@ services:
     profiles: [setup]
     command: [prepare, -certs, /certs]
     # Only the two policy documents: the folder's keys stay with the gateway.
+    # They belong to the gateway's user, which the Fetch image does not run as.
+    user: "65532:65532"
     volumes:
       - ${CERTS}/gateway/baseline.json:/certs/baseline.json:ro
       - ${CERTS}/gateway/deny-all.json:/certs/deny-all.json:ro

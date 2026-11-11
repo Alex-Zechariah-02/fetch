@@ -104,11 +104,13 @@ func (c *children) stop() error {
 
 // fetchHost is how the Fetch host of a two-host setup serves the APIs,
 // Accounts and the shop: on the address bind, over TLS that admits only the
-// gateway's client certificate.
+// gateway's client certificate, the four APIs answering only requests that
+// carry the assertion the gateway signed for them.
 type fetchHost struct {
 	bind    netip.Addr
 	ingress services.Ingress
-	measure bool // the services and Accounts run in measurement mode
+	keySet  string // the gateway's public key file from demo certs
+	measure bool   // the services and Accounts run in measurement mode
 }
 
 // startServices starts the four Fetch APIs and Accounts with the secret and
@@ -118,6 +120,9 @@ type fetchHost struct {
 // checks requests itself with the settings in dir (built-in protection).
 func (c *children) startServices(dir, serviceBinary, accountsBinary string, host *fetchHost, protect bool) ([]string, error) {
 	secret := filepath.Join(dir, secretFile)
+	if host != nil {
+		c.keySet = host.keySet
+	}
 	var addresses []string
 	for _, f := range fetchServices {
 		binary := serviceBinary
@@ -131,7 +136,8 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 		if protect {
 			args = append(args, "-local-security", dir)
 		}
-		// Accounts stays reachable directly: the demo commands sign in there.
+		// Accounts asks for no assertion in any setup: on one machine the
+		// demo commands sign in there directly.
 		if c.keySet != "" && f.name != "accounts" {
 			args = append(args, "-gateway-key", c.keySet)
 		}
