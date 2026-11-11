@@ -15,7 +15,7 @@ Behind APIWard, the shop is reached only through the gateway: its pages and asse
 
 ## Requirements
 
-Go 1.26 or newer (`go.mod` selects the Go 1.27.3 toolchain) and Node.js. The demo tool builds the gateway and its Dashboard from an APIWard checkout, by default the folder `apiward` beside this repository:
+Go 1.26 or newer (`go.mod` selects the Go 1.27.4 toolchain) and Node.js. The demo tool builds the gateway and its Dashboard from an APIWard checkout, by default the folder `apiward` beside this repository:
 
 ```
 git clone https://github.com/Alex-Zechariah-02/apiward
