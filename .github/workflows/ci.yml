@@ -107,8 +107,7 @@ jobs:
       - run: npm run check
       - run: npm run build
       - run: npm audit --audit-level=high
-      # The tests run in the installed Chrome (playwright.config.ts).
-      - run: npx playwright install --with-deps chrome
+      # The tests run in the runner image's Chrome (playwright.config.ts).
       # Failure traces hold page contents and test credentials, so they stay
       # on the machine that ran the tests and are not uploaded.
       - run: npx playwright test
