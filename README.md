@@ -1,21 +1,20 @@
 # Fetch
 
-Fetch is a fictional food and grocery delivery application used to demonstrate and test [APIWard](https://github.com/Alex-Zechariah-02/apiward), a security policy gateway for REST APIs. It has a React shop in `client/`, four business APIs (Inventory, Orders, Reports, Support) and Fetch Accounts, which signs every application token. All accounts, merchants, items and orders are synthetic.
+A fictional food and grocery delivery application, built to demonstrate and test [APIWard](https://github.com/Alex-Zechariah-02/apiward), a security policy gateway for REST APIs.
 
-Behind APIWard, the shop is reached only through the gateway: its pages and assets are public `GET` operations of the API `web`, and every API call is checked, rate-limited and audited by the gateway's policy. The services keep their business rules (ownership, stock, wallet and order transitions) and trust the caller identity the gateway forwards.
+Fetch is a React shop, four business APIs (Inventory, Orders, Reports, Support) and Fetch Accounts, which signs in users and issues their tokens. Every account, merchant, item and order is synthetic.
 
-## Layout
-
-- `cmd/services -service inventory|orders|reports|support -secret-file <service.secret>` runs a Fetch business API, with independent authenticated receipts, state and reset. A service holds its newest 10,000 receipts; `GET /receipts` on the control listener lists them oldest first with `dropped`, the number of older ones let go since the last reset. Defaults honor `EAT_PORT_OFFSET`; `-listen` and `-control` select explicit loopback addresses. Orders uses `-inventory <http-origin>` and Reports uses `-orders <http-origin>` for authenticated internal calls. With `-tls-cert`, `-tls-key` and `-client-ca` (all three, or none) the API serves TLS and admits only clients presenting a certificate issued by that CA; only then may `-listen` name an address other than loopback. Inventory and Orders then also answer their `/internal/` endpoints, and nothing else, on `127.0.0.1` at the same port, where the other services' calls arrive. The control listener is always loopback. Accounts takes the same TLS flags. `-gateway-key <file>` (the JSON Web Key Set that `gateway jwks` prints; Accounts takes it too) makes the API answer only requests carrying the gateway's signed `X-Gateway-Assertion` made for this service, valid for its 30 seconds with 5 seconds of clock difference allowed, and read the account and roles from it instead of `X-Gateway-Subject` and `X-Gateway-Roles`; anything else is answered `401 gateway_assertion_required`, while `/internal/` calls keep using the service key. `demo up` on one machine creates the gateway's assertion key and starts the four APIs with its key set (Accounts stays directly reachable, as the demo commands sign in there); delete `assertion-keys.json` from the state folder and restart to let the APIs answer direct requests again, as the standalone condition of `cmd/measure` needs; the two-host and container setups do not, as there the APIs already admit only the gateway's client certificate. `-local-security <folder>` turns on built-in protection (below) with the trusted keys and blocked list in that folder; without it the API trusts the identity headers a gateway sets.
-- `cmd/accounts -secret-file <service.secret> -signing-settings <accounts.json>` runs Fetch Accounts. Signing settings contain `kid` and an absolute `private_key_file`. Only Accounts signs application tokens, which last 15 minutes. Account and signing secrets stay in the private demonstration state.
-- `cmd/demo` builds, sets up and runs the full local stack with `up`. `up -role fetch -programs <folder>` runs the services, Accounts and shop already built in that folder instead of building them, as the container image does; `-measure` adds measurement mode, where each service keeps only answer counts per status with no cap (`GET /receipts` on its control listener) and Accounts and Orders also seed the customers `load-0001` to `load-1000` (`load0001@fetch.test`, demo password, full wallet), and Orders and Inventory keep their data from growing (Orders holds its seed orders and the newest 1,000 to 2,000 placed ones; checkout and reservation identities older than the newest 10,000 are forgotten and could be used again), so a long load run costs the same per request at its end as at its start and is not cut short by one account's rate limit; `prepare` gives a new gateway started from the APIWard image its administrator and baseline; `health` succeeds once every Fetch service on the host answers, the image's health check. `setup` writes `gateway.json`, complete baseline and deny-all policies, `service.secret`, a signing key pair and `accounts.json` into a new identified private directory, then installs the first administrator. `run` starts the five services and the gateway, serves the shop's built files on the website upstream, reports protected admission separately from listening, and stops its own children gracefully. `token` is an optional client of Accounts for a seeded subject; it cannot change the fixed 15-minute lifetime. `reset` restores every service's seed and clears its receipts. `events` prints request events from the gateway's active audit file; retained rotated files are not searched.
-- `cmd/measure -samples 30 -account cust-001 [-builtin-offset N]` collects preliminary serial wallet latency against an isolated running stack: standalone (Orders called directly), behind APIWard, and with `-builtin-offset` also a `demo up -local` stack started with `EAT_PORT_OFFSET=N`, in rotating order so no condition always goes first. It honors `EAT_PORT_OFFSET`, keeps credentials out of output, checks equivalent successful responses, and emits raw observations and aggregate JSON.
-- `internal/services`: the four APIs and Accounts, and every API's operation table (roles, rates, request bodies), which is also the gateway baseline. `internal/guard`: built-in protection. `internal/ports`: the demonstration addresses.
-- `client/`: the shop (React and TypeScript, built with Vite) and its browser tests; see its README. `e2e/`: the browser-test helpers shared with APIWard's Dashboard tests. `openapi/`: an OpenAPI description of each API.
+- [Quick start](#quick-start)
+- [Ways to run](#ways-to-run)
+- [Demo commands](#demo-commands)
+- [Project layout](#project-layout)
+- [Development](#development)
 
 ## Requirements
 
-Go 1.26 or newer (`go.mod` selects the Go 1.27.4 toolchain) and Node.js. The demo tool builds the gateway and its Dashboard from an APIWard checkout, by default the folder `apiward` beside this repository:
+- Go 1.26 or newer (`go.mod` selects the Go 1.27.4 toolchain)
+- Node.js 24
+- An APIWard checkout beside this one (not needed for `-standalone` or `-local`)
 
 ```
 git clone https://github.com/Alex-Zechariah-02/apiward
@@ -23,149 +22,72 @@ git clone https://github.com/Alex-Zechariah-02/fetch
 cd fetch
 ```
 
-`-apiward <folder>` names another checkout. The Fetch programs themselves need nothing from APIWard; one test imports APIWard's public `policy` package at the version pinned in `go.mod`, and CI checks APIWard out at that same commit.
-
-## One command
+## Quick start
 
 ```
 go run ./cmd/demo up
 ```
 
-Each run builds the gateway, services, Accounts and both websites from the current sources. It prints all fourteen fictional demo accounts; their shared public password is `FetchDemo2026!`. The first run asks you to choose a separate password for the Dashboard administrator `root`, then establishes deny-all genesis and confirms the Fetch baseline through the Admin API. Later runs keep the administrator and policy; service business data starts from its deterministic seed on restart. Programs, builds and state are kept in `EAT40005-demo` in the user cache folder (`%LOCALAPPDATA%` on Windows); `-home <dir>` chooses another folder. `-fresh` replaces identified earlier state and creates a fresh version 4 deployment; it never migrates a version 3 policy. Press Ctrl+C to stop everything. `-stdin` also stops when standard input closes, after any password prompts.
+This builds and starts the gateway, its Dashboard, the five services and the shop. The first run asks for a password for the Dashboard administrator `root`. Press Ctrl+C to stop.
 
-If an earlier native setup stopped before any administrator, candidate or policy existed, `up` recognizes that unfinished state, asks for the initial Dashboard password and preserves the complete earlier directory under `state-before-fetch-<id>` in the same home before creating the Fetch setup at `state/`. An earlier deployment with saved authority, mismatched files, a corrupt database or another process holding it is refused before building.
+| | |
+|---|---|
+| Shop, through the gateway | `http://127.0.0.2:9480/` |
+| Dashboard (sign in as `root`) | `http://127.0.0.1:9440/` |
+| Metrics | `http://127.0.0.1:9450/metrics` |
 
-The Dashboard is at `http://127.0.0.1:9440/` and the shop at `http://127.0.0.2:9480/`, through the gateway; `run` serves the shop's files itself on `127.0.0.1:9506`, the website's upstream. Metrics are at `http://127.0.0.1:9450/metrics`. `EAT_PORT_OFFSET` shifts every port; for example, `1000` selects data port 10480, admin port 10440 and metrics port 10450.
+`up` prints the fourteen demo accounts (customers, merchants, riders, support and operations staff). Their shared password is `FetchDemo2026!`.
 
-At the default offset, Inventory, Orders, Reports, Support and Accounts listen on `127.0.0.1:9501` through `9505`, with protected control listeners on `9601` through `9605`. Orders reserves Inventory stock and Reports reads Orders history through fixed `/internal/` endpoints with `X-Service-Key` from `service.secret`. Those endpoints have no gateway routes. Every service response carries `X-Service`; gateway refusals do not. The controls expose `/state`, `/receipts` and `/reset` with a separate bearer secret. Keep the state directory and all service and control listeners private to the local demonstration.
+Useful flags: `-fresh` starts over with a new administrator and policy, `-home <dir>` chooses where programs and state are kept, `-apiward <dir>` names another APIWard checkout. `EAT_PORT_OFFSET` shifts every port. Details: [reference/demo.md](reference/demo.md).
 
-## Standalone (unprotected)
+## Ways to run
 
-```
-go run ./cmd/demo up -standalone
-```
+| Mode | Command | What it shows |
+|---|---|---|
+| Behind APIWard | `demo up` | Every page and API call is checked, rate-limited and logged by the gateway. The APIs answer only requests the gateway signed. |
+| Standalone | `demo up -standalone` | The application with no protection at all. Never use it to protect anything. |
+| Built-in protection | `demo up -local` | No gateway: each API checks tokens, roles, rates and bodies itself. |
+| Two hosts | `demo certs`, then `demo up -role fetch` and `demo up -role gateway` | Fetch and the gateway on separate machines, over mutual TLS. |
+| Containers | `docker compose up` | Both as hardened container images on one or two Linux hosts. |
 
-Runs the shop, the four APIs and Accounts with no gateway, to show the application before it is protected. It needs no APIWard checkout. The demo process listens on the shop's address (`http://127.0.0.2:9480/`), serves the shop and forwards each API path to its service. **Nothing is checked:** it copies the `sub` and `roles` claims of any bearer token into the identity headers the services read, without verifying the token, so a token with made-up roles is believed; only identity headers sent by the client are discarded. Never use this mode to protect anything. Each run makes a new folder `standalone` in the demo home with a new signing key; tokens from an earlier run stop working. `-fresh` and `-apiward` are refused with `-standalone`.
+`demo` is short for `go run ./cmd/demo`. Standalone, built-in protection and moving the APIs behind APIWard with OpenAPI: [reference/modes.md](reference/modes.md). Two hosts and containers: [reference/hosts.md](reference/hosts.md); server setup: [deploy/README.md](deploy/README.md).
 
-## Built-in protection
+## Demo commands
 
-```
-go run ./cmd/demo up -local
-go run ./cmd/demo block -local [-unblock] cust-002
-```
-
-Runs the shop, the four APIs and Accounts with no gateway, each API checking every request itself before its handler runs: the RS256 token Accounts issued (one `Bearer` field, header members `alg`, `kid` and `typ` only, issuer `fetch-accounts`, audience `fetch-gateway`, expiry and not-before without leeway), the roles its own operation table permits, a blocked-accounts list, a weighted sliding-window rate per operation (per account, or per client address for public operations), and the request body's size, media type, strict JSON and schema. Before the handler runs, each API writes the admission to its own security log (`<api>-security.log`) and waits until the file is synced; if it cannot, the request is refused with 503. Refusals and outcomes are logged too. Identity headers sent by a client are discarded, and Accounts verifies the token itself for `refresh` and `me`. Refusals use the services' error form with the gateway's codes (`unauthenticated`, `forbidden`, `account_blocked`, `rate_limited`, `bad_request`, `payload_too_large`, `unsupported_media_type`).
-
-The demo process only routes each API path to its service with the caller's token. Every API's public limits therefore count the demo process's own address; measured traffic calls the APIs directly. Each run makes a new folder `local` in the demo home with a new signing key, the public key file every API trusts (`keys.json`), an empty `blocked.json` and the security logs. `block -local` changes `blocked.json` and then each running API's list through its control listener. Changing a role, a rate or a schema means editing `internal/services/rules.go` and restarting the APIs; a new signing key means restarting every API.
-
-## Moving the APIs behind APIWard
-
-Each API has an OpenAPI 3.1 description in `openapi/`: `inventory`, `orders`, `reports`, `support` and `accounts` `.openapi.yaml`. They describe the endpoints, sign-in and request bodies, and carry Fetch's own `x-fetch-roles` and `x-fetch-access` members. APIWard's import passes `x-fetch-*` members through unread and takes no roles or rate limits from a description, so an administrator sets those in the Dashboard.
+While the stack runs (`<state>` is `<home>/state`):
 
 ```
-go run ./cmd/demo migrate -out <new-policy-file>
-go run ./cmd/demo policy stage -dir <home>/state -file <new-policy-file>
+go run ./cmd/demo reset -dir <state>                                  # back to seed data
+go run ./cmd/demo attack -dir <state> -scenario flood-login -count 12 # also flood-search, flood-orders
+go run ./cmd/demo events -dir <state> -last 20                        # latest security log records
+go run ./cmd/demo keys rotate -dir <state>                            # new Accounts signing key
+go run ./cmd/demo policy export -dir <state> -out <new-file>
+go run ./cmd/demo policy stage -dir <state> -file <policy-file>
 ```
 
-`migrate` builds the gateway from the APIWard checkout and runs `gateway policy import-openapi` once per API, onto a base that holds the services' addresses, the roles and the shop's pages, and writes one policy file; it stops if any endpoint is refused. Staging saves it as a draft change in the running gateway; in the Dashboard, give each endpoint its roles and rate limit, put the change on trial and keep it. `-openapi <folder>` reads the descriptions from another folder, such as a copy from the Fetch host; `-fetch <ip>` builds onto a gateway host's base, whose services are on the Fetch host over TLS (see Two hosts), and the file is then staged with `-dir <home>/gateway`. On any other gateway, copy the descriptions there and run `gateway policy import-openapi` directly; it reads only the files it is given.
+All commands and their rules: [reference/demo.md](reference/demo.md).
 
-## Two hosts
+## Project layout
 
-Fetch and the gateway can run on separate machines: the Fetch host serves the shop, the four APIs and Accounts on one network address over TLS, admitting only the gateway's client certificate; the gateway host runs APIWard, which reaches them with that certificate and serves the shop over HTTPS. Browsers reach only the gateway.
+| Path | Contents |
+|---|---|
+| `client/` | The shop: React and TypeScript, built with Vite ([client/README.md](client/README.md)) |
+| `cmd/services` | The four business APIs |
+| `cmd/accounts` | Fetch Accounts |
+| `cmd/demo` | The demo tool: build, set up, run, attack, reset |
+| `cmd/measure` | Preliminary latency measurement |
+| `internal/services` | The APIs, Accounts and each API's operation table |
+| `internal/guard` | Built-in protection |
+| `openapi/` | An OpenAPI 3.1 description of each API |
+| `e2e/` | Browser-test helpers, shared with APIWard's Dashboard tests |
+| `deploy/` | Running on Linux servers |
+| `load/` | Load-test scripts |
 
-```
-go run ./cmd/demo certs -out <new-folder> -fetch <fetch-ip> -gateway <gateway-name-or-ip>[,...]
-go run ./cmd/demo up -role fetch -bind <fetch-ip> -certs <folder>/fetch                (on the Fetch host)
-go run ./cmd/demo up -role gateway -fetch <fetch-ip> -certs <folder>/gateway           (on the gateway host)
-```
+Program flags: [reference/programs.md](reference/programs.md).
 
-`certs` writes two folders. `fetch` holds a new private CA's certificate, Fetch's server certificate for `<fetch-ip>` and the private key Accounts signs with; `gateway` holds the CA certificate, the gateway's client certificate, its certificate for the shop's names and the Accounts public key, which is how the gateway learns which tokens to trust; for the APIWard container image it also holds the image's settings `apiward.json` and the `deny-all.json` and `baseline.json` policies. The CA's key is never written, so nothing else can be issued from it; the certificates last 30 days. `certs` refuses an existing `-out` folder: for new certificates, run it into a new folder (or delete the old one first), copy both new folders again and start the gateway with `-fresh`, or in containers install again after `docker compose down -v`, which deletes the gateway's database, administrator and policy. Copy each folder to its host only.
+## Development
 
-On the Fetch host, the APIs and Accounts listen on `<fetch-ip>` ports 9501 to 9505 and the shop on 9506; the control listeners and the calls between services stay on `127.0.0.1`. Every run starts from seed with a new service secret. On the gateway host, the shop and APIs are at `https://<gateway-name>:9480/` on every interface, while the Dashboard (`127.0.0.1:9440`) and metrics (`127.0.0.1:9450`) stay on loopback: reach the Dashboard through an SSH tunnel (`ssh -N -L 9440:127.0.0.1:9440 <user>@<gateway-host>`, then `http://127.0.0.1:9440/`). The first gateway run asks for the administrator password and establishes the baseline, whose services are `https://<fetch-ip>:<port>` with the client certificate; later runs reuse it (`-fresh` starts over). `-tls-cert` and `-tls-key` on the first run serve a public certificate, such as certbot's files, instead of the private one. With the private CA, browsers warn unless its `ca.pem` is trusted. `EAT_PORT_OFFSET` applies on both hosts. `deploy/README.md` describes firewall rules and running both hosts as systemd services on Linux.
-
-## Containers
-
-`Dockerfile` builds an image of the shop's build and the `demo`, `services` and `accounts` programs, in `/opt/fetch`, running as the non-root user 65532 on the distroless static Debian 13 image. It runs `demo up -role fetch -programs /opt/fetch` with the fetch folder of `demo certs` mounted read-only and a temporary `/tmp`, so every start begins from seed; its health check is `demo health`. `compose.yaml` runs it beside the APIWard image, built from the APIWard checkout beside this one (`APIWARD=<folder>` names another), on one Linux host with Docker Engine and its Compose plugin. Both containers use the host's network, so the Dashboard and metrics stay on the host's loopback and no address translation sits in the request path; both run with a read-only root file system, no capabilities and `no-new-privileges`, and pass `EAT_PORT_OFFSET` through. The gateway keeps its database and security log in the named volume `gateway`. The images are built inside Docker, so only `demo certs` needs Go.
-
-First run, in the Fetch checkout:
-
-```
-go run ./cmd/demo certs -out $HOME/fetch-certs -fetch 127.0.0.3 -gateway localhost,127.0.0.1
-sudo chown -R 65532:65532 $HOME/fetch-certs
-export FETCH_IP=127.0.0.3 CERTS=$HOME/fetch-certs
-docker compose build
-docker compose run --rm gateway install --config /etc/apiward/apiward.json --admin root
-docker compose up -d
-docker compose run --rm setup
-```
-
-1. `certs` can run on any machine with Go; copy the folder to the host. `127.0.0.3` is a loopback address, which keeps Fetch off the network. The folder holds private keys, so it lives outside this checkout, where Git never sees it.
-2. The images read the folder as UID and GID 65532, and the gateway uses a key only when nobody else can read it. Afterwards only `sudo` reads the files, so copy `gateway/ca.pem` from it first if a browser or `demo attack -ca` on this machine needs it.
-3. `FETCH_IP` must be the `-fetch` address given to `certs` and `CERTS` the folder it wrote; Compose refuses to start without either. `build` builds both images.
-4. `install` prints a one-time enrolment secret; keep it private. The administrator must be `root`, the name `setup` signs in with. This also starts Fetch, which the gateway depends on.
-5. `up -d` starts the gateway once Fetch is healthy. Until step 6 the gateway shows `starting`, then `unhealthy`: it has no policy yet.
-6. `setup` runs `demo prepare` once, reading only `baseline.json` and `deny-all.json` from the gateway folder (the keys stay with the gateway): it asks for the enrolment secret and then a new Dashboard password twice, without showing them, establishes deny-all genesis, confirms the Fetch baseline and prints the demo accounts.
-
-The shop is then at `https://localhost:9480/` (browsers warn unless the folder's `gateway/ca.pem` is trusted), the Dashboard at `http://127.0.0.1:9440/` (sign in as `root`) and the metrics, `/livez` and `/readyz` at `http://127.0.0.1:9450`. From another machine, reach the Dashboard through an SSH tunnel as in Two hosts. `deploy/README.md`, "One host", gives the network rules for running this setup on a server.
-
-Later:
-
-```
-docker compose up -d
-docker compose stop
-docker compose down
-```
-
-The gateway keeps its administrator, policy and security log across restarts and `down`, which keeps the volume; `docker compose down -v` deletes them, and the next start needs `install` and `setup` again. Fetch starts from seed every time, so `docker compose restart fetch` resets its data. Every `docker compose` command needs the same `FETCH_IP` and `CERTS` (and `APIWARD` when set); a `.env` file beside `compose.yaml` can hold them.
-
-Two hosts run the same images. Make the folders with `-out $HOME/fetch-certs -fetch <fetch-ip> -gateway <gateway-name>`, copy its `fetch` folder to `$HOME/fetch-certs/fetch` on the Fetch host and its `gateway` folder to `$HOME/fetch-certs/gateway` on the gateway host, and run `sudo chown -R 65532:65532 $HOME/fetch-certs` on each. With `FETCH_IP=<fetch-ip>` and `CERTS=$HOME/fetch-certs` exported on both hosts, start the Fetch host first with `docker compose up -d fetch`, then on the gateway host:
-
-```
-docker compose build
-docker compose run --rm --no-deps gateway install --config /etc/apiward/apiward.json --admin root
-docker compose up -d --no-deps gateway
-docker compose run --rm --no-deps setup
-```
-
-The gateway host builds both images, since `setup` runs from the Fetch image, so it needs both checkouts, or the images copied with `docker save` and `docker load`. The shop is then at `https://<gateway-name>:9480/`. The network rules are those of `deploy/README.md`, section 1; its "Containers instead" describes these hosts.
-
-Docker Desktop offers host networking only as an opt-in setting (version 4.34 or later, Settings > Resources > Network, signed in to Docker), at layer 4 and without binding the host's IP addresses, so the documented setup is Linux with Docker Engine; the one-host first run and later commands were tested with Docker Engine 29.1.3 and Compose 2.40.3 on Ubuntu 26.04. Containers on the host's network with a local volume add no network hop, but measurements compare only runs made the same way: never containers against programs in one comparison.
-
-## Demonstration commands
-
-While the stack is running, these commands use its identified `state` directory:
-
-```
-go run ./cmd/demo reset -dir <home>/state
-go run ./cmd/demo attack -dir <home>/state -scenario flood-search -from 127.0.0.50 -count 65
-go run ./cmd/demo attack -dir <home>/state -scenario flood-login -from 127.0.0.51 -count 12
-go run ./cmd/demo attack -dir <home>/state -scenario flood-orders -from 127.0.0.52 -count 12
-go run ./cmd/demo keys rotate -dir <home>/state
-go run ./cmd/demo keys retire -dir <home>/state -kid <old-key-id>
-go run ./cmd/demo policy export -dir <home>/state -out <new-policy-file>
-go run ./cmd/demo policy stage -dir <home>/state -file <policy-file>
-go run ./cmd/demo events -dir <home>/state -last 20
-```
-
-`attack -target https://<gateway-name>:9480 -scenario ... [-ca <folder>/gateway/ca.pem]` sends the same traffic to a gateway on another host from this machine's own address, checking the gateway's certificate against the CA file or the system's roots; it needs no `-dir`.
-
-The order flood signs in as Customer 2 (`cust-002`), keeping Customer 1's (`cust-001`) checkout quota separate. It creates real demonstration cash orders until limited; reset the demo afterwards. Different source addresses isolate the public search and login quotas.
-
-Key and policy commands prompt for the `root` Dashboard password and use its session, Origin and CSRF protections. Rotation writes a new pair locally, adds public trust and reloads it before switching Accounts; the old key remains trusted until retirement. The current Accounts key cannot be retired. A failed or unconfirmed reload leaves Accounts signing unchanged and reports the uncertainty. Policy export writes only to a new file. Policy staging validates a complete candidate against the current confirmed revision and does not activate it. No command automatically repeats a write without an answer.
-
-Money uses integer sen, wallets start at 10000 sen and checkout keys replay the first exact result without repeating the charge or reservation. Business state is in memory.
-
-To run the stack by hand, build the programs, put APIWard's Dashboard build in `<web-dir>/admin` and the shop build in `<web-dir>/demo`, then:
-
-```
-go build -trimpath -o <out-dir>/services.exe ./cmd/services
-go build -trimpath -o <out-dir>/accounts.exe ./cmd/accounts
-go build -trimpath -o <out-dir>/demo.exe ./cmd/demo
-demo setup -dir <new-dir> -web <web-dir> -gateway <gateway-binary>
-demo run -dir <new-dir> -web <web-dir> -gateway <gateway-binary> -services <out-dir>/services.exe -accounts <out-dir>/accounts.exe
-```
-
-## Tests
+Work on the shop as described in [client/README.md](client/README.md). Go checks:
 
 ```
 go mod verify
@@ -174,7 +96,7 @@ go vet ./...
 go test ./... -count=1
 ```
 
-The integration tests start all five services and walk the role flows, refusals, policy changes, blocks, keys and resets. They use synthetic identities and temporary state; real Accounts tests create private signing files in temporary directories. No application signing key is shipped in source. The shop's browser tests are described in `client/README.md`.
+The integration tests start all five services and walk the role flows, refusals, policy changes, blocks, keys and resets, with synthetic identities and temporary state. No signing key is shipped in source.
 
 ## Licence
 
