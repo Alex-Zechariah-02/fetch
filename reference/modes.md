@@ -27,6 +27,8 @@ go run ./cmd/demo block -local [-unblock] cust-002
 
 - Runs the shop, the four APIs and Accounts with no gateway, each API checking every request itself before its handler runs: the RS256 token Accounts issued (one `Bearer` field, header members `alg`, `kid` and `typ` only, issuer `fetch-accounts`, audience `fetch-gateway`, expiry and not-before without leeway), the roles its own operation table permits, a blocked-accounts list, a weighted sliding-window rate per operation (per account, or per client address for public operations), and the request body's size, media type, strict JSON and schema.
 - Before the handler runs, each API writes the admission to its own security log (`<api>-security.log`) and waits until the file is synced; if it cannot, the request is refused with 503. Refusals and outcomes are logged too.
+- The security logs are never rotated or trimmed: a record is about 320 bytes, so an admitted request adds about 650 bytes (admission and outcome), about 1.2 GB per hour at 500 requests per second.
+- A failed write (for example a full disk) refuses every later request of that API with 503 until it is restarted; each run starts empty logs in a new folder (see below).
 - Identity headers sent by a client are discarded, and Accounts verifies the token itself for `refresh` and `me`.
 - Refusals use the services' error form with the gateway's codes (`unauthenticated`, `forbidden`, `account_blocked`, `rate_limited`, `bad_request`, `payload_too_large`, `unsupported_media_type`).
 
