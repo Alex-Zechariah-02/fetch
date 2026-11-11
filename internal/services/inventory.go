@@ -12,12 +12,15 @@ type inventory struct {
 	merchants    []Merchant
 	items        []stockItem
 	reservations map[string]reservation
+	measure      bool     // measurement mode: the oldest reservations are forgotten
+	recent       arrivals // reservation identities of a measurement run
 }
 
 func (d *inventory) reset() {
 	d.merchants = seedMerchants()
 	d.items = seedItems()
 	d.reservations = map[string]reservation{}
+	d.recent = measured(d.measure)
 }
 func (d *inventory) snapshot() any {
 	return struct {

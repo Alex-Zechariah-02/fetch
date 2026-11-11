@@ -56,12 +56,14 @@ type savedOrderResult struct {
 type orders struct {
 	inventory      *serviceClient
 	list           []Order
+	seeded         int // orders in the seed, which a measurement run keeps
 	wallets        map[string]int64
 	next           int
 	idempotency    map[string]savedOrderResult
 	reservations   map[string]string
 	pendingRelease map[string]bool
-	measure        bool // also the load accounts' wallets
+	measure        bool     // also the load accounts' wallets
+	recent         arrivals // checkout identities of a measurement run
 }
 
 var orderStatuses = []string{"placed", "accepted", "ready", "picked_up", "delivered", "cancelled"}
@@ -69,6 +71,8 @@ var states = []string{"Johor", "Kedah", "Kelantan", "Melaka", "Negeri Sembilan",
 
 func (d *orders) reset() {
 	d.list = seedOrders()
+	d.seeded = len(d.list)
+	d.recent = measured(d.measure)
 	d.wallets = map[string]int64{"cust-001": walletSeed, "cust-002": walletSeed, "cust-003": walletSeed}
 	if d.measure {
 		for _, user := range loadUsers() {

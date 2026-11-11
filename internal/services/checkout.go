@@ -39,6 +39,9 @@ func (d *orders) create(r *http.Request, body []byte) result {
 	if key != "" {
 		encoded, _ := json.Marshal(res.body)
 		d.idempotency[scope] = savedOrderResult{digest, res.status, encoded}
+		for _, old := range d.recent.add(scope) {
+			delete(d.idempotency, old)
+		}
 		res.body = json.RawMessage(encoded)
 	}
 	return res
@@ -89,6 +92,7 @@ func (d *orders) place(r *http.Request, body []byte, key string) result {
 	d.list = append(d.list, created)
 	d.next++
 	d.reservations[created.ID] = reservationKey
+	d.trim()
 	return result{status: 201, body: map[string]any{"order": created}, effect: "created " + created.ID}
 }
 func validOrderRequest(request orderRequest) bool {

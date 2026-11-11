@@ -5,8 +5,10 @@ package services
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -91,4 +93,46 @@ func controlRequest(method, path string) *http.Request {
 	r := httptest.NewRequest(method, path, nil)
 	r.Header.Set("Authorization", "Bearer "+string(testSecret))
 	return r
+}
+
+// A measurement run keeps the seed orders and the newest placed ones and
+// forgets the oldest identities; outside measurement mode nothing is dropped.
+func TestMeasureBoundsData(t *testing.T) {
+	place := func(d *orders, n int) {
+		for range n {
+			id := fmt.Sprintf("ORD-%04d", d.next)
+			d.list = append(d.list, Order{ID: id})
+			d.reservations[id] = "key-" + id
+			d.next++
+			d.trim()
+		}
+	}
+	run := &orders{measure: true}
+	run.reset()
+	seed := len(run.list)
+	place(run, 2*measureOrders)
+	first, last := run.list[seed].ID, run.list[len(run.list)-1].ID
+	if len(run.list) != seed+measureOrders || len(run.reservations) != measureOrders ||
+		first != fmt.Sprintf("ORD-%04d", 1005+measureOrders) || last != fmt.Sprintf("ORD-%04d", 1005+2*measureOrders-1) ||
+		run.list[0].ID != seedOrders()[0].ID {
+		t.Fatalf("measured run holds %d orders (%s to %s), %d reservations", len(run.list), first, last, len(run.reservations))
+	}
+	plain := &orders{}
+	plain.reset()
+	place(plain, 2*measureOrders)
+	if len(plain.list) != seed+2*measureOrders {
+		t.Fatalf("default mode dropped orders: %d", len(plain.list))
+	}
+
+	keys := arrivals{limit: 2}
+	var forgotten []string
+	for _, key := range []string{"a", "b", "c", "d", "e"} {
+		forgotten = append(forgotten, keys.add(key)...)
+	}
+	if strings.Join(forgotten, "") != "ab" || strings.Join(keys.keys, "") != "cde" {
+		t.Fatalf("forgotten %v, kept %v", forgotten, keys.keys)
+	}
+	if none := measured(false); none.add("a") != nil || len(none.keys) != 0 {
+		t.Fatal("a service outside measurement mode remembers keys")
+	}
 }

@@ -88,7 +88,7 @@ func New(cfg Config) (*Service, error) {
 	s := &Service{name: cfg.Name, secret: slices.Clone(cfg.Secret), instance: randomID()}
 	switch cfg.Name {
 	case "inventory":
-		s.data = &inventory{}
+		s.data = &inventory{measure: cfg.Measure}
 	case "orders":
 		client, err := newServiceClient(cfg.InventoryURL, cfg.Secret)
 		if err != nil {

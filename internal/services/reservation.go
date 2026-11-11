@@ -87,6 +87,9 @@ func (d *inventory) reserve(r *http.Request, body []byte) result {
 		}
 	}
 	d.reservations[key] = reservation{digest: digest, counts: counts, response: response}
+	for _, old := range d.recent.add(key) {
+		delete(d.reservations, old)
+	}
 	return result{status: 200, body: response, effect: "reserved stock"}
 }
 
