@@ -55,8 +55,8 @@ go run ./cmd/demo up
 | Two hosts | `demo certs`, then `demo up -role fetch` and `demo up -role gateway` | Gateway and Fetch on separate machines, mutual TLS |
 | Containers | `docker compose up` | Both as container images |
 
-- Standalone, built-in, and importing the APIs into APIWard from OpenAPI: [reference/modes.md](reference/modes.md)
-- Two hosts and containers: [reference/hosts.md](reference/hosts.md)
+- Standalone, built-in, and importing the APIs into APIWard from OpenAPI: [docs/modes.md](docs/modes.md)
+- Two hosts and containers: [docs/hosts.md](docs/hosts.md)
 - Server setup: [deploy/README.md](deploy/README.md)
 
 ## Demo commands
@@ -72,7 +72,7 @@ Run while the stack is up. `<state>` is `<home>/state`.
 | `demo policy export -dir <state> -out <file>` | Save the policy in force |
 | `demo policy stage -dir <state> -file <file>` | Save a policy as a draft change |
 
-Details: [reference/demo.md](reference/demo.md).
+Details: [docs/demo.md](docs/demo.md).
 
 ## Project layout
 
@@ -90,7 +90,7 @@ Details: [reference/demo.md](reference/demo.md).
 | `deploy/` | Running on Linux servers |
 | `load/` | Load-test scripts |
 
-Program flags: [reference/programs.md](reference/programs.md).
+Program flags: [docs/programs.md](docs/programs.md).
 
 ## Tests
 

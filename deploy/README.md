@@ -4,7 +4,7 @@ Fetch and APIWard run either on one Linux machine (the smaller setup) or on two,
 
 ## One host
 
-The containers of [reference/hosts.md](../reference/hosts.md), "Containers", on one machine with Docker Engine. Only the gateway is on the network:
+The containers of [docs/hosts.md](../docs/hosts.md), "Containers", on one machine with Docker Engine. Only the gateway is on the network:
 
 | Listens on | What |
 |---|---|
@@ -32,7 +32,7 @@ Allow only two inbound connections: TCP 22 (SSH) from your own address and TCP 9
 
 - How to run Fetch and APIWard on two Linux machines, for example two virtual machines of one cloud provider in one private network.
 - The Fetch host admits only the gateway's client certificate, and its firewall admits only the gateway's address.
-- The commands are those of [reference/hosts.md](../reference/hosts.md), "Two hosts"; this page adds the network rules, the installation and systemd.
+- The commands are those of [docs/hosts.md](../docs/hosts.md), "Two hosts"; this page adds the network rules, the installation and systemd.
 
 | Host | Runs | Listens on |
 |---|---|---|
@@ -177,7 +177,7 @@ journalctl -u fetch -f
 
 ## Containers instead
 
-- Both hosts can run the container images of [reference/hosts.md](../reference/hosts.md), "Containers", instead of sections 2, 4 and 5. Each host needs Linux with Docker Engine and its Compose plugin (`docker compose`), from the distribution's packages or Docker's official ones (https://docs.docker.com/engine/install/), and a Fetch checkout; the gateway host also needs the APIWard checkout beside it to build the images, or both images copied with `docker save` and `docker load`.
+- Both hosts can run the container images of [docs/hosts.md](../docs/hosts.md), "Containers", instead of sections 2, 4 and 5. Each host needs Linux with Docker Engine and its Compose plugin (`docker compose`), from the distribution's packages or Docker's official ones (https://docs.docker.com/engine/install/), and a Fetch checkout; the gateway host also needs the APIWard checkout beside it to build the images, or both images copied with `docker save` and `docker load`.
 - Only the machine that runs `demo certs` needs Go.
 - The network rules of section 1 stay the same: both containers use the host's network, so Fetch listens on `<fetch-ip>` and the gateway on every interface at 9480, with the Dashboard and metrics on its loopback.
 

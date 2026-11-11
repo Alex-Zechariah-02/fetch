@@ -82,7 +82,7 @@ func certs(args []string) error {
 	fmt.Printf("Wrote %s. Copy its fetch folder to the Fetch host and its gateway folder to the gateway host, then run:\n", *out)
 	fmt.Printf("  Fetch host:   go run ./cmd/demo up -role fetch -bind %s -certs <fetch folder>\n", fetch)
 	fmt.Printf("  gateway host: go run ./cmd/demo up -role gateway -fetch %s -certs <gateway folder>\n", fetch)
-	fmt.Printf("or run the container images with these folders (reference/hosts.md, \"Containers\").\n")
+	fmt.Printf("or run the container images with these folders (docs/hosts.md, \"Containers\").\n")
 	fmt.Printf("The certificates expire on %s.\n", time.Now().Add(certLifetime).UTC().Format(time.DateOnly))
 	return nil
 }
