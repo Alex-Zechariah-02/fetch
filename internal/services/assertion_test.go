@@ -1,0 +1,91 @@
+package services
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/json"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/go-jose/go-jose/v4"
+)
+
+// A service given the gateway's keys answers only requests whose assertion
+// those keys verify, made for it and still fresh, and reads the account from
+// the assertion: plain identity headers alone, or beside it, count for nothing.
+func TestServiceRequiresGatewayAssertion(t *testing.T) {
+	newKey := func() *ecdsa.PrivateKey {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	gateway, other := newKey(), newKey()
+	set, err := json.Marshal(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &gateway.PublicKey, KeyID: "gateway-a", Algorithm: "ES256", Use: "sig"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "keys.json")
+	if err := os.WriteFile(keyFile, set, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Config{Name: "support", Secret: testSecret, GatewayKey: keyFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	sign := func(key *ecdsa.PrivateKey, audience, subject string, issued time.Time) string {
+		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "gateway-a"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, _ := json.Marshal(map[string]any{"iss": "apiward", "aud": audience, "sub": subject, "roles": []string{"CUSTOMER"},
+			"iat": issued.Unix(), "exp": issued.Add(30 * time.Second).Unix(), "jti": "request-1"})
+		signed, err := signer.Sign(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		token, err := signed.CompactSerialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	valid := sign(gateway, "support", "cust-001", now)
+	for _, tc := range []struct {
+		name       string
+		assertions []string
+		status     int
+	}{
+		{"valid", []string{valid}, 200},
+		{"none, identity headers only", nil, 401},
+		{"made for another API", []string{sign(gateway, "orders", "cust-001", now)}, 401},
+		{"expired", []string{sign(gateway, "support", "cust-001", now.Add(-time.Minute))}, 401},
+		{"issued in the future", []string{sign(gateway, "support", "cust-001", now.Add(time.Minute))}, 401},
+		{"signed by another key", []string{sign(other, "support", "cust-001", now)}, 401},
+		{"two assertions", []string{valid, valid}, 401},
+	} {
+		// The plain headers claim support staff, to whom a customer's own
+		// ticket list does not exist; the assertion names a customer.
+		r := httptest.NewRequest("GET", "/support/mine", nil)
+		r.Header.Set("X-Gateway-Subject", "sup-001")
+		r.Header.Set("X-Gateway-Roles", "SUPPORT")
+		for _, assertion := range tc.assertions {
+			r.Header.Add("X-Gateway-Assertion", assertion)
+		}
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Code != tc.status {
+			t.Errorf("%s: %d %s, want %d", tc.name, w.Code, w.Body, tc.status)
+		}
+		if tc.status == 200 && (r.Header.Get("X-Gateway-Subject") != "cust-001" || r.Header.Get("X-Gateway-Roles") != "CUSTOMER") {
+			t.Errorf("%s: the handler read subject %q and roles %q", tc.name, r.Header.Get("X-Gateway-Subject"), r.Header.Get("X-Gateway-Roles"))
+		}
+	}
+}

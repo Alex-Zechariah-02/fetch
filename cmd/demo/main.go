@@ -79,6 +79,10 @@ const (
 	databaseFile   = "state.db"
 	baselineFile   = "baseline.json"
 	denyAllFile    = "deny-all.json"
+	// The key the gateway signs its identity assertion with, and the public
+	// key set the services verify it with.
+	assertionKeyFile = "assertion-key.pem"
+	assertionSetFile = "assertion-keys.json"
 )
 
 const usage = `usage:

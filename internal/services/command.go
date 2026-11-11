@@ -1,6 +1,6 @@
 // The command line of one Fetch service or Accounts: its addresses, secret,
-// signing settings, internal call origins, the API's TLS files and the
-// folder of built-in protection.
+// signing settings, internal call origins, the API's TLS files, the gateway's
+// public keys and the folder of built-in protection.
 
 package services
 
@@ -35,6 +35,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	ordersURL := flags.String("orders", "", "Orders internal HTTP origin")
 	signingFile := flags.String("signing-settings", "", "Accounts signing settings file")
 	protection := flags.String("local-security", "", "built-in protection: check tokens, roles, blocked accounts, rates and bodies here, with the trusted keys and blocked list in this folder and the security log written there")
+	gatewayKey := flags.String("gateway-key", "", "the gateway's public keys (JSON Web Key Set, from gateway jwks): answer only requests carrying the gateway's signed identity assertion")
 	measure := flags.Bool("measure", false, "measurement mode: receipts kept as counts with no cap, and the accounts load-0001 to load-1000 seeded")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -83,7 +84,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 		return fmt.Errorf("reading service secret: %w", err)
 	}
 	secret = []byte(strings.TrimSpace(string(secret)))
-	service, err := New(Config{Name: name, Secret: secret, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection, Measure: *measure})
+	service, err := New(Config{Name: name, Secret: secret, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection, GatewayKey: *gatewayKey, Measure: *measure})
 	if err != nil {
 		return err
 	}
@@ -93,6 +94,9 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	}
 	if *protection != "" {
 		transport += ", built-in protection"
+	}
+	if *gatewayKey != "" {
+		transport += ", gateway assertion required"
 	}
 	if *measure {
 		transport += ", measurement mode"

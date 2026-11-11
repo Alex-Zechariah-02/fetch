@@ -61,7 +61,7 @@ func identifyDemo(dir string) error {
 }
 
 func checkDemo(dir string) error {
-	for _, name := range []string{identityFile, configFile, privateKeyFile, publicKeyFile, signingFile, secretFile, databaseFile, "gateway.log", "orders.log", "inventory.log", "reports.log", "support.log", "accounts.log"} {
+	for _, name := range []string{identityFile, configFile, privateKeyFile, publicKeyFile, assertionKeyFile, assertionSetFile, signingFile, secretFile, databaseFile, "gateway.log", "orders.log", "inventory.log", "reports.log", "support.log", "accounts.log"} {
 		info, err := os.Lstat(filepath.Join(dir, name))
 		if errors.Is(err, os.ErrNotExist) {
 			continue

@@ -30,6 +30,9 @@ type Config struct {
 	// Protection is the settings folder of built-in protection; empty runs
 	// the service behind a gateway, trusting its identity headers.
 	Protection string
+	// GatewayKey is the file of the gateway's public keys; set, every API
+	// request must carry the gateway's signed identity assertion.
+	GatewayKey string
 	// Measure keeps receipts as counts with no cap and seeds the load
 	// accounts, so a long load run measures the gateway, not this record.
 	Measure bool
@@ -92,6 +95,7 @@ type Service struct {
 	receipts       []Receipt
 	counts         *counts      // nil outside measurement mode
 	guard          *guard.Guard // nil without built-in protection
+	gateway        *assertions  // nil when the gateway's assertion is not required
 }
 
 func New(cfg Config) (*Service, error) {
@@ -129,6 +133,16 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Measure {
 		s.counts = newCounts()
 	}
+	if cfg.GatewayKey != "" {
+		if cfg.Protection != "" {
+			return nil, errors.New("built-in protection runs without a gateway: do not give a gateway key with it")
+		}
+		gateway, err := loadAssertions(cfg.GatewayKey, cfg.Name)
+		if err != nil {
+			return nil, fmt.Errorf("the gateway key: %w", err)
+		}
+		s.gateway = gateway
+	}
 	if cfg.Protection != "" {
 		g, err := guard.New(guard.Config{Dir: cfg.Protection, API: cfg.Name, Operations: operationsOf(cfg.Name), Roles: Roles})
 		if err != nil {
@@ -157,10 +171,14 @@ func randomID() string {
 
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Service", s.name)
-	keyRequired := strings.HasPrefix(r.URL.Path, "/internal/") && !s.serviceKey(r)
+	internal := strings.HasPrefix(r.URL.Path, "/internal/")
+	keyRequired := internal && !s.serviceKey(r)
+	// Calls between services carry the service key, not an assertion. The
+	// signature is checked before the service lock is taken.
+	unasserted := s.gateway != nil && !internal && !s.gateway.admit(r, time.Now())
 	var body []byte
 	var err error
-	if keyRequired {
+	if keyRequired || unasserted {
 		if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
 			w.Header().Set("Connection", "close")
 		}
@@ -174,6 +192,8 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case keyRequired:
 		res = failure(401, "service_key_required", "A service key is required.", "")
+	case unasserted:
+		res = failure(401, "gateway_assertion_required", "A valid gateway assertion is required.", "")
 	case s.counts == nil && len(s.receipts) >= maxReceipts:
 		res = failure(503, "receipts_full", "The request record is full. Reset this service before continuing.", "")
 	case errors.As(err, &tooLarge):

@@ -5,6 +5,8 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -62,8 +64,44 @@ func createDemo(dir, webDir, gateway, admin string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if files[assertionKeyFile], err = assertionKey(); err != nil {
+		return err
+	}
 	files[configFile] = indented(gatewayConfig(dir, webDir))
-	return createState(dir, files, baselinePolicy(), gateway, admin, out)
+	if err := createState(dir, files, baselinePolicy(), gateway, admin, out); err != nil {
+		return err
+	}
+	if err := exportKeySet(dir, gateway); err != nil {
+		os.RemoveAll(dir)
+		return err
+	}
+	return nil
+}
+
+// assertionKey makes the key the gateway signs its identity assertion with:
+// ECDSA P-256 as PKCS #8, PEM.
+func assertionKey() ([]byte, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	return pemBlock("PRIVATE KEY", der), nil
+}
+
+// exportKeySet writes the public half of the assertion key in dir as the
+// gateway prints it, for the services to verify assertions with.
+func exportKeySet(dir, gateway string) error {
+	export := exec.Command(gateway, "jwks", "--config", filepath.Join(dir, configFile))
+	export.Stderr = os.Stderr
+	set, err := export.Output()
+	if err != nil {
+		return fmt.Errorf("gateway jwks: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, assertionSetFile), set, 0o600)
 }
 
 // createState makes the new private directory dir holding files, the
@@ -160,9 +198,11 @@ type trustedKey struct {
 }
 
 // gatewayConfig is the one-machine gateway settings: HTTP on the data
-// address and this directory's signing key.
+// address, this directory's signing key and its assertion key.
 func gatewayConfig(dir, web string) map[string]any {
-	return gatewaySettings(stateFiles(dir, web), trustedKey{localKid, filepath.Join(dir, publicKeyFile)}, map[string]any{"listen": dataListen}, nil)
+	settings := gatewaySettings(stateFiles(dir, web), trustedKey{localKid, filepath.Join(dir, publicKeyFile)}, map[string]any{"listen": dataListen}, nil)
+	settings["upstream"].(map[string]any)["identity_key"] = filepath.Join(dir, assertionKeyFile)
+	return settings
 }
 
 // gatewayFiles are the files a gateway's settings name besides its keys and

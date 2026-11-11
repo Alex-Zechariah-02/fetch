@@ -82,6 +82,12 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 
 	running := newChildren(dir, len(fetchServices)+1)
 	defer func() { runErr = errors.Join(runErr, running.stop()) }()
+	// The APIs require the gateway's assertion while its key set is in the
+	// directory; without the file they answer direct requests too, which a
+	// direct measurement of an API needs.
+	if _, err := os.Stat(filepath.Join(dir, assertionSetFile)); err == nil {
+		running.keySet = filepath.Join(dir, assertionSetFile)
+	}
 	addresses, err := running.startServices(dir, serviceBinary, accountsBinary, nil, false)
 	if err != nil {
 		return err

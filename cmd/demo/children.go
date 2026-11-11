@@ -31,6 +31,9 @@ type children struct {
 	processes []*exec.Cmd
 	names     []string
 	running   int
+	// keySet, when set, is the gateway's public key file: the four APIs
+	// then answer only requests carrying its signed assertion.
+	keySet string
 }
 
 func newChildren(dir string, capacity int) *children {
@@ -127,6 +130,10 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 		args = append(args, "-listen", listen)
 		if protect {
 			args = append(args, "-local-security", dir)
+		}
+		// Accounts stays reachable directly: the demo commands sign in there.
+		if c.keySet != "" && f.name != "accounts" {
+			args = append(args, "-gateway-key", c.keySet)
 		}
 		if host != nil && host.measure {
 			args = append(args, "-measure")
