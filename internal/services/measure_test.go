@@ -1,5 +1,5 @@
 // Measurement mode: receipts become uncapped counts and the load accounts
-// exist, while the default mode keeps its capped list and its seed.
+// exist, while the default mode keeps its newest receipts and its seed.
 
 package services
 
@@ -33,6 +33,41 @@ func TestMeasureCountsReceiptsWithoutCap(t *testing.T) {
 	got = counts{}
 	if json.Unmarshal(w.Body.Bytes(), &got) != nil || got.Total != 0 || len(got.ByStatus) != 0 {
 		t.Fatalf("counts after reset: %s", w.Body)
+	}
+}
+
+// A service that has answered more than maxReceipts requests still answers:
+// it holds the newest ones in order, numbered from the reset, and reports how
+// many older ones it let go.
+func TestReceiptsKeepNewest(t *testing.T) {
+	support, err := New(Config{Name: "support", Secret: testSecret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const extra = 3
+	for range maxReceipts + extra {
+		if w := serviceRequest(support, "GET", "/nowhere", "", "", "", ""); w.Code != 404 {
+			t.Fatalf("a request past the receipt limit: status %d %s", w.Code, w.Body)
+		}
+	}
+	var got struct {
+		Receipts []Receipt `json:"receipts"`
+		Dropped  int       `json:"dropped"`
+	}
+	w := httptest.NewRecorder()
+	support.Control(testSecret).ServeHTTP(w, controlRequest("GET", "/receipts"))
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got.Receipts) != maxReceipts || got.Dropped != extra {
+		t.Fatalf("receipts held %d, dropped %d (%v)", len(got.Receipts), got.Dropped, err)
+	}
+	for i, receipt := range got.Receipts {
+		if receipt.Seq != extra+1+i {
+			t.Fatalf("receipt %d has seq %d, want %d", i, receipt.Seq, extra+1+i)
+		}
+	}
+	support.Control(testSecret).ServeHTTP(httptest.NewRecorder(), controlRequest("POST", "/reset"))
+	serviceRequest(support, "GET", "/nowhere", "", "", "", "")
+	if len(support.receipts) != 1 || support.receipts[0].Seq != 1 || support.dropped != 0 {
+		t.Fatalf("after reset: %d receipts, first seq %d, dropped %d", len(support.receipts), support.receipts[0].Seq, support.dropped)
 	}
 }
 

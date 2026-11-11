@@ -1,5 +1,5 @@
-// A Fetch service: its configuration, receipts, HTTP handler and protected
-// control listener, with built-in protection in front when configured.
+// A Fetch service: its configuration, HTTP handler and protected control
+// listener, with built-in protection in front when configured.
 
 package services
 
@@ -60,24 +60,6 @@ type resource interface {
 	snapshot() any
 }
 
-type Receipt struct {
-	Seq           int       `json:"seq"`
-	Time          time.Time `json:"time"`
-	RequestID     string    `json:"request_id"`
-	Generation    string    `json:"generation"`
-	Method        string    `json:"method"`
-	Target        string    `json:"target"`
-	Status        int       `json:"status"`
-	Effect        string    `json:"effect,omitempty"`
-	Authorization bool      `json:"authorization"`
-	Subject       string    `json:"subject,omitempty"`
-	Roles         string    `json:"roles,omitempty"`
-	BodyBytes     int       `json:"body_bytes"`
-}
-
-// maxReceipts bounds the receipt list outside measurement mode.
-const maxReceipts = 10000
-
 // counts replace the receipt list in measurement mode: answers per status.
 type counts struct {
 	Mode     string      `json:"mode"`
@@ -92,7 +74,8 @@ type Service struct {
 	name, instance string
 	secret         []byte
 	data           resource
-	receipts       []Receipt
+	receipts       []Receipt    // the newest maxReceipts, a ring once full
+	dropped        int          // older receipts the ring has overwritten
 	counts         *counts      // nil outside measurement mode
 	guard          *guard.Guard // nil without built-in protection
 	gateway        *assertions  // nil when the gateway's assertion is not required
@@ -194,8 +177,6 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		res = failure(401, "service_key_required", "A service key is required.", "")
 	case unasserted:
 		res = failure(401, "gateway_assertion_required", "A valid gateway assertion is required.", "")
-	case s.counts == nil && len(s.receipts) >= maxReceipts:
-		res = failure(503, "receipts_full", "The request record is full. Reset this service before continuing.", "")
 	case errors.As(err, &tooLarge):
 		res = failure(413, "payload_too_large", "The request body is too large.", "")
 	case err != nil:
@@ -211,8 +192,8 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case s.counts != nil:
 		s.counts.Total++
 		s.counts.ByStatus[res.status]++
-	case len(s.receipts) < maxReceipts:
-		s.receipts = append(s.receipts, Receipt{Seq: len(s.receipts) + 1, Time: time.Now().UTC(), RequestID: bounded(r.Header.Get("X-Request-Id"), 128), Generation: bounded(r.Header.Get("X-Gateway-Generation"), 256), Method: r.Method, Target: bounded(r.URL.EscapedPath(), 512), Status: res.status, Effect: res.effect, Authorization: r.Header.Get("Authorization") != "", Subject: bounded(r.Header.Get("X-Gateway-Subject"), 128), Roles: bounded(r.Header.Get("X-Gateway-Roles"), 4096), BodyBytes: len(body)})
+	default:
+		s.keep(Receipt{Time: time.Now().UTC(), RequestID: bounded(r.Header.Get("X-Request-Id"), 128), Generation: bounded(r.Header.Get("X-Gateway-Generation"), 256), Method: r.Method, Target: bounded(r.URL.EscapedPath(), 512), Status: res.status, Effect: res.effect, Authorization: r.Header.Get("Authorization") != "", Subject: bounded(r.Header.Get("X-Gateway-Subject"), 128), Roles: bounded(r.Header.Get("X-Gateway-Roles"), 4096), BodyBytes: len(body)})
 	}
 	writeJSON(w, res)
 }
@@ -270,12 +251,12 @@ func (s *Service) Control(secret []byte) http.Handler {
 				writeJSON(w, result{status: 200, body: s.counts})
 				return
 			}
-			writeJSON(w, result{status: 200, body: map[string]any{"service": s.name, "instance": s.instance, "receipts": append([]Receipt{}, s.receipts...)}})
+			writeJSON(w, result{status: 200, body: map[string]any{"service": s.name, "instance": s.instance, "receipts": s.kept(), "dropped": s.dropped}})
 		case r.Method == "GET" && r.URL.Path == "/state":
 			writeJSON(w, result{status: 200, body: s.state()})
 		case r.Method == "POST" && r.URL.Path == "/reset":
 			s.data.reset()
-			s.receipts = nil
+			s.receipts, s.dropped = nil, 0
 			if s.counts != nil {
 				s.counts = newCounts()
 			}
