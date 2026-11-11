@@ -3,7 +3,7 @@
 // step against the services' own receipts or the Admin API as well as what the
 // page shows.
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test'
-import { AdminApi, build, Demo, raw, siteURL, webRoot, type Receipt } from './env'
+import { AdminApi, deployment, raw, siteURL, type Demo, type Receipt } from './env'
 import { demoPassword, signIn } from './pages'
 
 export let demo: Demo
@@ -93,7 +93,7 @@ export function useRoles() {
     violations.length = 0
     pageErrors.length = 0
     dialogs = 0
-    demo = new Demo(build(), webRoot())
+    demo = deployment()
     const secret = demo.setup()
     await demo.start()
     await api.enrol('admin', secret, adminPassword)

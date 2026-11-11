@@ -5,7 +5,7 @@
 import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
-import { AdminApi, build, Demo, siteURL, webRoot } from './env'
+import { AdminApi, deployment, siteURL, type Demo } from './env'
 
 export let demo: Demo
 export let context: BrowserContext
@@ -53,7 +53,7 @@ export function useSite() {
     consoleLines.length = 0
     violations.length = 0
     dialogs = 0
-    demo = new Demo(build(), webRoot())
+    demo = deployment()
     const secret = demo.setup()
     await demo.start()
     const api = new AdminApi()

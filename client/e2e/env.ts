@@ -1,10 +1,10 @@
 import { cpSync, existsSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join, resolve } from 'node:path'
-import { adminURL, apiwardRoot, buildApplication, temporaryDir } from '../../e2e/backend'
+import { adminURL, apiwardRoot, buildApplication, prepared, temporaryDir } from '../../e2e/backend'
 import { Demo } from '../../e2e/demo'
 export { Demo, type Receipt } from '../../e2e/demo'
-export { adminURL, build, controls, gatewayIdentity, siteURL } from '../../e2e/backend'
+export { adminURL, controls, gatewayIdentity, prepared, siteURL } from '../../e2e/backend'
 
 export const applicationDist = resolve(process.env.E2E_APP_DIST ?? 'dist')
 
@@ -51,6 +51,13 @@ export function webRoot(): string {
   cpSync(client, join(root, 'demo'), { recursive: true })
   cpSync(process.env.DASHBOARD_DIST ?? buildApplication(join(apiwardRoot, 'dashboard')), join(root, 'admin'), { recursive: true })
   return root
+}
+
+// deployment returns a new, not yet set up demonstration on the programs and
+// web root the global setup (prepare.ts) built once for the whole run.
+export function deployment(): Demo {
+  const { bin, web } = prepared()
+  return new Demo(bin, web)
 }
 
 // raw sends one HTTP request exactly as given, including a Host header, which

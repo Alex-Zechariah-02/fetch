@@ -58,11 +58,25 @@ interface BackendIdentity {
   files: SourceFile[]
 }
 
-let builtIdentity: BackendIdentity | undefined
+// prepare is the body of each suite's Playwright global setup: it builds the
+// programs and the web root once per run and names both folders in the
+// environment, which every worker inherits. The folders are removed when the
+// run's main process exits.
+export function prepare(web: () => string): void {
+  process.env.E2E_BIN = build()
+  process.env.E2E_WEB = web()
+}
+
+// prepared returns what prepare built: the programs and the web root every
+// deployment of this run shares.
+export function prepared(): { bin: string; web: string } {
+  const { E2E_BIN: bin, E2E_WEB: web } = process.env
+  if (!bin || !web) throw new Error('the global setup has not run (playwright.config.ts globalSetup)')
+  return { bin, web }
+}
 
 export function gatewayIdentity(): BackendIdentity {
-  if (!builtIdentity) throw new Error('build() has not run')
-  return builtIdentity
+  return JSON.parse(readFileSync(join(prepared().bin, 'source.json'), 'utf8')) as BackendIdentity
 }
 
 interface Snapshot {
@@ -112,7 +126,7 @@ function snapshot(checkout: (typeof checkouts)[number], mode: 'head' | 'worktree
 // Both modes compile an isolated immutable snapshot. The default retains the
 // clean committed-source workflow; worktree mode explicitly includes local
 // backend changes and records every input file, never just a commit label.
-export function build(): string {
+function build(): string {
   const mode = process.env.E2E_BACKEND_SOURCE ?? 'head'
   if (mode !== 'head' && mode !== 'worktree') throw new Error('E2E_BACKEND_SOURCE must be head or worktree')
   if (!existsSync(join(apiwardRoot, 'cmd', 'gateway'))) throw new Error(`${apiwardRoot} is not an APIWard checkout: clone github.com/Alex-Zechariah-02/apiward beside this repository`)
@@ -139,7 +153,6 @@ export function build(): string {
     for (const program of programs) run('go', ['build', '-trimpath', '-o', join(bin, program.name + executable), ...program.args], join(source, program.dir))
     writeFileSync(join(bin, 'source.json'), JSON.stringify(identity, null, 2))
     if (process.env.E2E_EVIDENCE) appendFileSync(process.env.E2E_EVIDENCE, JSON.stringify({ kind: 'backend-build', ...identity }) + '\n')
-    builtIdentity = identity
     return bin
   } finally {
     rmSync(source, { recursive: true, force: true })

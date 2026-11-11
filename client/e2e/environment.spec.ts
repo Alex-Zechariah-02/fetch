@@ -2,7 +2,7 @@
 // source identity, and the cleanup of a demonstration whose startup failed.
 import { expect, test } from '@playwright/test'
 import { resolveConfig } from 'vite'
-import { adminURL, build, controls, Demo, gatewayIdentity, siteURL } from './env'
+import { adminURL, controls, Demo, gatewayIdentity, prepared, siteURL } from './env'
 
 test('the browser harness and development proxy honor the selected isolation ports', async () => {
   // Independent expectations keep an offset accidentally omitted by the helper
@@ -24,14 +24,13 @@ test('the browser harness and development proxy honor the selected isolation por
 })
 
 test('the selected backend records its actual source identity', () => {
-  build()
   expect(gatewayIdentity()).toMatchObject({ source: process.env.E2E_BACKEND_SOURCE ?? 'head' })
   expect(gatewayIdentity()).toHaveProperty('source_sha256', expect.stringMatching(/^[a-f0-9]{64}$/))
   expect(gatewayIdentity()).toHaveProperty('diff_sha256', expect.stringMatching(/^[a-f0-9]{64}$/))
 })
 
 test('failed demo startup can still be cleaned up', async () => {
-  const bin = build()
+  const { bin } = prepared()
   // Deliberately omit setup: the owned demo exits before opening listeners.
   const demo = new Demo(bin, '')
   await expect(demo.start()).rejects.toThrow('demo run exited')

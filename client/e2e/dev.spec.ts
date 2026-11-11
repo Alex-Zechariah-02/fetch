@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { createServer, type ViteDevServer } from 'vite'
 import { expect, test, type BrowserContext } from '@playwright/test'
-import { build, Demo, webRoot } from './env'
+import { deployment, type Demo } from './env'
 import { record, shot } from './pages'
 
 // Development observation only. Production acceptance runs on the native
@@ -17,7 +17,7 @@ test.describe.serial('Fetch app development server observation', () => {
   })
 
   test('the development server sends API paths to the gateway, never to a service, and shows its answer', async ({ browser }) => {
-    demo = new Demo(build(), webRoot())
+    demo = deployment()
     demo.setup()
     await demo.start()
     vite = await createServer({ configFile: resolve('vite.config.ts') })
