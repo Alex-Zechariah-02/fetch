@@ -40,7 +40,7 @@ go run ./cmd/demo up -role gateway -fetch <fetch-ip> -certs <folder>/gateway    
 - `compose.yaml` runs it beside the APIWard image, built from the APIWard checkout beside this one (`APIWARD=<folder>` names another), on one Linux host with Docker Engine and its Compose plugin.
 - Both containers use the host's network, so the Dashboard and metrics stay on the host's loopback and no address translation sits in the request path; both run with a read-only root file system, no capabilities and `no-new-privileges`, and pass `EAT_PORT_OFFSET` through.
 - The gateway keeps its database and security log in the named volume `gateway`.
-- The images are built inside Docker, so only `demo certs` needs Go.
+- The images are built inside Docker, and `demo certs` also runs from the Fetch image, so a host with only Docker needs no Go (see First run on one host).
 
 ### First run on one host
 
@@ -57,7 +57,7 @@ docker compose up -d
 docker compose run --rm setup
 ```
 
-1. `certs` can run on any machine with Go; copy the folder to the host. `127.0.0.3` is a loopback address, which keeps Fetch off the network. The folder holds private keys, so it lives outside this checkout, where Git never sees it.
+1. `certs` can run on any machine with Go; copy the folder to the host. Without Go, build the images first (`FETCH_IP` and `CERTS` exported, `docker compose build`) and run it from the Fetch image as yourself: `docker run --rm --read-only --cap-drop ALL -u "$(id -u):$(id -g)" -v "$HOME:/out" fetch:dev certs -out /out/fetch-certs -fetch 127.0.0.3 -gateway localhost,127.0.0.1`, then continue with the two `chown` lines. `127.0.0.3` is a loopback address, which keeps Fetch off the network. The folder holds private keys, so it lives outside this checkout, where Git never sees it.
 2. The Fetch image reads its folder as UID and GID 65531 and the APIWard image its own as 65532, and the gateway uses a key only when nobody else can read it. Afterwards only `sudo` reads the files, so copy `gateway/ca.pem` from it first if a browser or `demo attack -ca` on this machine needs it.
 3. `FETCH_IP` must be the `-fetch` address given to `certs` and `CERTS` the folder it wrote; Compose refuses to start without either. `build` builds both images.
 4. `install` prints a one-time enrolment secret; keep it private. The administrator must be `root`, the name `setup` signs in with. This also starts Fetch, which the gateway depends on.
