@@ -134,7 +134,7 @@ function MenuRow({ item, section, onChanged }: { item: Item; section: 'food' | '
       </form>
       <label className="flex cursor-pointer items-center gap-2.5 text-sm font-semibold">
         <span className="relative inline-flex">
-          <input type="checkbox" role="switch" checked={item.available} disabled={!!action.busy} onChange={(e) => void action.run('available', `/inventory/items/${encodeURIComponent(item.id)}`, { object: 'the availability change', done: 'saved', check: 'Refresh the menu' }, { available: e.target.checked })} className="peer sr-only" />
+          <input type="checkbox" role="switch" checked={item.available} disabled={!!action.busy} onChange={(e) => void action.run(e.target.checked ? 'available' : 'unavailable', `/inventory/items/${encodeURIComponent(item.id)}`, { object: 'the availability change', done: 'saved', check: 'Refresh the menu' }, { available: e.target.checked })} className="peer sr-only" />
           <span className="h-6 w-11 rounded-full bg-line-strong transition-colors peer-checked:bg-brand peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" aria-hidden="true" />
           <span className="absolute top-0.5 left-0.5 size-5 rounded-full bg-surface shadow-card transition-transform peer-checked:translate-x-5" aria-hidden="true" />
         </span>
@@ -150,7 +150,7 @@ function MenuRow({ item, section, onChanged }: { item: Item; section: 'food' | '
         <span className="text-sm text-ink-3">Made to order</span>
       )}
       <p className="text-xs font-semibold text-ok md:col-span-4 empty:hidden" role="status">
-        {action.done === 'price' ? 'New price saved.' : action.done === 'available' ? (item.available ? 'Now available to order.' : 'Marked unavailable.') : action.done === 'stock' ? 'Stock updated.' : ''}
+        {action.done === 'price' ? 'New price saved.' : action.done === 'available' ? 'Now available to order.' : action.done === 'unavailable' ? 'Marked unavailable.' : action.done === 'stock' ? 'Stock updated.' : ''}
       </p>
       {action.problem && <ProblemNotice className="md:col-span-4" problem={action.problem.problem} />}
     </li>
