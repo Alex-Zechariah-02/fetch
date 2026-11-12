@@ -129,7 +129,7 @@ func gatewayRole(home, fetchIP, certs, tlsCert, tlsKey string) (gatewayHost, err
 		shopURL:   shopURL,
 		reused:    "Reusing the gateway host set up earlier in " + state + ": its Fetch address and certificate files stay as first set (-fresh starts over).",
 		build: func(source sources) (builtPrograms, error) {
-			gateway, err := buildProgram("gateway", source.apiward, filepath.Join(home, "bin"))
+			gateway, err := buildProgram("apiward", source.apiward, filepath.Join(home, "bin"))
 			if err != nil {
 				return builtPrograms{}, err
 			}

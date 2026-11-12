@@ -20,7 +20,7 @@ type builtPrograms struct{ gateway, services, accounts string }
 // buildPrograms builds the gateway, services and Accounts programs into bin,
 // every time, so the demonstration always runs the current sources.
 func buildPrograms(source sources, bin string) (builtPrograms, error) {
-	gateway, err := buildProgram("gateway", source.apiward, bin)
+	gateway, err := buildProgram("apiward", source.apiward, bin)
 	if err != nil {
 		return builtPrograms{}, err
 	}
@@ -144,7 +144,7 @@ func enrolmentSecret(install string) (string, error) {
 			}
 		}
 	}
-	return "", errors.New("the gateway install output holds no enrolment secret")
+	return "", errors.New("the apiward install output holds no enrolment secret")
 }
 
 // prepareGateway gives a deployment without a policy its administrator and

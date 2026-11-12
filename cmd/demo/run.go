@@ -28,7 +28,7 @@ import (
 func run(args []string) (runErr error) {
 	set := flag.NewFlagSet("run", flag.ContinueOnError)
 	web := set.String("web", "", "built frontend directory holding demo/, the shop")
-	gateway := set.String("gateway", "", "gateway binary")
+	gateway := set.String("gateway", "", "the apiward binary that plays the gateway")
 	serviceBinary := set.String("services", "", "Fetch services binary")
 	accountsBinary := set.String("accounts", "", "Fetch Accounts binary")
 	stdin := set.Bool("stdin", false, "also stop when standard input closes")

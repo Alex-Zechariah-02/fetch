@@ -82,6 +82,6 @@ To run the stack by hand, build the programs, put APIWard's Dashboard build in `
 go build -trimpath -o <out-dir>/services.exe ./cmd/services
 go build -trimpath -o <out-dir>/accounts.exe ./cmd/accounts
 go build -trimpath -o <out-dir>/demo.exe ./cmd/demo
-demo setup -dir <new-dir> -web <web-dir> -gateway <gateway-binary>
-demo run -dir <new-dir> -web <web-dir> -gateway <gateway-binary> -services <out-dir>/services.exe -accounts <out-dir>/accounts.exe
+demo setup -dir <new-dir> -web <web-dir> -gateway <apiward-binary>
+demo run -dir <new-dir> -web <web-dir> -gateway <apiward-binary> -services <out-dir>/services.exe -accounts <out-dir>/accounts.exe
 ```

@@ -39,7 +39,7 @@ export class Demo {
   // setup creates the demonstration directory and returns the first
   // administrator's enrolment secret, which is never printed by the tests.
   setup(): string {
-    const result = this.tool('setup', '-dir', this.dir, '-web', this.web, '-gateway', join(this.bin, 'gateway' + exe))
+    const result = this.tool('setup', '-dir', this.dir, '-web', this.web, '-gateway', join(this.bin, 'apiward' + exe))
     if (result.status !== 0) throw new Error(`setup failed: ${result.stderr}`)
     return enrolmentSecret(result.stdout)
   }
@@ -48,7 +48,7 @@ export class Demo {
   // fault-injection gateway and one named fault, which the run command's
   // processes inherit through the environment.
   async start(options: { fault?: string } = {}): Promise<void> {
-    const gateway = options.fault ? 'gateway-fault' : 'gateway'
+    const gateway = options.fault ? 'apiward-fault' : 'apiward'
     const env = { ...process.env }
     delete env.GATEWAY_FAULT
     if (options.fault) env.GATEWAY_FAULT = options.fault

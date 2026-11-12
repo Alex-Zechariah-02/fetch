@@ -129,7 +129,7 @@ function snapshot(checkout: (typeof checkouts)[number], mode: 'head' | 'worktree
 function build(): string {
   const mode = process.env.E2E_BACKEND_SOURCE ?? 'head'
   if (mode !== 'head' && mode !== 'worktree') throw new Error('E2E_BACKEND_SOURCE must be head or worktree')
-  if (!existsSync(join(apiwardRoot, 'cmd', 'gateway'))) throw new Error(`${apiwardRoot} is not an APIWard checkout: clone github.com/Alex-Zechariah-02/apiward beside this repository`)
+  if (!existsSync(join(apiwardRoot, 'cmd', 'apiward'))) throw new Error(`${apiwardRoot} is not an APIWard checkout: clone github.com/Alex-Zechariah-02/apiward beside this repository`)
   const source = temporaryDir('gateway-e2e-src-')
   const bin = temporaryDir('gateway-e2e-bin-')
   const snapshots = checkouts.map((checkout) => snapshot(checkout, mode, join(source, checkout.name)))
@@ -143,11 +143,11 @@ function build(): string {
     files,
   }
   const programs = [
-    { name: 'gateway', dir: 'apiward', args: ['./cmd/gateway'] },
+    { name: 'apiward', dir: 'apiward', args: ['./cmd/apiward'] },
     { name: 'services', dir: 'fetch', args: ['./cmd/services'] },
     { name: 'accounts', dir: 'fetch', args: ['./cmd/accounts'] },
     { name: 'demo', dir: 'fetch', args: ['./cmd/demo'] },
-    { name: 'gateway-fault', dir: 'apiward', args: ['-tags', 'faultinject', './cmd/gateway'] },
+    { name: 'apiward-fault', dir: 'apiward', args: ['-tags', 'faultinject', './cmd/apiward'] },
   ]
   try {
     for (const program of programs) run('go', ['build', '-trimpath', '-o', join(bin, program.name + executable), ...program.args], join(source, program.dir))

@@ -36,7 +36,7 @@ import (
 func setup(args []string) (err error) {
 	set := flag.NewFlagSet("setup", flag.ContinueOnError)
 	web := set.String("web", "", "built frontend directory holding admin/ and demo/")
-	gateway := set.String("gateway", "", "gateway binary")
+	gateway := set.String("gateway", "", "the apiward binary that plays the gateway")
 	admin := set.String("admin", "admin", "name of the first administrator")
 	dir, err := parse(set, args)
 	if err != nil {
@@ -124,7 +124,7 @@ func createState(dir string, files map[string][]byte, baseline map[string]any, g
 	install := exec.Command(gateway, "install", "--config", filepath.Join(dir, configFile), "--admin", admin)
 	install.Stdout, install.Stderr = out, os.Stderr
 	if err := install.Run(); err != nil {
-		return fmt.Errorf("gateway install: %w", err)
+		return fmt.Errorf("apiward install: %w", err)
 	}
 	return nil
 }

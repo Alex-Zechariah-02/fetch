@@ -57,8 +57,8 @@ func migrate(args []string) error {
 		return err
 	}
 	defer os.RemoveAll(work)
-	gateway := filepath.Join(work, executable("gateway"))
-	build := exec.Command("go", "build", "-o", gateway, "./cmd/gateway")
+	gateway := filepath.Join(work, executable("apiward"))
+	build := exec.Command("go", "build", "-o", gateway, "./cmd/apiward")
 	build.Dir = source.apiward
 	if log, err := build.CombinedOutput(); err != nil {
 		return fmt.Errorf("building the gateway: %w\n%s", err, log)

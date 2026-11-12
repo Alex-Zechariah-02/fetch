@@ -81,7 +81,7 @@ func TestUpRecognizesUnfinishedEarlierSetupBeforeBuilding(t *testing.T) {
 	// initial password before any build or state change. EOF cancels it.
 	workspace := t.TempDir()
 	fetch := filepath.Join(workspace, "fetch")
-	for _, dir := range []string{filepath.Join(workspace, "apiward", "cmd", "gateway"), filepath.Join(fetch, "cmd", "demo")} {
+	for _, dir := range []string{filepath.Join(workspace, "apiward", "cmd", "apiward"), filepath.Join(fetch, "cmd", "demo")} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}

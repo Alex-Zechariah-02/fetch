@@ -125,7 +125,7 @@ func findSources(apiward string) (sources, error) {
 	if apiward, err = filepath.Abs(apiward); err != nil {
 		return sources{}, err
 	}
-	if _, err := os.Stat(filepath.Join(apiward, "cmd", "gateway")); err != nil {
+	if _, err := os.Stat(filepath.Join(apiward, "cmd", "apiward")); err != nil {
 		return sources{}, fmt.Errorf("%s is not an APIWard checkout: clone github.com/Alex-Zechariah-02/apiward there or pass -apiward <folder>", apiward)
 	}
 	return sources{apiward: apiward, fetch: fetch}, nil

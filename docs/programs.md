@@ -21,7 +21,7 @@ The programs and folders of this repository, with their flags. Back to the [READ
 
 ### Gateway assertion
 
-- `-gateway-key <file>` (the JSON Web Key Set that `gateway jwks` prints; Accounts takes it too) makes the API answer only requests carrying the gateway's signed `X-Gateway-Assertion` made for this service, valid for its 30 seconds with 5 seconds of clock difference allowed, and read the account and roles from it instead of `X-Gateway-Subject` and `X-Gateway-Roles`; anything else is answered `401 gateway_assertion_required`, while `/internal/` calls keep using the service key.
+- `-gateway-key <file>` (the JSON Web Key Set that `apiward jwks` prints; Accounts takes it too) makes the API answer only requests carrying the gateway's signed `X-Gateway-Assertion` made for this service, valid for its 30 seconds with 5 seconds of clock difference allowed, and read the account and roles from it instead of `X-Gateway-Subject` and `X-Gateway-Roles`; anything else is answered `401 gateway_assertion_required`, while `/internal/` calls keep using the service key.
 - `demo up` on one machine creates the gateway's assertion key and starts the four APIs with its key set (Accounts stays directly reachable, as the demo commands sign in there); delete `assertion-keys.json` from the state folder and restart to let the APIs answer direct requests again, as the standalone condition of `cmd/measure` needs.
 - The two-host and container setups always require the assertion: `demo certs` writes the gateway's assertion key into the `gateway` folder and its key set into the `fetch` folder, and `demo up -role fetch` starts the four APIs with it, so a client certificate alone no longer reaches an API.
 - The assertion must also name the request's own method and path.

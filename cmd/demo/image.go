@@ -44,7 +44,7 @@ func addImageFiles(gateway map[string][]byte, fetch netip.Addr) error {
 // prepare gives a new gateway, started from the APIWard image with the
 // settings of the gateway folder certs, its administrator and baseline
 // policy through the Admin API on this host's loopback address. It asks for
-// the enrolment secret that gateway install printed and a new password.
+// the enrolment secret that apiward install printed and a new password.
 func prepare(args []string) error {
 	set := flag.NewFlagSet("prepare", flag.ContinueOnError)
 	certs := set.String("certs", "", "the gateway folder from demo certs")
@@ -65,7 +65,7 @@ func prepare(args []string) error {
 	if mode != "bootstrap_locked" {
 		return fmt.Errorf("the gateway reports state %q: prepare sets up only a gateway that has no policy yet", mode)
 	}
-	secret, err := readSecretLine("Enrolment secret printed by gateway install (not shown): ")
+	secret, err := readSecretLine("Enrolment secret printed by apiward install (not shown): ")
 	if err != nil {
 		return err
 	}

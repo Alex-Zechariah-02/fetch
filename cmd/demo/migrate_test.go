@@ -22,8 +22,8 @@ func TestMigrationMatchesBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 	work := t.TempDir()
-	gateway := filepath.Join(work, executable("gateway"))
-	build := exec.Command("go", "build", "-C", source.apiward, "-o", gateway, "./cmd/gateway")
+	gateway := filepath.Join(work, executable("apiward"))
+	build := exec.Command("go", "build", "-C", source.apiward, "-o", gateway, "./cmd/apiward")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the gateway: %v\n%s", err, out)
 	}

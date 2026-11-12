@@ -20,13 +20,13 @@ import (
 // the canonical policy must not change and the import must map everything.
 func TestBaselineRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	gateway := filepath.Join(dir, "gateway.exe")
+	gateway := filepath.Join(dir, "apiward.exe")
 	// The gateway comes from the APIWard checkout beside this repository.
 	source, err := findSources("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	build := exec.Command("go", "build", "-C", source.apiward, "-o", gateway, "./cmd/gateway")
+	build := exec.Command("go", "build", "-C", source.apiward, "-o", gateway, "./cmd/apiward")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the gateway: %v\n%s", err, out)
 	}
