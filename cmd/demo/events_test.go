@@ -43,6 +43,8 @@ bad complete record
 {"kind":"request.forwarded","request_id":"two","status":200}
 {"kind":"request.rejected","request_id":"one","status":403}
 {"kind":`
+	// The gateway's zero-filled tail, longer than the scanner's line limit.
+	lines += strings.Repeat("\x00", 2<<20)
 	if err := os.WriteFile(active, []byte(lines), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -99,6 +100,23 @@ func reset(args []string) error {
 	return nil
 }
 
+// auditLines splits the audit file into lines. On Linux the gateway fills its
+// active file with zero bytes ahead of the records; no record holds a zero
+// byte, so a zero byte ends a line and a run of them is skipped.
+func auditLines(data []byte, atEOF bool) (int, []byte, error) {
+	i := bytes.IndexAny(data, "\n\x00")
+	if i < 0 {
+		return bufio.ScanLines(data, atEOF)
+	}
+	if data[i] == '\n' {
+		return i + 1, data[:i], nil
+	}
+	if i > 0 {
+		return i, data[:i], nil
+	}
+	return len(data) - len(bytes.TrimLeft(data, "\x00")), nil, nil
+}
+
 // events prints the gateway's request events from the audit file, oldest
 // first: every event of one request, or the last N.
 func events(args []string) error {
@@ -124,6 +142,7 @@ func events(args []string) error {
 	malformed := 0
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	scanner.Split(auditLines)
 	for scanner.Scan() {
 		var event map[string]any
 		if json.Unmarshal(scanner.Bytes(), &event) != nil {
