@@ -104,6 +104,9 @@ func apiRouter(shop fs.FS, rewrite func(*http.Request)) http.Handler {
 		target := &url.URL{Scheme: "http", Host: service.listen}
 		proxies[service.name] = &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)
+			// The APIs see this proxy as their peer; it names the visitor
+			// so built-in protection can count each one separately.
+			r.SetXForwarded()
 			if rewrite != nil {
 				rewrite(r.Out)
 			}

@@ -150,7 +150,7 @@ func (c *check) refuse(stage string, status int, code, reason string) {
 func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	c := &check{w: w, log: g.log, started: time.Now(), record: record{RequestID: requestID(), API: g.api, Method: r.Method, Path: r.URL.Path}}
 	if peer, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
-		c.record.Client = peer.Addr().Unmap().String()
+		c.record.Client = clientOf(peer.Addr().Unmap(), r.Header).String()
 	}
 	w.Header().Set("X-Request-Id", c.record.RequestID)
 	// Identity comes only from the verified token: client copies of the

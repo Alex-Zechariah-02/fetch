@@ -1,5 +1,5 @@
-// The API's security log: one JSON Lines file written by one goroutine in
-// batches, each batch synced to disk. An admission waits for its batch's
+// The API's security log: JSON Lines files, rotated at a size bound and
+// written by one goroutine in batches, each batch synced to disk. An admission waits for its batch's
 // sync before the handler runs; refusals and outcomes are queued without
 // waiting and, when they cannot be, counted and written as a loss record.
 
@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,14 @@ const (
 	// default audit wait).
 	commitWait = 2 * time.Second
 	maxPath    = 512
+	// maxMethod is longer than any registered HTTP method; Go accepts any
+	// token up to its 1 MiB header limit.
+	maxMethod = 32
+	// maxLogBytes and logFiles bound the log as the gateway's defaults bound
+	// its own (gateway.audit_max_bytes, gateway.audit_max_files), so both
+	// protected setups keep the same history.
+	maxLogBytes = 64 << 20
+	logFiles    = 8
 )
 
 // record is one security log line. Tokens, bodies and queries are never
@@ -57,9 +66,12 @@ type entry struct {
 
 var errLogFailed = errors.New("security log unavailable")
 
-// securityLog owns its file: only run writes or closes it.
+// securityLog owns its file: only run writes, rotates or closes it.
 type securityLog struct {
+	path   string
 	file   *os.File
+	size   int64 // bytes in the active file
+	limit  int64 // rotation size, maxLogBytes
 	queue  chan entry
 	seq    atomic.Uint64
 	lost   atomic.Uint64
@@ -71,11 +83,10 @@ type securityLog struct {
 
 // openLog appends to path, creating it private to this user.
 func openLog(path string) (*securityLog, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
+	l := &securityLog{path: path, limit: maxLogBytes, queue: make(chan entry, queueSize), done: make(chan struct{})}
+	if err := l.open(); err != nil {
 		return nil, err
 	}
-	l := &securityLog{file: file, queue: make(chan entry, queueSize), done: make(chan struct{})}
 	go l.run()
 	return l, nil
 }
@@ -113,6 +124,9 @@ func (l *securityLog) enqueue(r record, done chan error) bool {
 		return false
 	}
 	r.Seq, r.Time = l.seq.Add(1), time.Now().UTC()
+	if len(r.Method) > maxMethod {
+		r.Method = r.Method[:maxMethod]
+	}
 	if len(r.Path) > maxPath {
 		r.Path = r.Path[:maxPath]
 	}
@@ -171,10 +185,51 @@ func (l *securityLog) write(batch []entry) error {
 	if _, err := l.file.Write(buffer); err != nil {
 		return l.fail(err)
 	}
+	l.size += int64(len(buffer))
 	if err := l.file.Sync(); err != nil {
 		return l.fail(err)
 	}
+	if l.size >= l.limit {
+		if err := l.rotate(); err != nil {
+			return l.fail(err)
+		}
+	}
 	return nil
+}
+
+// open appends to the active file, creating it private to this user.
+func (l *securityLog) open() error {
+	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return errors.Join(err, file.Close())
+	}
+	l.file, l.size = file, info.Size()
+	return nil
+}
+
+// rotate closes the full active file as <path>.1, shifting older files up
+// and deleting the oldest, so the log keeps at most logFiles files.
+func (l *securityLog) rotate() error {
+	if err := l.file.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(fmt.Sprintf("%s.%d", l.path, logFiles-1)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	for n := logFiles - 2; n >= 1; n-- {
+		err := os.Rename(fmt.Sprintf("%s.%d", l.path, n), fmt.Sprintf("%s.%d", l.path, n+1))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	if err := os.Rename(l.path, l.path+".1"); err != nil {
+		return err
+	}
+	return l.open()
 }
 
 func (l *securityLog) fail(err error) error {
