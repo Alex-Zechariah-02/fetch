@@ -89,6 +89,8 @@ func TestServiceBodyLimitsAndResetIsolation(t *testing.T) {
 	}
 }
 
+// An unconfirmed stock release does not undo or deny the cancel: the order
+// is cancelled and refunded, the answer says so, and the release is retried.
 func TestCancellationReportsUnconfirmedStockRelease(t *testing.T) {
 	inventory, _ := New(Config{Name: "inventory", Secret: testSecret})
 	var fail atomic.Bool
@@ -109,8 +111,8 @@ func TestCancellationReportsUnconfirmedStockRelease(t *testing.T) {
 	}
 	fail.Store(true)
 	w := serviceRequest(service, "POST", "/orders/cancel/ORD-1005", "", "cust-003", "CUSTOMER", "")
-	if w.Code != 503 || !strings.Contains(w.Body.String(), "inventory_unavailable") {
-		t.Errorf("unconfirmed release claimed success: %d %s", w.Code, w.Body)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"cancelled"`) {
+		t.Errorf("a completed cancel was answered %d %s", w.Code, w.Body)
 	}
 	order := service.data.(*orders).find("ORD-1005")
 	if order.Status != "cancelled" || service.data.(*orders).wallets["cust-003"] != 10000 {

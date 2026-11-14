@@ -55,10 +55,11 @@ func (d *orders) transition(r *http.Request, id, action string) result {
 	if order.Status != want {
 		return failure(409, "invalid_transition", "That action is not available for the current order status.", "")
 	}
-	releaseConfirmed := true
 	if key := d.reservations[id]; key != "" {
+		// The order is cancelled whether or not Inventory confirms the
+		// release: an unconfirmed one stays pending and is retried.
 		if action == "cancel" {
-			releaseConfirmed = d.release(r.Context(), key)
+			d.release(r.Context(), key)
 		}
 		if action == "deliver" {
 			status, _, err := d.inventory.call(r.Context(), "POST", "/internal/reservations/"+key+"/commit", nil, key)
@@ -76,8 +77,5 @@ func (d *orders) transition(r *http.Request, id, action string) result {
 	}
 	order.Status = next
 	order.Timeline = append(order.Timeline, TimelineEntry{next, time.Now().UTC()})
-	if !releaseConfirmed {
-		return inventoryUnavailable()
-	}
 	return result{status: 200, body: map[string]any{"order": *order}, effect: next + " " + id}
 }

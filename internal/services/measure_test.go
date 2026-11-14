@@ -117,11 +117,17 @@ func TestMeasureBoundsData(t *testing.T) {
 		run.list[0].ID != seedOrders()[0].ID {
 		t.Fatalf("measured run holds %d orders (%s to %s), %d reservations", len(run.list), first, last, len(run.reservations))
 	}
+	// Outside measurement mode the bound is larger and stays below the
+	// 20,000 orders a report reads.
 	plain := &orders{}
 	plain.reset()
 	place(plain, 2*measureOrders)
 	if len(plain.list) != seed+2*measureOrders {
-		t.Fatalf("default mode dropped orders: %d", len(plain.list))
+		t.Fatalf("default mode dropped orders early: %d", len(plain.list))
+	}
+	place(plain, 2*keptOrders-2*measureOrders)
+	if len(plain.list) != seed+keptOrders || seed+2*keptOrders > 20000 {
+		t.Fatalf("default mode holds %d orders", len(plain.list))
 	}
 
 	keys := arrivals{limit: 2}
@@ -132,7 +138,19 @@ func TestMeasureBoundsData(t *testing.T) {
 	if strings.Join(forgotten, "") != "ab" || strings.Join(keys.keys, "") != "cde" {
 		t.Fatalf("forgotten %v, kept %v", forgotten, keys.keys)
 	}
-	if none := measured(false); none.add("a") != nil || len(none.keys) != 0 {
-		t.Fatal("a service outside measurement mode remembers keys")
+	if kept := measured(false); kept.limit != keptKeys {
+		t.Fatalf("a service outside measurement mode keeps %d keys", kept.limit)
+	}
+
+	// A forgotten reservation that was neither released nor committed
+	// returns its stock.
+	stock := &inventory{measure: true}
+	stock.reset()
+	item := stock.item("ITM-501")
+	item.Reserved = 2
+	stock.reservations["forgotten"] = reservation{counts: map[string]int{"ITM-501": 2}}
+	stock.forget("forgotten")
+	if item.Reserved != 0 || len(stock.reservations) != 0 {
+		t.Fatalf("forgotten reservation left %d reserved", item.Reserved)
 	}
 }

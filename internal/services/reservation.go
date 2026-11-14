@@ -88,9 +88,24 @@ func (d *inventory) reserve(r *http.Request, body []byte) result {
 	}
 	d.reservations[key] = reservation{digest: digest, counts: counts, response: response}
 	for _, old := range d.recent.add(key) {
-		delete(d.reservations, old)
+		d.forget(old)
 	}
 	return result{status: 200, body: response, effect: "reserved stock"}
+}
+
+// forget drops a reservation the key memory no longer holds, returning the
+// stock it still reserves: one neither released nor committed would
+// otherwise keep that stock reserved for good.
+func (d *inventory) forget(key string) {
+	entry := d.reservations[key]
+	if !entry.released && !entry.committed {
+		for id, quantity := range entry.counts {
+			if stock := d.item(id); stock != nil && stock.Stock != nil {
+				stock.Reserved -= quantity
+			}
+		}
+	}
+	delete(d.reservations, key)
 }
 
 func (d *inventory) release(key string) result {
