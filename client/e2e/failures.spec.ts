@@ -170,7 +170,7 @@ test.describe.serial('Failures and safeguards on the real services', () => {
     }
   })
 
-  test('a cancellation with Inventory unavailable stays uncertain while a failed checkout is a definite refusal', async ({ browser }) => {
+  test('a cancellation with Inventory unavailable completes while a failed checkout is a definite refusal', async ({ browser }) => {
     const customer1 = await person(browser, 'customer1@fetch.test')
     await addToBasket(customer1, siteURL, 'MER-005', 'Full Cream Milk 1 L')
     const order = await placeOrder(customer1, siteURL, 'Fetch wallet')
@@ -194,13 +194,13 @@ test.describe.serial('Failures and safeguards on the real services', () => {
       const cancelled = state.orders.find((entry) => entry.id === order)!
       expect(cancelled.status).toBe('cancelled')
       expect(state.wallets['cust-001']).toBe(charged.wallets['cust-001'] + cancelled.total_sen)
-      const unknown = customer1.getByRole('alert').filter({ hasText: 'Fetch couldn’t confirm cancelling this order.' })
-      await expect(unknown).toContainText('It may or may not have been cancelled.')
-      await expect(unknown).toContainText('Answered by Orders · 503')
+      // The cancel and refund are complete; only the stock release waits for
+      // Inventory and is retried, so nothing is reported as uncertain.
+      await expect(customer1.getByRole('alert').filter({ hasText: 'Fetch couldn’t confirm cancelling this order.' })).toHaveCount(0)
       await customer1.waitForTimeout(3000)
       const sent = (await since('orders', before)).filter((r) => r.method === 'POST' && r.target === `/orders/cancel/${order}`)
       expect(sent).toHaveLength(1)
-      expect(sent[0].status).toBe(503)
+      expect(sent[0].status).toBe(200)
 
       await customer3.getByRole('button', { name: /^Place order · RM / }).click()
       await expect(customer3.getByRole('alert').filter({ hasText: 'Inventory could not confirm this request.' })).toContainText('Answered by Orders · 503')
