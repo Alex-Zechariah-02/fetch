@@ -12,13 +12,20 @@ import (
 	"time"
 )
 
-type reports struct{ orders *serviceClient }
+type reports struct {
+	orders *serviceClient
+	// outside runs the reads from Orders without the service lock.
+	outside func(func())
+}
 
 // Reports own no order data. Reset clears the service's receipts; every report
 // reads the current Orders API rather than a separately seeded or stale copy.
 func (d *reports) reset()        {}
 func (d *reports) snapshot() any { return map[string]any{"source": "orders"} }
 func (d *reports) close()        { d.orders.close() }
+
+// load reads every order from Orders. 4 s bounds the wait of one report;
+// 20,000 orders, read in pages of 100 (the most Orders gives), bound its memory.
 func (d *reports) load(ctx context.Context) ([]Order, error) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
@@ -77,6 +84,7 @@ func (d *reports) handle(r *http.Request, body []byte) result {
 		return invalidQuery()
 	}
 	to := time.Now().UTC().Truncate(24 * time.Hour)
+	// Without dates a report covers the last 90 days, today included: a quarter.
 	from := to.AddDate(0, 0, -89)
 	var err error
 	if q.Has("from") {
@@ -106,7 +114,8 @@ func (d *reports) handle(r *http.Request, body []byte) result {
 		}
 		merchantID = *user.Merchant
 	}
-	orders, err := d.load(r.Context())
+	var orders []Order
+	d.outside(func() { orders, err = d.load(r.Context()) })
 	if err != nil {
 		// A caller that went away is not an Orders outage; the receipt says which.
 		if r.Context().Err() != nil {

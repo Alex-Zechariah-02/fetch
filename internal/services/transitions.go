@@ -55,17 +55,23 @@ func (d *orders) transition(r *http.Request, id, action string) result {
 	if order.Status != want {
 		return failure(409, "invalid_transition", "That action is not available for the current order status.", "")
 	}
-	if key := d.reservations[id]; key != "" {
-		// The order is cancelled whether or not Inventory confirms the
-		// release: an unconfirmed one stays pending and is retried.
-		if action == "cancel" {
-			d.release(r.Context(), key)
+	key := d.reservations[id]
+	if key != "" && action == "deliver" {
+		var status int
+		var err error
+		epoch := d.epoch
+		d.outside(func() {
+			status, _, err = d.inventory.call(r.Context(), "POST", "/internal/reservations/"+key+"/commit", nil, key)
+		})
+		if err != nil || status != 200 || d.epoch != epoch {
+			return inventoryUnavailable()
 		}
-		if action == "deliver" {
-			status, _, err := d.inventory.call(r.Context(), "POST", "/internal/reservations/"+key+"/commit", nil, key)
-			if err != nil || status != 200 {
-				return inventoryUnavailable()
-			}
+		// The list may have moved and the order changed while Inventory
+		// answered: it is found and checked again. A second commit of one
+		// reservation changes nothing at Inventory.
+		order = d.find(id)
+		if order == nil || order.Status != want {
+			return failure(409, "invalid_transition", "That action is not available for the current order status.", "")
 		}
 	}
 	if action == "pickup" {
@@ -77,5 +83,12 @@ func (d *orders) transition(r *http.Request, id, action string) result {
 	}
 	order.Status = next
 	order.Timeline = append(order.Timeline, TimelineEntry{next, time.Now().UTC()})
-	return result{status: 200, body: map[string]any{"order": *order}, effect: next + " " + id}
+	res := result{status: 200, body: map[string]any{"order": *order}, effect: next + " " + id}
+	// The order is cancelled, and its wallet payment returned, before the
+	// release and whether or not Inventory confirms it: an unconfirmed
+	// release stays pending and is retried. Nothing reads order after it.
+	if key != "" && action == "cancel" {
+		d.release(r.Context(), key)
+	}
+	return res
 }

@@ -3,7 +3,6 @@
 package services
 
 import (
-	"context"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -62,8 +61,17 @@ type orders struct {
 	idempotency    map[string]savedOrderResult
 	reservations   map[string]string
 	pendingRelease map[string]bool
-	measure        bool     // also the load accounts' wallets
-	recent         arrivals // checkout identities of a measurement run
+	// outside runs a call to Inventory without the service lock.
+	outside func(func())
+	// epoch counts resets: a request that waited outside the lock while the
+	// data was replaced must not write its result into the new data.
+	epoch int
+	// releasing and placing hold the reservation keys and checkout scopes
+	// with a call to Inventory under way, so no second request repeats it.
+	releasing map[string]bool
+	placing   map[string]chan struct{}
+	measure   bool     // also the load accounts' wallets
+	recent    arrivals // checkout identities of a measurement run
 }
 
 var orderStatuses = []string{"placed", "accepted", "ready", "picked_up", "delivered", "cancelled"}
@@ -83,6 +91,9 @@ func (d *orders) reset() {
 	d.idempotency = map[string]savedOrderResult{}
 	d.reservations = map[string]string{}
 	d.pendingRelease = map[string]bool{}
+	d.releasing = map[string]bool{}
+	d.placing = map[string]chan struct{}{}
+	d.epoch++
 }
 func (d *orders) close() { d.inventory.close() }
 func (d *orders) snapshot() any {
@@ -113,28 +124,14 @@ func (d *orders) fee(subject string, merchant Merchant) (int64, *string) {
 	}
 	return merchant.DeliveryFee, nil
 }
-func (d *orders) release(ctx context.Context, key string) bool {
-	// Compensation survives caller cancellation and uses one stable identity.
-	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-	defer cancel()
-	for range 2 {
-		status, _, err := d.inventory.call(cleanup, "DELETE", "/internal/reservations/"+key, nil, key)
-		if err == nil && status == 200 {
-			delete(d.pendingRelease, key)
-			return true
-		}
-		if cleanup.Err() != nil {
-			break
-		}
-	}
-	d.pendingRelease[key] = true
-	return false
-}
 func (d *orders) handle(r *http.Request, body []byte) result {
 	// Retry one outstanding compensation per arrival, never the checkout.
 	// Every attempt has its own bound and reuses the reservation identity.
-	if pending := slices.Sorted(maps.Keys(d.pendingRelease)); len(pending) > 0 {
-		d.release(r.Context(), pending[0])
+	for _, key := range slices.Sorted(maps.Keys(d.pendingRelease)) {
+		if !d.releasing[key] {
+			d.release(r.Context(), key)
+			break
+		}
 	}
 	if r.Method == "POST" && r.URL.Path == "/orders" {
 		return d.create(r, body)
@@ -172,8 +169,15 @@ func (d *orders) handle(r *http.Request, body []byte) result {
 		if _, found := d.wallets[subject]; !found || !hasRole(r, "CUSTOMER") {
 			return notFound()
 		}
-		status, body, err := d.inventory.call(r.Context(), "GET", "/internal/merchants/"+url.PathEscape(q.Get("merchant")), nil, "")
-		if err != nil || status >= 500 {
+		var status int
+		var body []byte
+		var err error
+		epoch := d.epoch
+		d.outside(func() {
+			status, body, err = d.inventory.call(r.Context(), "GET", "/internal/merchants/"+url.PathEscape(q.Get("merchant")), nil, "")
+		})
+		// The fee below is read from the orders as they are now.
+		if err != nil || status >= 500 || d.epoch != epoch {
 			return inventoryUnavailable()
 		}
 		if status != 200 {
@@ -244,6 +248,7 @@ func (d *orders) handle(r *http.Request, body []byte) result {
 			if q.Has("limit") || q.Has("after") {
 				return invalidQuery()
 			}
+			// A merchant's screen shows its orders at once; trim bounds the list.
 			n = len(d.list)
 		}
 		if path == "/orders/mine" && q.Has("status") {

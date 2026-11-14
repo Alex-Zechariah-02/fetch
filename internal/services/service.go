@@ -70,6 +70,8 @@ type counts struct {
 func newCounts() *counts { return &counts{Mode: "count", ByStatus: map[int]int{}} }
 
 type Service struct {
+	// mu guards everything below: the data lives in memory only, and one
+	// request at a time changes it.
 	mu             sync.Mutex
 	name, instance string
 	secret         []byte
@@ -94,7 +96,7 @@ func New(cfg Config) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.data = &orders{inventory: client, measure: cfg.Measure}
+		s.data = &orders{inventory: client, measure: cfg.Measure, outside: s.outside}
 	case "support":
 		s.data = &support{}
 	case "reports":
@@ -102,7 +104,7 @@ func New(cfg Config) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.data = &reports{orders: client}
+		s.data = &reports{orders: client, outside: s.outside}
 	case "accounts":
 		accounts, err := newAccounts(cfg.SigningSettingsFile, cfg.Measure)
 		if err != nil {
@@ -146,6 +148,16 @@ func (s *Service) api() http.Handler {
 	return s.guard.Wrap(s)
 }
 
+// outside runs call without the service lock, which the caller holds before
+// and after. A call to another service waits on the network; under the lock
+// that wait would hold up every other request to this service. What the
+// caller read before may have changed when outside returns: it checks again.
+func (s *Service) outside(call func()) {
+	s.mu.Unlock()
+	defer s.mu.Lock()
+	call()
+}
+
 func randomID() string {
 	var value [16]byte
 	rand.Read(value[:])
@@ -169,38 +181,46 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Connection", "close")
 		}
 	} else {
+		// 4096 bytes is the largest body any operation accepts (rules.go).
 		body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	res := notFound()
-	var tooLarge *http.MaxBytesError
-	switch {
-	case keyRequired:
-		res = failure(401, "service_key_required", "A service key is required.", "")
-	case unasserted:
-		res = failure(401, "gateway_assertion_required", "A valid gateway assertion is required.", "")
-	case errors.As(err, &tooLarge):
-		res = failure(413, "payload_too_large", "The request body is too large.", "")
-	case err != nil:
-		res = failure(400, "invalid_request", "The request body could not be read.", "")
-	case len(body) > 0 && r.Method != "POST" && r.Method != "PATCH" && r.Method != "PUT":
-		res = failure(400, "invalid_request", "This operation accepts no request body.", "")
-	case r.Method != "GET" && r.Method != "HEAD" && r.URL.RawQuery != "":
-		res = invalidQuery()
-	default:
-		res = s.data.handle(r, body)
-	}
-	switch {
-	case s.counts != nil:
-		s.counts.Total++
-		s.counts.ByStatus[res.status]++
-	default:
-		s.keep(Receipt{Time: time.Now().UTC(), RequestID: bounded(r.Header.Get("X-Request-Id"), 128), Generation: bounded(r.Header.Get("X-Gateway-Generation"), 256), Method: r.Method, Target: bounded(r.URL.EscapedPath(), 512), Status: res.status, Effect: res.effect, Authorization: r.Header.Get("Authorization") != "", Subject: bounded(r.Header.Get("X-Gateway-Subject"), 128), Roles: bounded(r.Header.Get("X-Gateway-Roles"), 4096), BodyBytes: len(body)})
-	}
-	writeJSON(w, res)
+	var encoded []byte
+	func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		var tooLarge *http.MaxBytesError
+		switch {
+		case keyRequired:
+			res = failure(401, "service_key_required", "A service key is required.", "")
+		case unasserted:
+			res = failure(401, "gateway_assertion_required", "A valid gateway assertion is required.", "")
+		case errors.As(err, &tooLarge):
+			res = failure(413, "payload_too_large", "The request body is too large.", "")
+		case err != nil:
+			res = failure(400, "invalid_request", "The request body could not be read.", "")
+		case len(body) > 0 && r.Method != "POST" && r.Method != "PATCH" && r.Method != "PUT":
+			res = failure(400, "invalid_request", "This operation accepts no request body.", "")
+		case r.Method != "GET" && r.Method != "HEAD" && r.URL.RawQuery != "":
+			res = invalidQuery()
+		default:
+			res = s.data.handle(r, body)
+		}
+		switch {
+		case s.counts != nil:
+			s.counts.Total++
+			s.counts.ByStatus[res.status]++
+		default:
+			s.keep(Receipt{Time: time.Now().UTC(), RequestID: bounded(r.Header.Get("X-Request-Id"), 128), Generation: bounded(r.Header.Get("X-Gateway-Generation"), 256), Method: r.Method, Target: bounded(r.URL.EscapedPath(), 512), Status: res.status, Effect: res.effect, Authorization: r.Header.Get("Authorization") != "", Subject: bounded(r.Header.Get("X-Gateway-Subject"), 128), Roles: bounded(r.Header.Get("X-Gateway-Roles"), 4096), BodyBytes: len(body)})
+		}
+		// Encoded under the lock, because the body may share memory with the
+		// service's data; written after it, so a slow reader holds up nobody.
+		encoded, _ = json.Marshal(res.body)
+	}()
+	write(w, res.status, encoded)
 }
 
+// bounded cuts a header copied into a receipt, so no caller grows the receipts.
 func bounded(value string, n int) string {
 	if len(value) > n {
 		return value[:n]
@@ -212,11 +232,17 @@ func (s *Service) serviceKey(r *http.Request) bool {
 	return len(values) == 1 && subtle.ConstantTimeCompare([]byte(values[0]), s.secret) == 1
 }
 func writeJSON(w http.ResponseWriter, res result) {
+	encoded, _ := json.Marshal(res.body)
+	write(w, res.status, encoded)
+}
+
+// write sends an answer that is already encoded as JSON.
+func write(w http.ResponseWriter, status int, encoded []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(res.status)
-	json.NewEncoder(w).Encode(res.body)
+	w.WriteHeader(status)
+	w.Write(append(encoded, '\n'))
 }
 
 type State struct {
