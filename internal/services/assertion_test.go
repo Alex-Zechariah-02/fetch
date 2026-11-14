@@ -4,10 +4,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,5 +94,37 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 		if tc.status == 200 && (r.Header.Get("X-Gateway-Subject") != "cust-001" || r.Header.Get("X-Gateway-Roles") != "CUSTOMER") {
 			t.Errorf("%s: the handler read subject %q and roles %q", tc.name, r.Header.Get("X-Gateway-Subject"), r.Header.Get("X-Gateway-Roles"))
 		}
+	}
+
+	// Accounts takes the account for me and refresh from the gateway, so a
+	// plain identity header is refused there; signing in needs none.
+	dir := t.TempDir()
+	signing, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	private, _ := x509.MarshalPKCS8PrivateKey(signing)
+	settings, _ := json.Marshal(map[string]string{"kid": "fetch-test-a", "private_key_file": filepath.Join(dir, "issuer-key.pem")})
+	if os.WriteFile(filepath.Join(dir, "issuer-key.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), 0o600) != nil ||
+		os.WriteFile(filepath.Join(dir, "accounts.json"), settings, 0o600) != nil {
+		t.Fatal("writing the signing settings")
+	}
+	accounts, err := New(Config{Name: "accounts", Secret: testSecret, SigningSettingsFile: filepath.Join(dir, "accounts.json"), GatewayKey: keyFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := httptest.NewRequest("GET", "/accounts/me", nil)
+	me.Header.Set("X-Gateway-Subject", "cust-001")
+	w := httptest.NewRecorder()
+	accounts.ServeHTTP(w, me)
+	if w.Code != 401 {
+		t.Errorf("me without an assertion: %d %s", w.Code, w.Body)
+	}
+	login := httptest.NewRequest("POST", "/accounts/login", strings.NewReader(`{"email":"customer1@fetch.test","password":"FetchDemo2026!"}`))
+	login.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	accounts.ServeHTTP(w, login)
+	if w.Code != 200 {
+		t.Errorf("login without an assertion: %d %s", w.Code, w.Body)
 	}
 }

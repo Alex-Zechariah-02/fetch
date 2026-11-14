@@ -136,9 +136,9 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 		if protect {
 			args = append(args, "-local-security", dir)
 		}
-		// Accounts asks for no assertion in any setup: on one machine the
-		// demo commands sign in there directly.
-		if c.keySet != "" && f.name != "accounts" {
+		// Accounts takes the account for refresh and me from the gateway,
+		// so it requires the assertion there too; signing in stays open.
+		if c.keySet != "" {
 			args = append(args, "-gateway-key", c.keySet)
 		}
 		if host != nil && host.measure {

@@ -158,7 +158,10 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	keyRequired := internal && !s.serviceKey(r)
 	// Calls between services carry the service key, not an assertion. The
 	// signature is checked before the service lock is taken.
-	unasserted := s.gateway != nil && !internal && !s.gateway.admit(r, time.Now())
+	// Signing in needs no assertion: the demo commands sign in at Accounts
+	// directly, and the account comes from the password, not the gateway.
+	login := s.name == "accounts" && r.URL.Path == "/accounts/login"
+	unasserted := s.gateway != nil && !internal && !login && !s.gateway.admit(r, time.Now())
 	var body []byte
 	var err error
 	if keyRequired || unasserted {
