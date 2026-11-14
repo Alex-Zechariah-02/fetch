@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
 
+# One run per ref, the newest wins: an older run of the same ref tells nothing the newer one will not.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -17,6 +18,7 @@ concurrency:
 jobs:
   go:
     runs-on: ubuntu-24.04
+    # Every job has a time limit, so a hung test, download or deployment frees its runner.
     timeout-minutes: 45
     env:
       EAT_PORT_OFFSET: "1000"
@@ -51,6 +53,7 @@ jobs:
       - run: test -z "$(gofmt -l $(git ls-files '*.go'))"
       - run: go vet ./...
       - run: go test ./... -count=1
+      # The test binary's own limit ends a deadlock with a goroutine dump before the job limit cuts it off.
       - run: go test -race ./... -count=1 -timeout 30m
 
   vuln:
@@ -64,6 +67,17 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Build only, never pushed: the image must build and carry its commit.
+      - run: docker build --build-arg "REVISION=$GITHUB_SHA" --tag fetch:ci .
+      - run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' fetch:ci)" = "$GITHUB_SHA"
 
   lint:
     runs-on: ubuntu-24.04
@@ -120,6 +134,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build
+      # high: a high or critical advisory fails the job; lower ones go with the routine updates.
       - run: npm audit --audit-level=high
       # The tests run in the runner image's Chrome (playwright.config.ts).
       # Failure traces hold page contents and test credentials, so they stay

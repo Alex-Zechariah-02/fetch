@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 
 # The Fetch image: the shop's build and the demo, services and Accounts
 # programs, run as a non-root user of its own. demo up -role fetch -programs /opt/fetch
@@ -43,6 +43,7 @@ COPY --from=programs /out /opt/fetch
 USER 65531:65531
 EXPOSE 9501-9506
 STOPSIGNAL SIGTERM
+# Probed every 10 s (every 2 s in the first 30 s, so a failed start shows early); a probe may take 5 s; three failures in a row, not one slow probe, mark it unhealthy.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --start-interval=2s --retries=3 \
     CMD ["/opt/fetch/demo", "health"]
 ENTRYPOINT ["/opt/fetch/demo"]
