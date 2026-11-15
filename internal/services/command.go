@@ -96,7 +96,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 		transport += ", built-in protection"
 	}
 	if *gatewayKey != "" {
-		transport += ", gateway assertion required"
+		transport += ", gateway assertion required, key IDs " + strings.Join(service.gateway.keyIDs(), " ")
 	}
 	if *measure {
 		transport += ", measurement mode"

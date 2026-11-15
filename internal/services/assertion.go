@@ -12,7 +12,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -57,6 +59,9 @@ func loadAssertions(path, audience string) (*assertions, error) {
 	}
 	return a, nil
 }
+
+// keyIDs lists the accepted key IDs, sorted, for the start line.
+func (a *assertions) keyIDs() []string { return slices.Sorted(maps.Keys(a.keys)) }
 
 // admit reports whether r carries exactly one valid assertion for this
 // service and for r's method and path at now. It then replaces the plain
