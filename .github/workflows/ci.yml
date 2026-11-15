@@ -34,21 +34,30 @@ jobs:
         with:
           go-version-file: fetch/go.mod
           cache-dependency-path: fetch/go.sum
-      # The APIWard commit is read from go.mod, so the checkout cannot drift
-      # from the version the Go code is built against.
+      # The APIWard commit is the one go.mod names (checked by go.sum): the
+      # hash a pseudo-version ends with, or a release tag. Module proxy
+      # metadata is not trusted for it.
       - id: pin
         run: |
-          module=github.com/Alex-Zechariah-02/apiward
-          version=$(go list -m -f '{{.Version}}' "$module")
-          commit=$(go list -m -f '{{with .Origin}}{{.Hash}}{{end}}' "$module@$version")
-          test -n "$commit"
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          version=$(go list -m -f '{{.Version}}' github.com/Alex-Zechariah-02/apiward)
+          if [[ $version =~ [.-][0-9]{14}-([0-9a-f]{12})$ ]]; then
+            echo "ref=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=$version" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Alex-Zechariah-02/apiward
-          ref: ${{ steps.pin.outputs.commit }}
           path: apiward
+          fetch-depth: 0
           persist-credentials: false
+      # An abbreviated or ambiguous hash fails here rather than checking out
+      # another commit.
+      - env:
+          REF: ${{ steps.pin.outputs.ref }}
+        run: |
+          commit=$(git -C "$GITHUB_WORKSPACE/apiward" rev-parse --verify --end-of-options "$REF^{commit}")
+          git -C "$GITHUB_WORKSPACE/apiward" checkout --quiet --detach "$commit"
       - run: go mod verify
       - run: test -z "$(gofmt -l $(git ls-files '*.go'))"
       - run: go vet ./...
@@ -121,20 +130,31 @@ jobs:
         with:
           go-version-file: fetch/go.mod
           cache-dependency-path: fetch/go.sum
+      # The browser tests build the gateway and its Dashboard from APIWard.
+      # The APIWard commit is the one go.mod names (checked by go.sum): the
+      # hash a pseudo-version ends with, or a release tag. Module proxy
+      # metadata is not trusted for it.
       - id: pin
         run: |
-          module=github.com/Alex-Zechariah-02/apiward
-          version=$(go list -m -f '{{.Version}}' "$module")
-          commit=$(go list -m -f '{{with .Origin}}{{.Hash}}{{end}}' "$module@$version")
-          test -n "$commit"
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
-      # The browser tests build the gateway and its Dashboard from APIWard.
+          version=$(go list -m -f '{{.Version}}' github.com/Alex-Zechariah-02/apiward)
+          if [[ $version =~ [.-][0-9]{14}-([0-9a-f]{12})$ ]]; then
+            echo "ref=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=$version" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Alex-Zechariah-02/apiward
-          ref: ${{ steps.pin.outputs.commit }}
           path: apiward
+          fetch-depth: 0
           persist-credentials: false
+      # An abbreviated or ambiguous hash fails here rather than checking out
+      # another commit.
+      - env:
+          REF: ${{ steps.pin.outputs.ref }}
+        run: |
+          commit=$(git -C "$GITHUB_WORKSPACE/apiward" rev-parse --verify --end-of-options "$REF^{commit}")
+          git -C "$GITHUB_WORKSPACE/apiward" checkout --quiet --detach "$commit"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # The same release as the image build stage.
