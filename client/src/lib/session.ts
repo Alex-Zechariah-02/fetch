@@ -34,15 +34,15 @@ export const roleNames: Record<Role, string> = {
   OPERATIONS: 'Operations',
 }
 
+// homes are the app's own home pages; a user's home is linked to as given,
+// so any other value is refused. Declared before state, which reads it.
+const homes = ['/', '/merchant', '/rider', '/support', '/ops']
+
 let state: State = { session: readStored(), generation: 0, notice: null }
 const listeners = new Set<() => void>()
 const identityListeners = new Set<(hadSession: boolean) => void>()
 let controller = new AbortController()
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
-
-// homes are the app's own home pages; a user's home is linked to as given,
-// so any other value is refused.
-const homes = ['/', '/merchant', '/rider', '/support', '/ops']
 
 // checked returns value as a session when every member has the expected
 // form: a token, a finite expiry and a user whose roles and home the app
