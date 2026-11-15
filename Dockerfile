@@ -7,7 +7,7 @@
 # in a temporary folder, so the root filesystem stays read-only.
 # Base images are pinned by digest; the tags show which release each is.
 
-FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS shop
+FROM node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS shop
 WORKDIR /src/client
 COPY client/package.json client/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund

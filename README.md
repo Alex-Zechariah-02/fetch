@@ -10,7 +10,7 @@ A fictional food and grocery delivery application for demonstrating and testing 
 ## Requirements
 
 - Go 1.26+ (`go.mod` selects the 1.27.4 toolchain)
-- Node.js 24
+- Node.js 26
 - An APIWard checkout beside this one (not needed for `-standalone` or `-local`)
 
 ```

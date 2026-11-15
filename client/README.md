@@ -30,7 +30,7 @@ The demonstration accounts and their shared password are on the sign-in page. Fe
 
 ## Build
 
-Requires Node.js 24 and npm 11. The lockfile pins every tool.
+Requires Node.js 26 and npm 11. The lockfile pins every tool.
 
 ```powershell
 npm ci

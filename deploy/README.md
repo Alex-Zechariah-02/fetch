@@ -70,7 +70,7 @@ The certificates still refuse every client but the gateway when a rule is missin
 
 ## 2. Software (both hosts)
 
-Go at the version of `go.mod`'s `toolchain` line and Node.js 24, from their official downloads; for Go:
+Go at the version of `go.mod`'s `toolchain` line and Node.js 26, from their official downloads; for Go:
 
 ```
 sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go<version>.linux-amd64.tar.gz
