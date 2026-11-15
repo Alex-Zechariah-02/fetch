@@ -96,7 +96,8 @@ export function outcomeOfWrite(answer: Answer<unknown>): 'done' | 'refused' | 'u
 // answer, so its absence means the gateway answered itself.
 export function answeredBy(answer: Answer<unknown>): string | null {
   if (answer.kind === 'refused' || answer.kind === 'failed' || answer.kind === 'ok') {
-    return answer.service ? serviceNames[answer.service] ?? answer.service : 'gateway'
+    if (!answer.service) return 'gateway'
+    return Object.hasOwn(serviceNames, answer.service) ? serviceNames[answer.service] : answer.service
   }
   return null
 }

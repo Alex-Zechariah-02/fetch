@@ -2,7 +2,7 @@
 // and Fetch Accounts with the Fetch baseline policy confirmed, and checks every
 // step against the services' own receipts or the Admin API as well as what the
 // page shows.
-import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test'
+import { expect, test, type Browser, type BrowserContext, type Page, type Request } from '@playwright/test'
 import { AdminApi, deployment, raw, siteURL, type Demo, type Receipt } from './env'
 import { demoPassword, signIn } from './pages'
 
@@ -45,6 +45,9 @@ export async function person(browser: Browser, email: string | null): Promise<Pa
     })
   })
   const page = await context.newPage()
+  // A controlled clock lets quiet() run the tab's timers ahead; time still
+  // flows on its own.
+  await page.clock.install()
   page.on('pageerror', (error) => pageErrors.push(error.message))
   page.on('dialog', (dialog) => {
     dialogs++
@@ -62,6 +65,31 @@ export async function person(browser: Browser, email: string | null): Promise<Pa
 export async function leave(email: string) {
   await people.get(email)?.context().close()
   people.delete(email)
+}
+
+// quiet moves the tab's clock a minute ahead, so every timer the app set
+// (a retry, a refresh, a poll) fires now, and returns the requests the tab
+// made meanwhile as "METHOD /path": proof that nothing was resent in that
+// minute without a fixed sleep. Requests are reported in the order the page
+// makes them, so a marker request sent afterwards closes the window.
+let markers = 0
+export async function quiet(page: Page): Promise<string[]> {
+  const marker = `/e2e-quiet-${++markers}`
+  const made: string[] = []
+  const watch = (request: Request) => {
+    made.push(`${request.method()} ${new URL(request.url()).pathname}`)
+  }
+  await page.route('**' + marker, (route) => route.fulfill({ status: 204 }))
+  page.on('request', watch)
+  try {
+    await page.clock.fastForward('01:00')
+    await page.evaluate((path) => void fetch(path).catch(() => undefined), marker)
+    await expect.poll(() => made.includes(`GET ${marker}`)).toBe(true)
+  } finally {
+    page.off('request', watch)
+    await page.unroute('**' + marker)
+  }
+  return made.filter((entry) => entry !== `GET ${marker}`)
 }
 
 // since returns the receipts a service recorded after the given count.

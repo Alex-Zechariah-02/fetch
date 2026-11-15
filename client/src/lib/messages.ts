@@ -80,11 +80,13 @@ export function describe(answer: Answer<unknown>, write?: Write): Problem | null
 
   // A service states its own reason in a plain sentence.
   if (answer.service) {
-    const title = service[answer.code] ?? 'Fetch couldn’t do this.'
+    const title = Object.hasOwn(service, answer.code) ? service[answer.code] : 'Fetch couldn’t do this.'
     const detail = answer.message && answer.message !== title ? answer.message : null
     return { ...base, title, detail, unknown: false }
   }
 
-  const [title, detail] = gateway[answer.code] ?? [`Fetch answered with an error (${answer.status}).`, 'Try again in a moment.']
+  // Own entries only: a code such as "constructor" must not reach the
+  // object's prototype.
+  const [title, detail] = Object.hasOwn(gateway, answer.code) ? gateway[answer.code] : [`Fetch answered with an error (${answer.status}).`, 'Try again in a moment.']
   return { ...base, title, detail, unknown: false }
 }

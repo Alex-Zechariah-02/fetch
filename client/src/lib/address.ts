@@ -33,7 +33,10 @@ export function setAddress(next: Address | null) {
   for (const listener of listeners) listener()
 }
 
-onIdentityChange(() => setAddress(null))
+// As the basket: kept when a visitor signs in, cleared for anyone else.
+onIdentityChange((hadSession) => {
+  if (hadSession) setAddress(null)
+})
 
 export function useAddress(): Address | null {
   return useSyncExternalStore(

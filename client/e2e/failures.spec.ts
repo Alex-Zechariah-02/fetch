@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { siteURL } from './env'
 import { accessible, addToBasket, placeOrder, record, shot, storage } from './pages'
-import { api, demo, leave, person, since, useRoles } from './roles'
+import { api, demo, leave, person, quiet, since, useRoles } from './roles'
 
 // What the app shows when the gateway refuses or a service fails: blocked
 // accounts, the security lab, a policy trial, the per-tab session,
@@ -197,7 +197,7 @@ test.describe.serial('Failures and safeguards on the real services', () => {
       // The cancel and refund are complete; only the stock release waits for
       // Inventory and is retried, so nothing is reported as uncertain.
       await expect(customer1.getByRole('alert').filter({ hasText: 'Fetch couldn’t confirm cancelling this order.' })).toHaveCount(0)
-      await customer1.waitForTimeout(3000)
+      expect(await quiet(customer1)).not.toContain(`POST /orders/cancel/${order}`)
       const sent = (await since('orders', before)).filter((r) => r.method === 'POST' && r.target === `/orders/cancel/${order}`)
       expect(sent).toHaveLength(1)
       expect(sent[0].status).toBe(200)
@@ -232,7 +232,7 @@ test.describe.serial('Failures and safeguards on the real services', () => {
     await ask()
     const lost = customer1.getByRole('alert').filter({ hasText: 'Fetch couldn’t confirm your request.' })
     await expect(lost).toContainText('It may or may not have been sent.')
-    await customer1.waitForTimeout(3000)
+    expect(await quiet(customer1)).not.toContain('POST /support/tickets')
     expect(posts).toBe(1)
     await shot(customer1, 'flows-06-service-down')
 
@@ -254,7 +254,7 @@ test.describe.serial('Failures and safeguards on the real services', () => {
     await expect(customer1.getByRole('alert').filter({ hasText: 'Fetch can’t take requests right now.' })).toContainText('Answered by the Fetch gateway · 503')
     await ask()
     await expect(customer1.getByRole('alert').filter({ hasText: 'Fetch couldn’t confirm your request.' })).toContainText('Answered by the Fetch gateway · 503')
-    await customer1.waitForTimeout(3000)
+    expect(await quiet(customer1)).not.toContain('POST /support/tickets')
     expect(posts).toBe(2)
     expect(await demo.counts()).toEqual(before)
     await demo.stop()

@@ -58,8 +58,11 @@ function save(next: Basket | null) {
   for (const listener of listeners) listener()
 }
 
-// A basket belongs to one person: a change of person empties it.
-onIdentityChange(() => save(null))
+// A basket belongs to one person: it is emptied when a signed-in person
+// signs out or another takes over, and kept when a visitor signs in.
+onIdentityChange((hadSession) => {
+  if (hadSession) save(null)
+})
 
 export type AddResult = 'added' | 'other-shop' | 'full'
 

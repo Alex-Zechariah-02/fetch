@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { siteURL } from './env'
 import { record, shot, signIn } from './pages'
-import { api, demo, person, ref, scriptDialogs, since, useRoles } from './roles'
+import { api, demo, person, quiet, ref, scriptDialogs, since, useRoles } from './roles'
 
 // Support, operations and the account page on the real services, and a
 // refused Ref as staff and customers see it.
@@ -60,7 +60,7 @@ test.describe.serial('Staff and accounts on the real services', () => {
     await expect(customer1.getByText('Answered by Orders · 404')).toBeVisible()
     const shown = await ref(customer1)
     // A missing order is not asked for again, so the Ref stays the one shown.
-    await customer1.waitForTimeout(6000)
+    expect(await quiet(customer1)).not.toContain('GET /orders/detail/ORD-1004')
     const asked = (await since('orders', before)).filter((r) => r.target === '/orders/detail/ORD-1004')
     expect(asked.map((r) => `${r.request_id} ${r.status} ${r.subject}`)).toEqual([`${shown} 404 cust-001`])
     await shot(customer1, 'flows-08-not-yours')

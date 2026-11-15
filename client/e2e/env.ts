@@ -61,7 +61,9 @@ export function deployment(): Demo {
 }
 
 // raw sends one HTTP request exactly as given, including a Host header, which
-// fetch does not allow. It returns the body as text and as the exact bytes.
+// fetch does not allow. It returns the body as text and as the exact bytes,
+// and fails when the response breaks off or nothing arrives within 10 s, so a
+// stalled server ends the test with a reason instead of at its time limit.
 export function raw(
   method: string,
   url: string,
@@ -69,8 +71,9 @@ export function raw(
   body?: string,
 ): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string; bytes: Buffer }> {
   return new Promise((done, fail) => {
-    const req = httpRequest(url, { method, headers }, (res) => {
+    const req = httpRequest(url, { method, headers, timeout: 10_000 }, (res) => {
       const chunks: Buffer[] = []
+      res.on('error', fail)
       res.on('data', (chunk: Buffer) => chunks.push(chunk))
       res.on('end', () => {
         const bytes = Buffer.concat(chunks)
@@ -78,6 +81,7 @@ export function raw(
       })
     })
     req.on('error', fail)
+    req.on('timeout', () => req.destroy(new Error(`no answer from ${url} within 10 s`)))
     if (body !== undefined) req.write(body)
     req.end()
   })

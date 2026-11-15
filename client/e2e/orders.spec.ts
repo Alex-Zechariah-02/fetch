@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { siteURL } from './env'
 import { addToBasket, orderCard, placeOrder, record, shot } from './pages'
-import { demo, person, ref, since, useRoles } from './roles'
+import { demo, person, quiet, ref, since, useRoles } from './roles'
 
 // Customers, merchants and riders on the real services: browsing, checkout,
 // every order status, price and stock changes, cancels, a lost checkout
@@ -208,7 +208,7 @@ test.describe.serial('Orders on the real services', () => {
     }
     const unknown = customer3.getByRole('alert').filter({ hasText: 'No answer about your order.' })
     await expect(unknown).toContainText('It may or may not have been placed.')
-    await customer3.waitForTimeout(5000)
+    expect(await quiet(customer3)).not.toContain('POST /orders')
     const sent = (await since('orders', before)).filter((r) => r.method === 'POST' && r.target === '/orders')
     expect(sent).toHaveLength(1)
     await shot(customer3, 'flows-03-unknown-outcome')

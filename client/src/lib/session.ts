@@ -36,29 +36,41 @@ export const roleNames: Record<Role, string> = {
 
 let state: State = { session: readStored(), generation: 0, notice: null }
 const listeners = new Set<() => void>()
-const identityListeners = new Set<() => void>()
+const identityListeners = new Set<(hadSession: boolean) => void>()
 let controller = new AbortController()
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
+
+// homes are the app's own home pages; a user's home is linked to as given,
+// so any other value is refused.
+const homes = ['/', '/merchant', '/rider', '/support', '/ops']
+
+// checked returns value as a session when every member has the expected
+// form: a token, a finite expiry and a user whose roles and home the app
+// knows. Stored sessions and Fetch Accounts' answers both pass through it.
+function checked(value: Partial<Session> | null): Session | null {
+  const user = value?.user
+  if (
+    !value || typeof value.token !== 'string' || !value.token ||
+    typeof value.expiresAt !== 'number' || !Number.isFinite(value.expiresAt) || !user ||
+    typeof user.id !== 'string' || !user.id || typeof user.name !== 'string' || typeof user.email !== 'string' ||
+    !Array.isArray(user.roles) || !user.roles.every((role) => typeof role === 'string' && Object.hasOwn(roleNames, role)) ||
+    (user.merchant !== null && typeof user.merchant !== 'string') ||
+    !homes.includes(user.home)
+  ) return null
+  return value as Session
+}
 
 function readStored(): Session | null {
   try {
     const raw = sessionStorage.getItem(storageKey)
     if (!raw) return null
-    const value = JSON.parse(raw) as Partial<Session> | null
-    const user = value?.user
-    if (
-      !value || typeof value.token !== 'string' || !value.token ||
-      typeof value.expiresAt !== 'number' || !Number.isFinite(value.expiresAt) || !user ||
-      typeof user.id !== 'string' || !user.id || typeof user.name !== 'string' || typeof user.email !== 'string' ||
-      !Array.isArray(user.roles) || !user.roles.every((role) => typeof role === 'string' && Object.hasOwn(roleNames, role)) ||
-      (user.merchant !== null && typeof user.merchant !== 'string') ||
-      !['/', '/merchant', '/rider', '/support', '/ops'].includes(user.home)
-    ) return null
+    const value = checked(JSON.parse(raw) as Partial<Session> | null)
+    if (!value) return null
     if (value.expiresAt <= Date.now()) {
       sessionStorage.removeItem(storageKey)
       return null
     }
-    return value as Session
+    return value
   } catch {
     return null
   }
@@ -78,18 +90,23 @@ function update(next: Partial<State>) {
   for (const listener of listeners) listener()
 }
 
-function fromAnswer(data: SignedIn): Session {
-  return { token: data.token, expiresAt: Date.parse(data.expires_at), user: data.user }
+// fromAnswer reads Fetch Accounts' answer; null when it is not a usable
+// session, such as an expiry that does not parse (which would make the
+// refresh timer fire at once, again and again).
+function fromAnswer(data: SignedIn): Session | null {
+  return checked({ token: data.token, expiresAt: Date.parse(data.expires_at), user: data.user })
 }
 
 // begin switches to another person (or to nobody): pending requests are
-// cancelled and everything shown for the previous person is cleared.
+// cancelled, and each identity listener learns whether someone was signed in
+// before, so it can clear what belonged to them.
 function begin(session: Session | null, notice: string | null) {
+  const previous = state.session
   controller.abort()
   controller = new AbortController()
   store(session)
   update({ session, generation: state.generation + 1, notice })
-  for (const listener of identityListeners) listener()
+  for (const listener of identityListeners) listener(previous !== null)
   schedule()
 }
 
@@ -105,8 +122,8 @@ async function refresh() {
   if (!current) return
   const answer = await send<SignedIn>({ method: 'POST', path: '/accounts/refresh', token: current.token, signal: controller.signal })
   if (state.session !== current) return
-  if (answer.kind === 'ok') {
-    const next = fromAnswer(answer.data)
+  const next = answer.kind === 'ok' ? fromAnswer(answer.data) : null
+  if (next) {
     if (next.user.id !== current.user.id) {
       begin(next, null)
       return
@@ -120,8 +137,8 @@ async function refresh() {
     signOut('Your session ended. Sign in again to continue.')
     return
   }
-  // No answer, a rate limit or a server error: try again while the token is
-  // still valid; the gateway refuses it once it expires.
+  // No answer, an unusable answer, a rate limit or a server error: try again
+  // while the token is still valid; the gateway refuses it once it expires.
   if (Date.now() < current.expiresAt - retryAfter) {
     refreshTimer = setTimeout(() => void refresh(), retryAfter)
   }
@@ -131,7 +148,12 @@ if (state.session) schedule()
 
 export async function signIn(email: string, password: string): Promise<Answer<SignedIn>> {
   const answer = await send<SignedIn>({ method: 'POST', path: '/accounts/login', body: { email, password } })
-  if (answer.kind === 'ok') begin(fromAnswer(answer.data), null)
+  if (answer.kind !== 'ok') return answer
+  const session = fromAnswer(answer.data)
+  if (!session) {
+    return { kind: 'failed', status: answer.status, code: 'bad_answer', message: null, ref: answer.ref, service: answer.service }
+  }
+  begin(session, null)
   return answer
 }
 
@@ -155,7 +177,9 @@ export async function call<T>(request: Omit<Request, 'token' | 'signal'> & { sig
   return answer
 }
 
-export function onIdentityChange(listener: () => void): () => void {
+// onIdentityChange calls listener whenever the person changes, with
+// whether someone was signed in before.
+export function onIdentityChange(listener: (hadSession: boolean) => void): () => void {
   identityListeners.add(listener)
   return () => identityListeners.delete(listener)
 }
