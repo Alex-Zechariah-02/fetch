@@ -93,10 +93,22 @@ jobs:
       - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 
   client:
+    # The browser tests run one at a time against one stack per spec file, so
+    # two machines share the files, balanced by their recorded run times; the
+    # checks that need run only once go with the first.
+    name: client (${{ matrix.shard }}/2)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       EAT_PORT_OFFSET: "3000"
+      SHARD: ${{ matrix.shard }}
+      # The second shard runs every spec file not listed here, so a new file
+      # always runs.
+      SHARD1_FILES: e2e/orders.spec.ts e2e/staff.spec.ts e2e/dev.spec.ts e2e/environment.spec.ts
     defaults:
       run:
         working-directory: fetch/client
@@ -135,11 +147,18 @@ jobs:
       - run: npm run check
       - run: npm run build
       # high: a high or critical advisory fails the job; lower ones go with the routine updates.
-      - run: npm audit --audit-level=high
+      - if: matrix.shard == 1
+        run: npm audit --audit-level=high
       # The tests run in the runner image's Chrome (playwright.config.ts).
       # Failure traces hold page contents and test credentials, so they stay
       # on the machine that ran the tests and are not uploaded.
-      - run: npx playwright test
+      - run: |
+          files=()
+          for file in e2e/*.spec.ts; do
+            case " $SHARD1_FILES " in *" $file "*) listed=1 ;; *) listed=2 ;; esac
+            if [ "$listed" = "$SHARD" ]; then files+=("$file"); fi
+          done
+          npx playwright test "${files[@]}"
 
   deps:
     if: github.event_name == 'pull_request'
