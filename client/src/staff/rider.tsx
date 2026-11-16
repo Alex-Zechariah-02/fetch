@@ -9,6 +9,7 @@ import { Column, OrderCard, WorkspaceTitle, useAction } from './staff'
 // own deliveries. When two riders tap the same job, the Orders service lets
 // the first win and refuses the second (409 already_assigned).
 export function RiderPage() {
+  // Every 5 s: riders compete for ready jobs, so a new one must appear quickly.
   const jobs = useQuery<Jobs>('/orders/jobs', { poll: 5_000 })
   const action = useAction(jobs.reload)
   const problem = jobs.answer && !jobs.data ? describe(jobs.answer) : null

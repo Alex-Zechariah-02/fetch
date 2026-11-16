@@ -36,6 +36,7 @@ func lockEarlierDemoFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Exclusive and non-blocking: another process holding it is refused at once, not waited for.
 	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		file.Close()
 		return nil, err
@@ -44,5 +45,6 @@ func lockEarlierDemoFile(path string) (*os.File, error) {
 }
 
 func privateDirectory(path string) error {
+	// 0700 at creation: only this user enters, so files written inside stay private.
 	return os.Mkdir(path, 0o700)
 }

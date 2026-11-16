@@ -43,6 +43,8 @@ COPY --from=programs /out /opt/fetch
 USER 65531:65531
 EXPOSE 9501-9506
 STOPSIGNAL SIGTERM
+# Ten-second probes and three retries flag a stopped listener in about half a minute.
+# A local probe needs far less than 5 s; a slow first start gets 30 s before failures count.
 # Probed every 10 s (every 2 s in the first 30 s, so a failed start shows early); a probe may take 5 s; three failures in a row, not one slow probe, mark it unhealthy.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --start-interval=2s --retries=3 \
     CMD ["/opt/fetch/demo", "health"]

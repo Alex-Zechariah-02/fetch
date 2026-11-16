@@ -26,6 +26,7 @@ export function RefTag({ value }: { value: string }) {
   const copy = () => {
     const done = () => {
       setState('copied')
+      // "Copied" shows briefly, then the reference reads as before.
       setTimeout(() => setState((s) => (s === 'copied' ? 'idle' : s)), 1600)
     }
     try {

@@ -191,6 +191,7 @@ func (l *securityLog) write(batch []entry) error {
 		return l.fail(err)
 	}
 	l.size += int64(len(buffer))
+	// Sync before the admission returns, so an acknowledged request is on disk.
 	if err := l.file.Sync(); err != nil {
 		return l.fail(err)
 	}
@@ -238,6 +239,7 @@ func (l *securityLog) rotate() error {
 }
 
 func (l *securityLog) fail(err error) error {
+	// A failed write or sync stops admission, so no request runs without a record.
 	if l.failed.CompareAndSwap(false, true) {
 		fmt.Fprintf(os.Stderr, "security log failed; admission disabled: %v\n", err)
 	}

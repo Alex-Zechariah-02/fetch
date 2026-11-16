@@ -7,10 +7,12 @@ name: fetch
 
 x-hardened: &hardened
   network_mode: host
+  # Seed-only runs need no writable root, no capability and no privilege gain.
   read_only: true
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   environment:
+    # Shifts every port, so two deployments fit one host; unset means no shift.
     EAT_PORT_OFFSET: ${EAT_PORT_OFFSET:-0}
 
 services:
@@ -22,6 +24,7 @@ services:
     tmpfs: [/tmp]
     volumes:
       - ${CERTS:?set CERTS to the folder demo certs wrote, outside this checkout}/fetch:/certs:ro
+    # demo up ends its children within 12 s, then its server in 5 s, so 20 s covers it.
     stop_grace_period: 20s
     restart: unless-stopped
 
@@ -32,6 +35,7 @@ services:
     volumes:
       - gateway:/var/lib/apiward
       - ${CERTS}/gateway:/etc/apiward:ro
+    # SIGTERM drains in-flight requests and then the audit log; 30 s is its documented stop time.
     stop_grace_period: 30s
     restart: unless-stopped
     depends_on:

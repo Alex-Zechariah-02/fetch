@@ -77,6 +77,7 @@ func checkUnusedBootstrapDatabase(dir string) error {
 		return err
 	}
 	defer db.Close()
+	// One second bounds the read-only check, so a locked database cannot stall setup.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	var integrity string

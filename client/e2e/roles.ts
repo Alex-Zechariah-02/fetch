@@ -34,6 +34,7 @@ export async function person(browser: Browser, email: string | null): Promise<Pa
     await known.goto(siteURL + '/', { waitUntil: 'networkidle' })
     return known
   }
+  // A common desktop size: the site is a full desktop website.
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   if (!email) opened.push(context)
   await context.exposeBinding('reportViolation', (_source, text: string) => {

@@ -96,7 +96,10 @@ func run(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// A stack that stalls on dial or headers fails the run at 2 s instead of hanging it.
+	// Rounds run in turn over at most three origins, so one idle connection each, closed after 10 s.
 	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 2 * time.Second}).DialContext, ResponseHeaderTimeout: 2 * time.Second, MaxIdleConns: 3, MaxIdleConnsPerHost: 1, IdleConnTimeout: 10 * time.Second}
+	// A wallet read from send to end of body fails at 5 s rather than waiting longer.
 	client := &http.Client{Timeout: 5 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	token, err := login(client, "http://"+data, email)

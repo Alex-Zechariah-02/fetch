@@ -11,6 +11,7 @@ export const all: Role[] = ['CUSTOMER', 'MERCHANT', 'RIDER', 'SUPPORT', 'OPERATI
 export const routes: [string, RegExp, string, Role[] | null, string, Handler][] = []
 export const on = (method: string, pattern: RegExp, op: string, roles: Role[] | null, service: string, handler: Handler) => routes.push([method, pattern, op, roles, service, handler])
 
+// 16 random bytes in hex: the 32-character form of the gateway's request ID.
 export const ref = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('')
 export const err = (status: number, error: string, message: string, field?: string): [number, unknown] => [status, { error, message, ...(field ? { field } : {}) }]
 export const now = () => new Date().toISOString()
@@ -19,6 +20,7 @@ function stockState(id: string) {
   const row = seed.stock.get(id)!
   if (row.stock === null) return 'made_to_order'
   const free = row.stock - row.reserved
+  // The Inventory service's low-stock mark: 15 free units or fewer.
   return free <= 0 ? 'out' : free <= 15 ? 'low' : 'in_stock'
 }
 export const itemView = (id: string) => ({ ...seed.items.find((i) => i.id === id)!, stock_state: stockState(id) })

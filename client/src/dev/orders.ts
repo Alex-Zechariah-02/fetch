@@ -4,6 +4,7 @@ import type { Address, Order, User } from '../lib/types'
 import * as seed from './seed'
 import { all, err, findOrder, freeDelivery, merchantOf, now, on, type Handler, type Json } from './routes'
 
+// Development only, in page memory: one entry per key until the page reloads.
 const idempotency = new Map<string, { body: string; answer: [number, unknown] }>()
 const sees = (user: User, order: Order) =>
   user.roles.includes('SUPPORT') || user.roles.includes('OPERATIONS') || order.customer === user.id || (user.roles.includes('MERCHANT') && order.merchant === user.merchant) || order.rider === user.id

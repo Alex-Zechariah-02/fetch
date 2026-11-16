@@ -62,6 +62,7 @@ func serveFetch(ctx context.Context, dir string, listener net.Listener, handler 
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	defer func() {
+		// Five seconds let in-flight answers finish before the demo gives up and exits.
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		runErr = errors.Join(runErr, server.Shutdown(shutdown))
@@ -73,6 +74,7 @@ func serveFetch(ctx context.Context, dir string, listener net.Listener, handler 
 	if err != nil {
 		return err
 	}
+	// Gives up instead of waiting forever when a service or Accounts never listens.
 	if err := running.awaitListening(ctx, addresses, time.Now().Add(30*time.Second)); err != nil {
 		if errors.Is(err, errCancelled) {
 			return nil
@@ -220,6 +222,7 @@ func prepareFolder(dir string, files map[string][]byte) error {
 		return fmt.Errorf("creating %s: %w", dir, err)
 	}
 	for name, content := range files {
+		// These hold the service secret and signing settings, so only their owner reads them.
 		if err := os.WriteFile(filepath.Join(dir, name), content, 0o600); err != nil {
 			return err
 		}

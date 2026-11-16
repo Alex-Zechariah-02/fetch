@@ -49,6 +49,7 @@ func fetchPrograms(home, programs string) (services, accounts, shop string, err 
 				return "", "", "", fmt.Errorf("-programs: %w", err)
 			}
 		}
+		// 0700: other local users cannot read the built programs, copied websites or keys.
 		return services, accounts, shop, os.MkdirAll(home, 0o700)
 	}
 	fetch, err := fetchRepository()
@@ -90,6 +91,7 @@ func buildWebsites(source sources, web string) error {
 // buildWebsite builds the website in folder and replaces target with a copy
 // of its build.
 func buildWebsite(folder, target string) error {
+	// Install only when node_modules is absent: a full reinstall on every build is slow.
 	if _, err := os.Stat(filepath.Join(folder, "node_modules")); errors.Is(err, os.ErrNotExist) {
 		fmt.Println("Installing the", folder, "packages...")
 		if err := npm(folder, "ci", "--no-audit", "--no-fund"); err != nil {

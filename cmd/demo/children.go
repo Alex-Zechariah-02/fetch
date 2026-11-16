@@ -37,12 +37,14 @@ type children struct {
 }
 
 func newChildren(dir string, capacity int) *children {
+	// One slot per child: a reaper's single send never blocks, even with no reader.
 	return &children{dir: dir, exited: make(chan processExit, capacity)}
 }
 
 // start runs binary with its output appended to <dir>/<name>.log and returns
 // the log's size before the start, where this run's output begins.
 func (c *children) start(name, binary string, args ...string) (int64, error) {
+	// 0600 append: only the running user reads a log, and earlier runs' output is kept.
 	logFile, err := os.OpenFile(filepath.Join(c.dir, name+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 0, err
@@ -83,6 +85,7 @@ func (c *children) stop() error {
 			process.Process.Kill()
 		}
 	}
+	// 12 s: generous for a clean shutdown, short enough that a stuck child delays exit by seconds.
 	timer := time.NewTimer(12 * time.Second)
 	defer timer.Stop()
 	for c.running > 0 {
@@ -149,6 +152,7 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 			binary = accountsBinary
 			args = append(args, "-signing-settings", filepath.Join(dir, signingFile))
 		case "orders":
+			// fetchServices lists inventory first and orders second, which is what these indexes mean.
 			args = append(args, "-service", f.name, "-inventory", "http://"+fetchServices[0].listen)
 		case "reports":
 			args = append(args, "-service", f.name, "-orders", "http://"+fetchServices[1].listen)
@@ -175,6 +179,7 @@ func (c *children) awaitListening(ctx context.Context, addresses []string, deadl
 				return fmt.Errorf("%s exited during startup (%v); see %s", result.name, result.err, filepath.Join(c.dir, result.name+".log"))
 			case <-ctx.Done():
 				return errCancelled
+			// 50 ms between dials: a starting child is noticed quickly without busy-looping.
 			case <-time.After(50 * time.Millisecond):
 			}
 			if time.Now().After(deadline) {

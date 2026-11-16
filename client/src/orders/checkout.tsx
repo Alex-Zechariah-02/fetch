@@ -16,10 +16,12 @@ import { Empty, ProblemNotice } from '../ui/notice'
 import { Photo } from '../ui/photo'
 import { useQuote } from '../shop/parts'
 
+// Prefilled with Kuala Lumpur, where the shops are; any town or state may replace it.
 const blank: Address = { line1: '', line2: '', postcode: '', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
 // defaultAddress fills the form in one step with a complete address the
 // order schema accepts.
 const defaultAddress: Address = { line1: '1 Jalan Ampang', line2: 'Level 10', postcode: '50450', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
+// The Orders service's own note limit; the address fields below use its limits too.
 const noteLimit = 200
 
 // One attempt at placing an order: its body and idempotency key are frozen
@@ -124,6 +126,7 @@ function Checkout({ basket }: { basket: Basket }) {
             <h2 className="text-lg font-extrabold tracking-[-0.015em]" aria-hidden="true">Deliver to</h2>
             <Button type="button" variant="secondary" size="sm" onClick={() => setDraft(defaultAddress)}>Use default address</Button>
           </div>
+          {/* Field lengths are the Orders service's address limits, also checked by addressErrors. */}
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <TextField className="sm:col-span-2" label="Street address" autoComplete="address-line1" value={address.line1} onChange={(e) => change('line1', e.target.value)} error={errors.line1} maxLength={100} />
             <TextField className="sm:col-span-2" label="Unit, floor or building" optional autoComplete="address-line2" value={address.line2} onChange={(e) => change('line2', e.target.value)} error={errors.line2} maxLength={100} />

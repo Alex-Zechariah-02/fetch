@@ -76,6 +76,7 @@ export function raw(
       res.on('error', fail)
       res.on('data', (chunk: Buffer) => chunks.push(chunk))
       res.on('end', () => {
+        // Held whole: test answers are pages and small JSON, and the 10 s wait bounds a stalled one.
         const bytes = Buffer.concat(chunks)
         done({ status: res.statusCode ?? 0, headers: res.headers, body: bytes.toString('utf8'), bytes })
       })
@@ -137,6 +138,7 @@ export class AdminApi {
   // confirmed revision and returns it.
   async stage(policy: string): Promise<{ id: number; checksum: string }> {
     const confirmed = await this.exchange('GET', '/admin/policy')
+    // Before the first policy there is no version to read, so the draft names version 0.
     const ifMatch = confirmed.status === 200 ? confirmed.etag! : '"r0"'
     const reply = await this.expect('POST', '/admin/candidates', 201, `{"policy":${policy}}`, { 'If-Match': ifMatch, 'Idempotency-Key': crypto.randomUUID() })
     return reply.body.candidate
@@ -184,6 +186,7 @@ export class AdminApi {
     const policy = JSON.parse(demo.file('deny-all.json')) as { operations: { api: string; access: string }[] }
     for (const operation of policy.operations) if (operation.api === 'web') operation.access = 'allow'
     await this.genesis(await this.stage(demo.file('deny-all.json')))
+    // A ten-minute trial cannot end before the next line keeps the change.
     await this.activate(await this.stage(JSON.stringify(policy)), 600)
     await this.resolve('confirm')
   }

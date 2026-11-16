@@ -86,6 +86,7 @@ func migrate(args []string) error {
 // Each step's report stays in work; a refused operation stops the migration.
 func importDescriptions(gateway, specs string, baseline map[string]any, work string) (string, error) {
 	current := filepath.Join(work, "base.json")
+	// Only this user reads the base: 0600 inside the 0700 folder MkdirTemp made.
 	if err := os.WriteFile(current, indented(migrationBase(baseline)), 0o600); err != nil {
 		return "", err
 	}

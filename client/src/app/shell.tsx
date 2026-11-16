@@ -207,11 +207,13 @@ function SearchBox() {
     <form role="search" onSubmit={submit} className="flex h-11 min-w-0 flex-1 items-center gap-3 rounded-full px-4 text-ink-3 focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-brand">
       <MagnifyingGlass size={18} aria-hidden="true" />
       <label htmlFor={id} className="sr-only">Search dishes, shops or groceries</label>
+      {/* 40 characters: the Inventory service refuses a longer search. */}
       <input id={id} type="search" value={text} onChange={(e) => setText(e.target.value)} maxLength={40} placeholder="Search dishes, shops or groceries" className="h-full min-w-0 flex-1 bg-transparent text-[15px] text-ink outline-none" />
     </form>
   )
 }
 
+// Prefilled with Kuala Lumpur, where the shops are; any town or state may replace it.
 const blankAddress: Address = { line1: '', line2: '', postcode: '', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
 
 function AddressPicker() {
@@ -252,6 +254,7 @@ export function AddressForm({ initial, onSave, submitLabel = 'Save address' }: {
   }
   return (
     <form onSubmit={submit} noValidate className="mt-4 grid grid-cols-2 gap-3">
+      {/* Field lengths are the Orders service's address limits, also checked by addressErrors. */}
       <TextField className="col-span-2" label="Street address" autoComplete="address-line1" value={draft.line1} onChange={(e) => change('line1')(e.target.value)} error={errors.line1} maxLength={100} />
       <TextField className="col-span-2" label="Unit, floor or building" optional autoComplete="address-line2" value={draft.line2} onChange={(e) => change('line2')(e.target.value)} error={errors.line2} maxLength={100} />
       <TextField label="Postcode" inputMode="numeric" autoComplete="postal-code" value={draft.postcode} onChange={(e) => change('postcode')(e.target.value.replace(/\D/g, '').slice(0, 5))} error={errors.postcode} hint="5 digits" />

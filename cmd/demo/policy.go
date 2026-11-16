@@ -23,6 +23,7 @@ func websiteOperations() []guard.Operation {
 		if name == "" {
 			name = "home"
 		}
+		// 600 a minute per client address: generous for browsing, and it caps a flood.
 		operations = append(operations, webOperation("web.page."+name, page, 600))
 	}
 	for _, route := range []struct{ id, prefix string }{

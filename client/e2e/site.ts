@@ -10,6 +10,7 @@ import { AdminApi, deployment, siteURL, type Demo } from './env'
 export let demo: Demo
 export let context: BrowserContext
 export let site: Page
+// Emptied at the start of each spec file, so they hold one file's run only.
 export const requests: string[] = []
 export const consoleLines: string[] = []
 export const violations: string[] = []
@@ -20,7 +21,7 @@ export function scriptDialogs(): number {
   return dialogs
 }
 
-// files lists every file of a directory tree.
+// files lists every file of a directory tree; it walks only the app's own build output.
 export function files(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name)
@@ -28,7 +29,8 @@ export function files(dir: string): string[] {
   })
 }
 
-// open loads a page route and waits until every read it started has an answer.
+// open loads a page route and waits until every read it started has an answer;
+// the test's own time limit bounds the wait.
 export async function open(page: Page, route: string) {
   await page.goto(siteURL + route, { waitUntil: 'networkidle' })
   await expect(page.locator('main')).toBeVisible()
@@ -61,6 +63,7 @@ export function useSite() {
     await api.enrol('admin', secret, password)
     await api.signIn('admin', password)
     await api.shopOnly(demo)
+    // A common desktop size: the site is a full desktop website.
     context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
     await context.exposeBinding('reportViolation', (_source, text: string) => {
       violations.push(text)

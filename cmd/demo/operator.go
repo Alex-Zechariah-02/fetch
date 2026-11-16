@@ -23,6 +23,7 @@ import (
 )
 
 func accountLogin(origin, email string) (string, time.Time, error) {
+	// Five seconds: an Accounts that does not answer fails the sign-in instead of hanging.
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: refuseRedirect}
 	defer client.CloseIdleConnections()
 	return loginWithClient(client, origin, email)
@@ -46,6 +47,7 @@ func loginWithClient(client *http.Client, origin, email string) (string, time.Ti
 		Token   string    `json:"token"`
 		Expires time.Time `json:"expires_at"`
 	}
+	// At most 64 KiB of a sign-in reply is decoded; a cut-off answer fails the sign-in.
 	if response.StatusCode != 200 || json.NewDecoder(io.LimitReader(response.Body, 65536)).Decode(&reply) != nil || reply.Token == "" || reply.Expires.IsZero() {
 		return "", time.Time{}, fmt.Errorf("Accounts sign-in failed (status %d)", response.StatusCode)
 	}
@@ -104,6 +106,7 @@ func attack(args []string) error {
 			return err
 		}
 	}
+	// A whole run ends after a minute: the expired context fails the next request.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	counts := map[int]int{}
@@ -130,6 +133,7 @@ func attack(args []string) error {
 			fmt.Printf("scenario=%s %s responses=%v elapsed=%s; stopped with an unknown request outcome\n", *scenario, source, counts, time.Since(start).Round(time.Millisecond))
 			return err
 		}
+		// The drain stops at 1 MiB, so a huge answer is not read past that; its status counts.
 		_, readErr := io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
 		response.Body.Close()
 		if readErr != nil {
@@ -157,6 +161,7 @@ func localClient(from, dir string) (*http.Client, error) {
 	if err := checkDemo(dir); err != nil {
 		return nil, err
 	}
+	// Two seconds to connect, five for a request: a stall ends the run instead of hanging it.
 	dialer := &net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IP(address.AsSlice())}, Timeout: 2 * time.Second}
 	return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: dialer.DialContext}, CheckRedirect: refuseRedirect}, nil
 }
@@ -170,6 +175,7 @@ func remoteClient(target, ca string) (string, *http.Client, error) {
 		parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", nil, errors.New("-target is a gateway's https origin, such as https://203.0.113.10:9480")
 	}
+	// TLS 1.2 at least: the client never accepts an older version from the gateway.
 	config := &tls.Config{MinVersion: tls.VersionTLS12}
 	if ca != "" {
 		data, err := os.ReadFile(ca)
@@ -181,6 +187,7 @@ func remoteClient(target, ca string) (string, *http.Client, error) {
 			return "", nil, fmt.Errorf("%s holds no CA certificate", ca)
 		}
 	}
+	// Five seconds a request: a remote gateway that stops answering ends the run.
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: config}, CheckRedirect: refuseRedirect}
 	return "https://" + parsed.Host, client, nil
 }
@@ -256,6 +263,7 @@ func policy(args []string) error {
 	return nil
 }
 
+// O_EXCL and 0600: a new export or key file is never overwritten, and only this user reads it.
 func writeNewFile(path string, data []byte) error {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
@@ -276,6 +284,7 @@ func replaceOperatorFile(path string, data []byte) error {
 		return err
 	}
 	defer os.Remove(file.Name())
+	// 0600 before any write, so the rename lands a file no other user can read.
 	if err = file.Chmod(0600); err != nil {
 		file.Close()
 		return err

@@ -26,6 +26,7 @@ const merchantId = /^MER-\d+$/
 // while the list is read and null when no shop has that address.
 export function useMerchantId(address: string): { id: string | null | undefined; list: ReturnType<typeof useQuery<List<Merchant>>> | null } {
   const byId = merchantId.test(address)
+  // One page of 50 holds every shop (there are six); the service allows up to 100 a page.
   const list = useQuery<List<Merchant>>(byId ? null : '/inventory/merchants?limit=50')
   if (byId) return { id: address, list: null }
   if (!list.data) return { id: undefined, list }

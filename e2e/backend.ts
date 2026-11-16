@@ -12,6 +12,7 @@ export { adminURL, controls, httpOrigin, offsetPort, siteURL } from './ports'
 // The two checkouts, side by side: this repository and APIWard beside it.
 export const fetchRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export const apiwardRoot = resolve(fetchRoot, '..', 'apiward')
+// Each snapshot holds only what the Go builds read: the program and package folders and module files.
 const checkouts = [
   { name: 'apiward', root: apiwardRoot, inputs: ['cmd', 'internal', 'module', 'go.mod', 'go.sum'] },
   { name: 'fetch', root: fetchRoot, inputs: ['cmd', 'internal', 'go.mod', 'go.sum'] },
@@ -29,12 +30,14 @@ process.on('exit', () => {
   }
 })
 
+// One folder per build or deployment of this run, all removed when the run's process exits.
 export function temporaryDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   temporary.push(dir)
   return dir
 }
 
+// No timeout: git, tar and go run on local folders, and the CI job's time limit stops a hang.
 function run(command: string, args: string[], cwd: string): string {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } })
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')}: ${result.stderr || result.stdout || result.error}`)
@@ -104,6 +107,7 @@ function snapshot(checkout: (typeof checkouts)[number], mode: 'head' | 'worktree
     run('tar', ['-xf', 'head.tar'], target)
   }
   const files = paths.map((path) => {
+    // Read whole: these are source files, each hashed for the build's recorded identity.
     const data = readFileSync(join(mode === 'head' ? target : checkout.root, path))
     if (mode === 'worktree') {
       const copy = join(target, path)
@@ -142,6 +146,7 @@ function build(): string {
     diff_sha256: digest(snapshots.map((taken) => taken.diff).join('')),
     files,
   }
+  // The programs a deployment runs, plus a fault-injection gateway for the failure tests.
   const programs = [
     { name: 'apiward', dir: 'apiward', args: ['./cmd/apiward'] },
     { name: 'services', dir: 'fetch', args: ['./cmd/services'] },
@@ -152,6 +157,7 @@ function build(): string {
   try {
     for (const program of programs) run('go', ['build', '-trimpath', '-o', join(bin, program.name + executable), ...program.args], join(source, program.dir))
     writeFileSync(join(bin, 'source.json'), JSON.stringify(identity, null, 2))
+    // One line per build, only when a run asks for evidence; the suite builds once per run.
     if (process.env.E2E_EVIDENCE) appendFileSync(process.env.E2E_EVIDENCE, JSON.stringify({ kind: 'backend-build', ...identity }) + '\n')
     return bin
   } finally {
@@ -162,10 +168,12 @@ function build(): string {
 // buildApplication builds the website in folder (an absolute path) for
 // production and returns its dist folder.
 export function buildApplication(folder: string): string {
+  // Through a shell so npm resolves on every platform; as with run, the CI job's time limit stops a hang.
   const shell = (command: string, env: NodeJS.ProcessEnv = process.env) => {
     const result = spawnSync(command, { cwd: folder, encoding: 'utf8', shell: true, env })
     if (result.status !== 0) throw new Error(`${command}: ${result.stderr || result.stdout || result.error}`)
   }
+  // npm ci only for a fresh checkout, as in CI; a local run reuses its installed packages.
   if (!existsSync(join(folder, 'node_modules'))) shell('npm ci --prefer-offline --no-audit --no-fund')
   // A Vite dev server started earlier in this process sets NODE_ENV to
   // development, which would make this a development build of React.

@@ -150,6 +150,7 @@ export const groups: Group[] = [
             : hasRole(user, 'SUPPORT') || hasRole(user, 'OPERATIONS')
               ? { status: 200, by: 'service', why: 'Support and operations may read every order' }
               : gatewayRefuses(403, 'Role check: only support and operations read every order'),
+        // Five orders show the read worked while the answer stays short.
         run: (token, signal) => one({ method: 'GET', path: '/orders?limit=5', token, signal }),
       },
       {

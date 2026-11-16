@@ -42,6 +42,7 @@ func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 	if err != nil || bind.IsUnspecified() {
 		return errors.New("-role fetch takes -bind: this host's IP address, which the gateway connects to")
 	}
+	// The services reach each other on loopback; the gateway connects to this host's network address.
 	if bind.Unmap().IsLoopback() {
 		return errors.New("-bind takes this host's network address; loopback is where the services call each other")
 	}
@@ -169,6 +170,7 @@ func createGatewayState(dir, web, gateway string, fetch netip.Addr, folder, tlsC
 func hostSettings(files gatewayFiles, kid string, in func(string) string, certificate, key string) map[string]any {
 	port := strconv.Itoa(int(netip.MustParseAddrPort(dataListen).Port()))
 	data := map[string]any{
+		// Other hosts reach the shop over TLS on the data port, so every interface is offered.
 		"listen":                net.JoinHostPort("0.0.0.0", port),
 		"listen_all_interfaces": true,
 		"tls":                   map[string]any{"files": map[string]string{"certificate_file": certificate, "key_file": key}},
@@ -184,6 +186,7 @@ func runGatewayHost(ctx context.Context, dir, gateway, shopURL string, ready fun
 	if err := checkDemo(dir); err != nil {
 		return err
 	}
+	// Only the gateway runs in this role, so one exit report is enough.
 	running := newChildren(dir, 1)
 	defer func() { runErr = errors.Join(runErr, running.stop()) }()
 	return running.runGateway(ctx, gateway, nil, nil, shopURL, ready)
@@ -250,6 +253,7 @@ func keyID(data []byte) (string, error) {
 		return "", err
 	}
 	sum := sha256.Sum256(der)
+	// Eight bytes, 64 bits, keep the ID short and still tell different keys apart.
 	return "fetch-" + hex.EncodeToString(sum[:8]), nil
 }
 

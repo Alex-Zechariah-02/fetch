@@ -19,6 +19,7 @@ export interface Basket {
 }
 
 const storageKey = 'fetch.basket'
+// The Orders service's limits: at most 20 lines of at most 50 units each.
 export const maxQuantity = 50
 export const maxLines = 20
 

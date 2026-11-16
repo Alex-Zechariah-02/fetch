@@ -110,6 +110,7 @@ const itemSorts: { value: string; label: string; compare?: (a: SearchHit, b: Sea
 function SearchResults({ q }: { q: string }) {
   const { path, params } = useLocation()
   const sort = itemSorts.find((s) => s.value === (params.get('sort') ?? '')) ?? itemSorts[0]
+  // The Inventory service refuses a search shorter than 2 characters, so none is sent.
   const tooShort = q.length < 2
   const results = useQuery<List<SearchHit>>(tooShort ? null : `/inventory/search?q=${encodeURIComponent(q)}`)
   const problem = results.answer && results.answer.kind !== 'ok' ? describe(results.answer) : null

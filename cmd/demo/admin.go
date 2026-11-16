@@ -32,6 +32,7 @@ type adminClient struct {
 const adminSessionCookie = "__Host-gateway-admin"
 
 func newAdminClient() *adminClient {
+	// 30 s: an Admin API call that never answers fails instead of blocking setup forever.
 	return &adminClient{client: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: refuseRedirect}}
 }
 
@@ -60,6 +61,7 @@ func (a *adminClient) send(method, path string, body []byte, headers map[string]
 		return nil, nil, fmt.Errorf("%s %s: no answer from the gateway, so it may or may not have been applied; check the Dashboard: %w", method, path, err)
 	}
 	defer response.Body.Close()
+	// 1 MiB caps the memory one answer takes; a longer reply is cut short.
 	reply, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
 		return nil, nil, err
@@ -87,6 +89,7 @@ func mutationHeaders(ifMatch string) map[string]string {
 }
 
 func newKey() string {
+	// 16 random bytes (128 bits) in hex: every mutation gets its own idempotency key.
 	key := make([]byte, 16)
 	rand.Read(key)
 	return hex.EncodeToString(key)
@@ -190,6 +193,7 @@ func (a *adminClient) establishBaseline(state string) error {
 	if err != nil {
 		return err
 	}
+	// 300 s is generous: the confirm follows within two calls, each capped at 30 s.
 	activation := map[string]any{"candidate": baseline.ID, "checksum": baseline.Checksum, "confirm_within_seconds": 300}
 	if _, _, err := a.send(http.MethodPost, "/admin/provisional", marshal(activation), mutationHeaders(revision), http.StatusOK); err != nil {
 		return err

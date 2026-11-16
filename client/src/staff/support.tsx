@@ -21,6 +21,7 @@ export function SupportPage() {
   const { params } = useLocation()
   const filter = (['open', 'answered', 'resolved', 'all'].includes(params.get('status') ?? '') ? params.get('status') : 'open') as Filter
   const selected = params.get('ticket')
+  // Every 10 s: new tickets reach the queue soon after a customer writes.
   const queue = useQuery<List<Ticket>>(`/support/queue${filter === 'all' ? '' : `?status=${filter}`}`, { poll: 10_000 })
   const problem = queue.answer && !queue.data ? describe(queue.answer) : null
   const go = (next: { status?: Filter; ticket?: string | null }) => {
@@ -72,6 +73,7 @@ export function SupportPage() {
 }
 
 function TicketDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
+  // The open ticket rereads at the queue's pace, so a customer's reply shows as soon.
   const ticket = useQuery<{ ticket: Ticket }>(`/support/ticket/${encodeURIComponent(id)}`, { poll: 10_000 })
   const order = useQuery<{ order: Order }>(ticket.data?.ticket.order ? `/orders/detail/${encodeURIComponent(ticket.data.ticket.order)}` : null)
   const resolve = useAction(() => {

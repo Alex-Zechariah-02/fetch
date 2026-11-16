@@ -53,6 +53,7 @@ func publicItem(stock stockItem) Item {
 		item.StockState = "made_to_order"
 	case *stock.Stock-stock.Reserved <= 0:
 		item.StockState = "out"
+	// Fifteen or fewer free units show as low, so the menu warns before an item runs out.
 	case *stock.Stock-stock.Reserved <= 15:
 		item.StockState = "low"
 	default:
@@ -120,6 +121,7 @@ func (d *inventory) handle(r *http.Request, body []byte) result {
 	}
 	if r.Method == "GET" && path == "/inventory/search" {
 		q, ok := query(r, "q", "section")
+		// Two characters at least, so a one-letter search cannot run; 40 bounds the term.
 		if !ok || !length(q.Get("q"), 2, 40) || !validSection(q.Get("section")) {
 			return invalidQuery()
 		}
@@ -182,6 +184,7 @@ func (d *inventory) handle(r *http.Request, body []byte) result {
 			if rejected := decodeBody(r, body, itemBody, &change); rejected != nil {
 				return *rejected
 			}
+			// Order totals multiply this price, so it stays between 50 and 100000 sen.
 			if change.Price == nil && change.Available == nil || change.Price != nil && (*change.Price < 50 || *change.Price > 100000) {
 				return failure(422, "invalid_change", "Choose a price or availability change within the allowed range.", "")
 			}
@@ -214,6 +217,7 @@ func (d *inventory) handle(r *http.Request, body []byte) result {
 			if rejected := decodeBody(r, body, stockBody, &change); rejected != nil {
 				return *rejected
 			}
+			// One call moves stock by at most 100 units, and a zero change is refused.
 			if change.Delta == nil || *change.Delta == 0 || *change.Delta < -100 || *change.Delta > 100 {
 				return failure(422, "invalid_change", "Choose a stock change from -100 to 100, excluding zero.", "delta")
 			}

@@ -44,6 +44,7 @@ func objectSchema(required []string, properties map[string]any) map[string]any {
 
 // Operations lists every API operation in the baseline policy's order.
 func Operations() []guard.Operation {
+	// Each field's bound is the OpenAPI schema's; the guard refuses a body outside it.
 	itemChange := objectSchema([]string{}, map[string]any{"price_sen": integerSchema(50, 100000), "available": map[string]any{"type": "boolean"}})
 	stockChange := objectSchema([]string{"delta"}, map[string]any{"delta": integerSchema(-100, 100)})
 	line := objectSchema([]string{"item", "quantity"}, map[string]any{"item": stringSchema(7, 7), "quantity": integerSchema(1, 50)})
@@ -64,6 +65,7 @@ func Operations() []guard.Operation {
 	op := func(id, api, method, target string, roles []string, count, maxBytes int, schema map[string]any) guard.Operation {
 		return guard.Operation{ID: id, API: api, Method: method, Target: target, Roles: slices.Clone(roles), Count: count, Window: window, MaxBytes: maxBytes, Schema: schema}
 	}
+	// A count is the requests the guard admits per key and window; past it the answer is 429.
 	return []guard.Operation{
 		op("inventory.categories", "inventory", "GET", "/inventory/categories", public, 120, 0, nil),
 		op("inventory.merchants", "inventory", "GET", "/inventory/merchants", public, 120, 0, nil),

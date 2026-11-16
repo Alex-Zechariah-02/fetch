@@ -20,6 +20,7 @@ func readSecretLine(prompt string) (string, error) {
 		defer fmt.Println()
 		return readLine()
 	}
+	// Echo off while the administrator password is typed; the old mode returns after the read.
 	if err := windows.SetConsoleMode(console, mode&^windows.ENABLE_ECHO_INPUT); err != nil {
 		return "", err
 	}
@@ -43,6 +44,7 @@ func lockEarlierDemoFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Exclusive and non-blocking: another process holding it is refused at once, not waited for.
 	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{}); err != nil {
 		file.Close()
 		return nil, err

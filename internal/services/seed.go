@@ -143,6 +143,7 @@ func seedItems() []stockItem {
 	items := make([]stockItem, 0, len(rows))
 	for _, row := range rows {
 		var stock *int
+		// A negative seed leaves Stock nil: the item is made to order, with no stock count.
 		if row.stock >= 0 {
 			value := row.stock
 			stock = &value

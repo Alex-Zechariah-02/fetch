@@ -49,6 +49,7 @@ export class Demo {
     this.dir = join(parent, 'demo')
   }
 
+  // No timeout: each demo tool command reads or writes local files and ends on its own.
   private tool(...args: string[]) {
     return spawnSync(join(this.bin, 'demo' + exe), args, { encoding: 'utf8' })
   }
@@ -78,8 +79,10 @@ export class Demo {
     this.output = ''
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
+    // All output is kept: a run prints little, and a failure quotes it whole.
     child.stdout.on('data', (chunk: string) => (this.output += chunk))
     child.stderr.on('data', (chunk: string) => (this.output += chunk))
+    // The processes start one after another; 60 s allows a slow runner, polled every 100 ms.
     const deadline = Date.now() + 60_000
     while (!this.output.includes('gateway   process')) {
       if (child.exitCode !== null || child.signalCode !== null) throw new Error(`demo run exited: ${this.output}`)
@@ -113,13 +116,15 @@ export class Demo {
     return this.output
   }
 
+  // 15 minutes by default, the lifetime of a token from Fetch Accounts.
   token(subject: string, ttl = '15m'): string {
     const result = this.tool('token', '-dir', this.dir, '-subject', subject, '-ttl', ttl)
     if (result.status !== 0) throw new Error(`token failed: ${result.stderr}`)
     return result.stdout.trim()
   }
 
-  // events returns the gateway's request events, each as a field map.
+  // events returns the gateway's request events, each as a field map: one request's,
+  // or the newest 1000, more than any one test sends.
   events(requestId?: string): Record<string, string>[] {
     const args = ['events', '-dir', this.dir, ...(requestId ? ['-request', requestId] : ['-last', '1000'])]
     const result = this.tool(...args)
@@ -130,6 +135,7 @@ export class Demo {
       .map((line) => Object.fromEntries(line.split(' ').map((field) => field.split(/=(.*)/s).slice(0, 2) as [string, string])))
   }
 
+  // Read whole: the demonstration's files are small text files the run itself writes.
   file(name: string): string {
     return readFileSync(join(this.dir, name), 'utf8')
   }

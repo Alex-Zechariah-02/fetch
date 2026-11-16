@@ -60,18 +60,22 @@ paths:
                   additionalProperties: false
                   properties:
                     city:
+                      # The checkout handler refuses a city outside 1 to 40 characters.
                       maxLength: 40
                       minLength: 1
                       type: string
                     line1:
+                      # The checkout handler refuses a first line outside 1 to 100 characters.
                       maxLength: 100
                       minLength: 1
                       type: string
                     line2:
+                      # The checkout handler refuses a second line outside 0 to 100 characters.
                       maxLength: 100
                       minLength: 0
                       type: string
                     postcode:
+                      # The checkout handler refuses a postcode that is not exactly 5 characters.
                       maxLength: 5
                       minLength: 5
                       type: string
@@ -94,6 +98,7 @@ paths:
                         - Wilayah Persekutuan Labuan
                         - Wilayah Persekutuan Putrajaya
                       type: string
+                  # Line1, postcode, city and state are required; the checkout handler refuses any other state.
                   required:
                     - line1
                     - postcode
@@ -105,10 +110,12 @@ paths:
                     additionalProperties: false
                     properties:
                       item:
+                        # The checkout handler refuses an item identifier that is not 7 characters.
                         maxLength: 7
                         minLength: 7
                         type: string
                       quantity:
+                        # The checkout handler refuses a quantity outside 1 to 50.
                         maximum: 50
                         minimum: 1
                         type: integer
@@ -116,14 +123,17 @@ paths:
                       - item
                       - quantity
                     type: object
+                  # The checkout handler refuses an order with fewer than 1 or more than 20 lines.
                   maxItems: 20
                   minItems: 1
                   type: array
                 merchant:
+                  # The checkout handler refuses a merchant identifier that is not 7 characters.
                   maxLength: 7
                   minLength: 7
                   type: string
                 note:
+                  # The checkout handler refuses a note longer than 200 characters.
                   maxLength: 200
                   minLength: 0
                   type: string
@@ -132,6 +142,8 @@ paths:
                     - cash
                     - wallet
                   type: string
+              # The checkout handler refuses a payment other than cash or wallet.
+              # These four members are required; the checkout handler refuses any other member name.
               required:
                 - merchant
                 - items

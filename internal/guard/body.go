@@ -38,11 +38,13 @@ type refusal struct {
 // body with the bytes read, so the handler reads exactly what was checked.
 func readBody(r *http.Request, rule *rule) *refusal {
 	if rule.Schema == nil {
+		// No schema is declared, so a body would reach the handler unchecked.
 		if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
 			return &refusal{http.StatusBadRequest, "bad_request", "unexpected_body"}
 		}
 		return nil
 	}
+	// An operation's own cap never widens the global body ceiling.
 	limit := int64(min(rule.MaxBytes, maxBody))
 	tooLarge := &refusal{http.StatusRequestEntityTooLarge, "payload_too_large", "too_large"}
 	if r.ContentLength > limit {
@@ -73,6 +75,7 @@ func readBody(r *http.Request, rule *rule) *refusal {
 
 // jsonMedia accepts exactly one Content-Type field naming application/json,
 // optionally with charset=utf-8.
+// Two fields or another parameter would leave the body's media type ambiguous.
 func jsonMedia(fields []string) bool {
 	if len(fields) != 1 {
 		return false

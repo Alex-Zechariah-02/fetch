@@ -89,6 +89,7 @@ func changeKeys(dir string, admin *adminClient, action, kid string) (string, err
 		if len(trusted) >= maxTrusted {
 			return "", fmt.Errorf("the gateway trusts at most %d keys: retire one before rotating", maxTrusted)
 		}
+		// The stamp names the rotation and eight random hex digits keep two in the same second apart.
 		kid = "fetch-" + time.Now().UTC().Format("20060102T150405") + "-" + newKey()[:8]
 		private, public, err := signingKeys()
 		if err != nil {
@@ -146,6 +147,7 @@ func changeKeys(dir string, admin *adminClient, action, kid string) (string, err
 
 // recentKeyUse is how recently a key must have verified a token for retiring
 // it to warrant a warning.
+// Fifteen minutes is the Accounts token lifetime, so a key used in it may still have live tokens.
 const recentKeyUse = 15 * time.Minute
 
 // warnRecentKeyUse warns, without stopping the retirement, when the gateway

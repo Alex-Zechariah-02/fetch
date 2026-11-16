@@ -67,6 +67,7 @@ function ItemView({ data }: { data: ItemAnswer }) {
             </p>
           ) : (
             <div className="mt-8 flex flex-wrap items-center gap-3">
+              {/* At least one: removing an item is done in the basket, not here. */}
               <QuantityStepper name={item.name} value={quantity} max={maxQuantity} onChange={(q) => setQuantity(Math.max(1, q))} />
               <Button size="lg" onClick={() => add(item, quantity)} className="w-full sm:w-auto sm:min-w-56">
                 {added === item.id ? <><Check size={18} weight="bold" />Added to basket</> : `Add to basket · ${rm(item.price_sen * quantity)}`}

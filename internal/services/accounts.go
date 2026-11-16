@@ -53,6 +53,7 @@ func newAccounts(file string, measure bool, log *slog.Logger) (*accounts, error)
 	return &accounts{signingFile: file, salt: salt, passwordHash: passwordKey(demoPassword, salt), measure: measure, log: log}, nil
 }
 func passwordKey(password string, salt []byte) []byte {
+	// Two passes over 64 MiB per attempt make each password guess costly.
 	return argon2.IDKey([]byte(password), salt, 2, 64*1024, 2, 32)
 }
 func (d *accounts) reset() {
@@ -132,12 +133,14 @@ func loadSigningKey(file string) (signingSettings, *rsa.PrivateKey, error) {
 	default:
 		return settings, nil, errors.New("an RSA private key is required")
 	}
+	// A key outside 2048 to 8192 bits is refused before it can sign a token.
 	if key == nil || key.N.BitLen() < 2048 || key.N.BitLen() > 8192 || key.Validate() != nil {
 		return settings, nil, errors.New("an RSA private key of 2048 to 8192 bits is required")
 	}
 	return settings, key, nil
 }
 func validKid(kid string) bool {
+	// The key ID must be 1 to 64 letters, digits, _ - . so it is safe in a JWT header.
 	if len(kid) < 1 || len(kid) > 64 {
 		return false
 	}
@@ -171,6 +174,7 @@ func (d *accounts) sign(user User, now time.Time) (string, time.Time, error) {
 	if err != nil {
 		return "", time.Time{}, err
 	}
+	// A token lives 15 minutes, so an expired one is refused until the client refreshes.
 	expires := now.Add(15 * time.Minute)
 	claims, _ := json.Marshal(map[string]any{"iss": "fetch-accounts", "aud": "fetch-gateway", "sub": user.ID, "roles": user.Roles, "name": user.Name, "iat": now.Unix(), "nbf": now.Unix(), "exp": expires.Unix()})
 	signed, err := signer.Sign(claims)
@@ -192,6 +196,7 @@ func (d *accounts) handle(r *http.Request, body []byte) result {
 		if rejected := decodeBody(r, body, loginBody, &request); rejected != nil {
 			return *rejected
 		}
+		// Lengths are checked before hashing, so no oversized credential reaches the password step.
 		if !length(request.Email, 3, 254) || !length(request.Password, 1, 256) {
 			return failure(400, "invalid_request", "Enter an email address and password within the allowed lengths.", "")
 		}

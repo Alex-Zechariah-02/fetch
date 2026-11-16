@@ -98,6 +98,7 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 	case <-ctx.Done():
 	case result = <-errs:
 	}
+	// Five seconds for open connections to drain before Close ends them.
 	stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, server := range servers {

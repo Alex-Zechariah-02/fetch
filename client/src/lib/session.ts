@@ -23,6 +23,7 @@ interface State {
 }
 
 const storageKey = 'fetch.session'
+// Refresh 90 s before expiry, retrying every 15 s, so several attempts fit before the token ends.
 const refreshAhead = 90_000
 const retryAfter = 15_000
 

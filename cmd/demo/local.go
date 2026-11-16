@@ -100,6 +100,7 @@ func block(args []string) error {
 	slices.Sort(list)
 	fmt.Printf("blocked accounts: %v\n", list)
 	content := indented(list)
+	// A new list file is 0600: it decides which accounts are refused, so nobody else edits it.
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		return err
 	}
@@ -113,6 +114,7 @@ func block(args []string) error {
 // putBlocked replaces the blocked list of every API, trying each one even
 // after a failure; every API that does not take it is named in the error.
 func putBlocked(services []demoService, list []byte, secret string) error {
+	// Ten seconds an API: a listener that never answers is reported, and the rest still update.
 	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: refuseRedirect}
 	defer client.CloseIdleConnections()
 	var failed error

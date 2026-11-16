@@ -58,6 +58,7 @@ func (d *inventory) reserve(r *http.Request, body []byte) result {
 	if !merchant.Open {
 		return failure(422, "merchant_closed", "This merchant is closed.", "merchant")
 	}
+	// One to twenty lines, the same bound the policy's checkout schema sets.
 	if len(request.Items) < 1 || len(request.Items) > 20 {
 		return failure(422, "invalid_change", "Choose from one to twenty items.", "items")
 	}
@@ -72,6 +73,7 @@ func (d *inventory) reserve(r *http.Request, body []byte) result {
 		if stock.Item.Merchant != request.Merchant {
 			return failure(422, "mixed_merchants", "Choose items from one merchant.", field)
 		}
+		// A line holds one to fifty, as the policy's line schema allows.
 		if line.Quantity < 1 || line.Quantity > 50 {
 			return failure(422, "invalid_change", "Choose a quantity from one to fifty.", fmt.Sprintf("items[%d].quantity", i))
 		}

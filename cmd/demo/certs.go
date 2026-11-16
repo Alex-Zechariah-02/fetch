@@ -104,6 +104,7 @@ func writeFolders(out string, folders map[string]map[string][]byte) (err error) 
 			return err
 		}
 		for name, content := range files {
+			// 0600: only the user running the demo can read the signing key and the TLS keys.
 			if err := os.WriteFile(filepath.Join(out, folder, name), content, 0o600); err != nil {
 				return err
 			}
@@ -117,6 +118,7 @@ func hostNames(list string) ([]net.IP, []string, error) {
 	var ips []net.IP
 	var dns []string
 	names := strings.Split(list, ",")
+	// 8 names is this tool's own ceiling, keeping the data certificate's subject list short.
 	if list == "" || len(names) > 8 {
 		return nil, nil, errors.New("-gateway takes 1 to 8 IP addresses or DNS names, comma-separated")
 	}
@@ -139,10 +141,12 @@ func hostNames(list string) ([]net.IP, []string, error) {
 
 // isDNSName accepts lower-case labels of letters, digits and '-', joined by dots.
 func isDNSName(name string) bool {
+	// 253 bytes: the longest DNS name, so a longer string cannot go in a certificate.
 	if name == "" || len(name) > 253 {
 		return false
 	}
 	for label := range strings.SplitSeq(name, ".") {
+		// 63 bytes per label and no hyphens at its edges: the shape DNS allows.
 		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return false
 		}
@@ -159,6 +163,7 @@ func isDNSName(name string) bool {
 // key pair and the gateway's assertion key pair, keyed by folder and file
 // name.
 func deploymentFiles(fetch netip.Addr, gatewayIPs []net.IP, gatewayDNS []string, now time.Time) (map[string]map[string][]byte, error) {
+	// P-256 for the CA and every certificate key: short keys and one curve throughout.
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -166,6 +171,7 @@ func deploymentFiles(fetch netip.Addr, gatewayIPs []net.IP, gatewayDNS []string,
 	template := &x509.Certificate{
 		Subject:   pkix.Name{CommonName: "Fetch deployment CA " + now.UTC().Format(time.DateOnly)},
 		NotBefore: now.Add(-clockSkew), NotAfter: now.Add(certLifetime),
+		// Path length 0: the demonstration CA signs service certificates, never another CA.
 		IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign,
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, template, template, &caKey.PublicKey, caKey)

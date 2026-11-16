@@ -15,6 +15,7 @@ import { Loading, ProblemNotice, Skeleton } from '../ui/notice'
 // read through the gateway, and this tab's delivery address. Nothing here
 // grants or changes a role.
 
+// Prefilled with Kuala Lumpur, where the shops are; any town or state may replace it.
 const blankAddress: Address = { line1: '', line2: '', postcode: '', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
 
 export function AccountPage() {

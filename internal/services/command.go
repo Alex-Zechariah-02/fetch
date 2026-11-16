@@ -55,6 +55,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	if err != nil {
 		return err
 	}
+	// The control default is the API port plus 100, so the two listeners never collide.
 	defaultControl, err := ports.Offset("127.0.0.1:" + strconv.Itoa(base+100))
 	if err != nil {
 		return err

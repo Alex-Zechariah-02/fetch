@@ -62,6 +62,7 @@ func (i Ingress) config() (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the API certificate: %w", err)
 	}
+	// Read whole, so every certificate in the operator's CA file joins the pool.
 	data, err := os.ReadFile(i.ClientCA)
 	if err != nil {
 		return nil, fmt.Errorf("the client CA: %w", err)

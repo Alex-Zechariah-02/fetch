@@ -113,6 +113,7 @@ func (c *children) runGateway(ctx context.Context, gateway string, addresses []s
 		return err
 	}
 	addresses = append(addresses, adminListen, dataListen, metricsListen)
+	// Gives up instead of waiting forever when the gateway or a service never listens.
 	deadline := time.Now().Add(30 * time.Second)
 	if err := c.awaitListening(ctx, addresses, deadline); err != nil {
 		if errors.Is(err, errCancelled) {
@@ -136,6 +137,7 @@ func (c *children) runGateway(ctx context.Context, gateway string, addresses []s
 			return fmt.Errorf("%s exited before admission status (%v); see its log in %s", result.name, result.err, c.dir)
 		case <-ctx.Done():
 			return nil
+		// Re-reads gateway.log every 50 ms, often enough to notice admission without spinning.
 		case <-time.After(50 * time.Millisecond):
 		}
 		if time.Now().After(deadline) {
@@ -187,6 +189,7 @@ func checkFree(addresses []string) error {
 }
 
 func dialable(address string) bool {
+	// Keeps the free-address check quick; a probe slower than 200 ms counts as free.
 	conn, err := net.DialTimeout("tcp", address, 200*time.Millisecond)
 	if err != nil {
 		return false

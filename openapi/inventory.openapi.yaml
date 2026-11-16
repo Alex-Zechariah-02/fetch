@@ -45,9 +45,11 @@ paths:
                 available:
                   type: boolean
                 price_sen:
+                  # The handler refuses a price below 50 or above 100000 sen with 422 invalid_change.
                   maximum: 100000
                   minimum: 50
                   type: integer
+              # Either field alone is enough; the handler refuses an empty patch and unknown members.
               required: []
               type: object
         required: true
@@ -160,6 +162,7 @@ paths:
               properties:
                 delta:
                   description: The stock change; zero is refused (422 invalid_change).
+                  # The handler refuses a delta below -100 or above 100 with 422 invalid_change.
                   maximum: 100
                   minimum: -100
                   type: integer

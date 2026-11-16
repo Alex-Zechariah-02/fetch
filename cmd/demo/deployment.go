@@ -28,6 +28,7 @@ type demoIdentity struct {
 }
 
 func demoDigest(path string) (string, error) {
+	// A digest covers every byte, so the whole file is read and no size cap applies.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -57,10 +58,12 @@ func identifyDemo(dir string) error {
 		return err
 	}
 	identity := demoIdentity{Format: "fetch-demo-1", Directory: dir, Config: config, Secret: secret}
+	// The identity names the directory and both digests; it is created readable by its owner only.
 	return os.WriteFile(filepath.Join(dir, identityFile), indented(identity), 0o600)
 }
 
 func checkDemo(dir string) error {
+	// These files belong to the demonstration directory; a link or directory may not stand in for one.
 	for _, name := range []string{identityFile, configFile, privateKeyFile, publicKeyFile, assertionKeyFile, assertionSetFile, signingFile, secretFile, databaseFile, "gateway.log", "orders.log", "inventory.log", "reports.log", "support.log", "accounts.log"} {
 		info, err := os.Lstat(filepath.Join(dir, name))
 		if errors.Is(err, os.ErrNotExist) {
@@ -81,12 +84,14 @@ func checkDemo(dir string) error {
 		return fmt.Errorf("not an identified demonstration directory: %w", err)
 	}
 	defer file.Close()
+	// An identity is a small object; 4096 bytes cap the read, so a longer object fails to decode.
 	decoder := json.NewDecoder(io.LimitReader(file, 4096))
 	decoder.DisallowUnknownFields()
 	var identity demoIdentity
 	if err := decoder.Decode(&identity); err != nil {
 		return fmt.Errorf("invalid demonstration identity: %w", err)
 	}
+	// A second value or trailing text means this is not the identity that setup wrote.
 	if _, err := decoder.Token(); err != io.EOF {
 		return errors.New("data after the demonstration identity")
 	}
@@ -125,6 +130,7 @@ func checkEarlierDemoForFresh(dir string) error {
 		Config    string `json:"config_sha256"`
 		Secret    string `json:"fixture_secret_sha256"`
 	}
+	// The earlier identity gets the same 4096-byte cap, so a longer object fails to decode.
 	decoder := json.NewDecoder(io.LimitReader(file, 4096))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&identity) != nil {
@@ -151,6 +157,7 @@ func checkEarlierDemoForFresh(dir string) error {
 	var native struct {
 		Version int `json:"version"`
 	}
+	// Only the native configuration format version 1 is read here; another version is refused.
 	if json.Unmarshal(data, &native) != nil || native.Version != 1 {
 		return errors.New("earlier configuration is not native version 1")
 	}
@@ -168,6 +175,7 @@ func readAdmission(path string, start int64) (string, error) {
 	if _, err := file.Seek(start, io.SeekStart); err != nil {
 		return "", err
 	}
+	// The default 64 KiB line limit bounds memory per line; a longer log line stops the scan.
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		var event struct {

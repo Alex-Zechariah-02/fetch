@@ -55,6 +55,7 @@ func accountToken(subject string) (string, time.Time, error) {
 	return "", time.Time{}, errors.New("unknown demo account")
 }
 func validSubject(s string) bool {
+	// Seeded account IDs are short printable ASCII; anything else cannot match one, so it is refused.
 	if len(s) < 1 || len(s) > 128 {
 		return false
 	}
@@ -79,6 +80,7 @@ func reset(args []string) error {
 	if err != nil {
 		return err
 	}
+	// A wedged control listener must not hang the reset: 10s ends the request, its outcome unknown.
 	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: refuseRedirect}
 	defer client.CloseIdleConnections()
 	for _, service := range fetchServices {
@@ -89,9 +91,11 @@ func reset(args []string) error {
 			return fmt.Errorf("resetting %s: no answer; its reset outcome is unknown: %w", service.name, err)
 		}
 		var state services.State
+		// A reset answer is a small state object, so 1 MiB bounds the read from a broken listener.
 		decodeErr := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&state)
 		response.Body.Close()
 		hash, hashErr := hex.DecodeString(state.SHA256)
+		// The seed hash must be a full SHA-256, 32 bytes, so a truncated digest is refused.
 		if response.StatusCode != 200 || decodeErr != nil || state.Service != service.name || hashErr != nil || len(hash) != 32 {
 			return fmt.Errorf("resetting %s: invalid reset answer, status %d", service.name, response.StatusCode)
 		}
@@ -126,6 +130,7 @@ const maxLast = 10000
 func events(args []string) error {
 	set := flag.NewFlagSet("events", flag.ContinueOnError)
 	requestID := set.String("request", "", "request id shown by the website")
+	// Twenty fills a screen of events; the range check below keeps the value to maxLast.
 	last := set.Int("last", 20, "number of events to print without -request")
 	dir, err := parse(set, args)
 	if err != nil {
@@ -145,6 +150,7 @@ func events(args []string) error {
 	var matched []map[string]any
 	malformed := 0
 	scanner := bufio.NewScanner(file)
+	// Audit records are small; the 1 MiB maximum bounds one record and a longer line ends the scan.
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	scanner.Split(auditLines)
 	for scanner.Scan() {

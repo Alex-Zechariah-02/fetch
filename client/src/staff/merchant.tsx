@@ -44,6 +44,7 @@ export function MerchantPage() {
 }
 
 function OrdersBoard() {
+  // Every 5 s: a shop acts on new orders, so they must appear quickly.
   const orders = useQuery<List<Order>>('/orders/merchant', { poll: 5_000 })
   const action = useAction(orders.reload)
   const problem = orders.answer && !orders.data ? describe(orders.answer) : null
@@ -115,6 +116,7 @@ function MenuRow({ item, section, onChanged }: { item: Item; section: 'food' | '
   }
   const edited = price !== ringgit(item.price_sen)
   const [delta, setDelta] = useState('')
+  // The Inventory service's ranges: a price of 50 to 100,000 sen, a stock change of -100 to 100 but not 0.
   const priceSen = Math.round(Number(price) * 100)
   const priceValid = /^\d{1,4}(\.\d{1,2})?$/.test(price) && priceSen >= 50 && priceSen <= 100000
   const deltaValue = Number(delta)
@@ -164,6 +166,7 @@ function MenuRow({ item, section, onChanged }: { item: Item; section: 'food' | '
           ) : (
             <span className="text-sm text-ink-3" role="status">Loading stock…</span>
           )}
+          {/* Four characters hold the longest valid change, -100. */}
           <input value={delta} onChange={(e) => setDelta(e.target.value.replace(/[^\d-]/g, '').slice(0, 4))} inputMode="numeric" placeholder="+10" aria-label="Change stock by" className="h-10 w-16 rounded-xl bg-sunken px-2 text-right text-sm font-semibold tabular-nums ring-1 ring-line outline-none focus:ring-2 focus:ring-brand" />
           <Button type="submit" size="sm" variant="secondary" busy={action.busy === 'stock'} busyLabel="Saving" disabled={!deltaValid || action.blocked('stock')}>Adjust</Button>
         </form>
@@ -204,6 +207,7 @@ function Sales() {
           categories={r.by_day.map((d) => day(d.date).replace(/ \d{4}$/, ''))}
           series={[{ name: 'Revenue', values: r.by_day.map((d) => d.revenue_sen), fill: 'fill-chart-1', swatch: 'bg-chart-1' }]}
           format={(v) => rm(v).replace('.00', '')}
+          // At most ten day labels, so they never crowd each other on the axis.
           every={Math.ceil(r.by_day.length / 10)}
         />
       </div>

@@ -72,6 +72,7 @@ export function SignInPage() {
           <p className="mt-2 text-ink-2">You’re signed in as {session.user.name}. Signing in again switches this tab to another account.</p>
         ) : null}
         <form onSubmit={submit} noValidate className="mt-6 flex flex-col gap-4">
+          {/* Fetch Accounts refuses an email over 254 characters and a password over 256. */}
           <TextField label="Email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} error={emailError} maxLength={254} />
           <div className="relative">
             <TextField label="Password" type={show ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} error={passwordError} maxLength={256} />

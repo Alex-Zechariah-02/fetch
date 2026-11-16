@@ -27,9 +27,12 @@ const (
 )
 
 const (
-	maxTokenBytes  = 4096
-	maxRoles       = 64
-	maxSubject     = 128
+	// 4096 bytes caps the header memory and parsing cost of one request.
+	maxTokenBytes = 4096
+	// 64 roles caps the sorting, logging and header building one token causes.
+	maxRoles   = 64
+	maxSubject = 128
+	// Far-future exp and nbf values are refused, so a token's validity has a ceiling.
 	maxNumericDate = 253402300799 // 9999-12-31T23:59:59Z
 )
 
@@ -57,6 +60,7 @@ func parseKey(data []byte) (*rsa.PublicKey, error) {
 		return nil, err
 	}
 	key, ok := parsed.(*rsa.PublicKey)
+	// 2048 bits is the smallest standard RSA key; 8192 caps the cost of each verify.
 	if !ok || key.N.BitLen() < 2048 || key.N.BitLen() > 8192 {
 		return nil, errors.New("an RSA public key of 2048 to 8192 bits is required")
 	}
@@ -79,6 +83,7 @@ func bearer(fields []string) (string, string) {
 // compact accepts at most maxTokenBytes of three non-empty base64url segments.
 func compact(token string) bool {
 	segments := strings.Split(token, ".")
+	// Exactly three segments is the compact JWS form every reader expects.
 	if len(token) > maxTokenBytes || len(segments) != 3 {
 		return false
 	}
@@ -124,6 +129,7 @@ func checkHeader(segment string) (string, string) {
 		return "", "malformed_credential"
 	}
 	kid, _ := header["kid"].(string)
+	// 64 characters bounds the key identifier used as a map key on every verify.
 	if alg, _ := header["alg"].(string); alg != string(jose.RS256) || kid == "" || len(kid) > 64 {
 		return "", "unsupported_header"
 	}
@@ -247,6 +253,7 @@ func subjectID(id string) bool {
 // roleID accepts 1 to 64 letters, digits, '.', '_' and '-', starting with a
 // letter or digit.
 func roleID(id string) bool {
+	// 64 characters bounds a role name that is sorted, logged and sent in a header.
 	if id == "" || len(id) > 64 {
 		return false
 	}

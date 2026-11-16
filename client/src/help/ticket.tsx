@@ -15,6 +15,7 @@ import { AnswerLine, Empty, Loading, ProblemNotice, RefTag, RefreshProblem, Skel
 import { ticketStatus, ticketTone } from './help'
 
 export function TicketPage({ id }: { id: string }) {
+  // An open conversation reads every 10 s, twice as often as the ticket list.
   const page = useQuery<{ ticket: Ticket }>(`/support/ticket/${encodeURIComponent(id)}`, { poll: 10_000 })
   const problem = page.answer && !page.data ? describe(page.answer) : null
   if (problem) {
@@ -96,6 +97,7 @@ export function Thread({ ticket, onChanged, viewer, actions }: { ticket: Ticket;
         </p>
       ) : (
         <form onSubmit={send} className="mt-6 flex flex-col gap-3 rounded-3xl bg-surface p-5 shadow-card">
+          {/* 2,000 characters: the Support API refuses a longer reply. */}
           <TextArea label={viewer === 'customer' ? 'Reply to Fetch support' : 'Reply to the customer'} value={reply} onChange={(e) => setReply(e.target.value.slice(0, 2000))} rows={3} />
           <div className="flex justify-end">
             <Button type="submit" busy={busy} busyLabel="Sending…" disabled={!reply.trim()}>Send reply</Button>

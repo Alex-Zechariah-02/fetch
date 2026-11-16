@@ -27,6 +27,7 @@ export interface Request {
   raw?: { body: string; contentType: string }
 }
 
+// A call with no answer in 15 s ends as "no answer", so a page never waits forever.
 const timeoutMs = 15_000
 
 export async function send<T>(request: Request): Promise<Answer<T>> {

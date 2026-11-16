@@ -2,7 +2,8 @@ import { Minus, Plus, Trash } from '@phosphor-icons/react'
 import { cx } from './cx'
 
 // QuantityStepper changes a basket quantity. Each button has a 40 px hit
-// area even though it looks smaller; at one, the minus button removes.
+// area even though it looks smaller; at one, the minus button removes. Every
+// caller passes the basket's maxQuantity as max.
 export function QuantityStepper({ value, max, name, onChange, size = 'md' }: { value: number; max: number; name: string; onChange: (next: number) => void; size?: 'sm' | 'md' }) {
   const small = size === 'sm'
   const button = cx(

@@ -36,6 +36,7 @@ func seedOrders() []Order {
 	orders := []Order{}
 	number := 1
 	dayIndex := 0
+	// Fixed dates keep the seed orders the same in every run and every reset.
 	for day := time.Date(2026, 8, 1, 4, 0, 0, 0, time.UTC); !day.After(time.Date(2026, 10, 25, 4, 0, 0, 0, time.UTC)); day = day.AddDate(0, 0, 1) {
 		for i, merchant := range merchants {
 			customer := (dayIndex+i)%3 + 1

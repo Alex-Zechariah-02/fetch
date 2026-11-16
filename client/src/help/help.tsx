@@ -16,6 +16,7 @@ export const ticketTone = { open: 'warn', answered: 'brand', resolved: 'ok' } as
 export const ticketStatus = { open: 'Waiting for Fetch', answered: 'Fetch replied', resolved: 'Resolved' } as const
 
 export function HelpPage() {
+  // Every 20 s: a reply shows soon, with few reads for a list a person only glances at.
   const tickets = useQuery<List<Ticket>>('/support/mine', { poll: 20_000 })
   const problem = tickets.answer && !tickets.data ? describe(tickets.answer) : null
   return (
@@ -54,6 +55,7 @@ export function HelpPage() {
 
 function NewTicket({ onCreated }: { onCreated: (id: string) => void }) {
   const { params } = useLocation()
+  // The 20 latest orders: a problem is almost always about a recent one.
   const orders = useQuery<List<Order>>('/orders/mine?limit=20')
   const [subject, setSubject] = useState(params.get('ref') ? 'Something went wrong' : '')
   const [message, setMessage] = useState('')
@@ -63,6 +65,7 @@ function NewTicket({ onCreated }: { onCreated: (id: string) => void }) {
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<Problem | null>(null)
 
+  // The Support API's limits: subject 5 to 120, message up to 2,000, reference 16 to 64 characters.
   const errors = {
     subject: subject.trim().length < 5 ? 'Write at least 5 characters, like “Missing item”.' : null,
     message: !message.trim() ? 'Tell us what happened.' : null,

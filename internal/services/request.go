@@ -61,6 +61,7 @@ func decodeBody(r *http.Request, body []byte, limit int, value any) *result {
 }
 
 func validMembers(value any, depth int) bool {
+	// A document deeper than this is refused before recursion follows its nesting.
 	if depth > 16 {
 		return false
 	}

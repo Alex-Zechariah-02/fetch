@@ -20,13 +20,16 @@ paths:
               additionalProperties: false
               properties:
                 email:
+                  # The login handler refuses an email shorter than 3 or longer than 254 characters.
                   maxLength: 254
                   minLength: 3
                   type: string
                 password:
+                  # The login handler refuses an empty password or one longer than 256 characters.
                   maxLength: 256
                   minLength: 1
                   type: string
+              # The handler refuses a sign-in body without email or password, or with any other member.
               required:
                 - email
                 - password

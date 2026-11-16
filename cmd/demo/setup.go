@@ -123,6 +123,7 @@ func createState(dir string, files map[string][]byte, baseline map[string]any, g
 	files[baselineFile] = indented(baseline)
 	files[denyAllFile] = indented(denyAll(baseline))
 	for name, content := range files {
+		// These hold private keys and the shared secret, so only their owner reads them.
 		if err := os.WriteFile(filepath.Join(dir, name), content, 0o600); err != nil {
 			return err
 		}
@@ -159,6 +160,7 @@ func serviceFiles(dir string) (map[string][]byte, error) {
 // signingKeys makes a new Accounts RS256 key pair: the private key as PKCS #8,
 // the public key as PKIX, both PEM.
 func signingKeys() (private, public []byte, err error) {
+	// 2048 bits, the smallest RSA key the gateway accepts for Accounts tokens.
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, err
@@ -181,6 +183,7 @@ func signingSettings(kid, privateKey string) []byte {
 
 // newSecret is a new service and control secret, hex encoded.
 func newSecret() []byte {
+	// 32 random bytes make a 256-bit secret, the usual size for a shared secret.
 	secret := make([]byte, 32)
 	rand.Read(secret)
 	return []byte(hex.EncodeToString(secret))

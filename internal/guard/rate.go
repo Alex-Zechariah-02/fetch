@@ -15,6 +15,7 @@ const (
 	// new keys instead of forgetting admitted requests.
 	maxCounters = 262144
 	// sweepEvery admissions, counters whose estimate is zero are removed.
+	// Sweeping every 1024 admissions keeps the table from filling with expired counters.
 	sweepEvery = 1024
 )
 

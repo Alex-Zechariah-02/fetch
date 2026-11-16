@@ -48,6 +48,7 @@ type table struct {
 func newTable(operations []Operation) (*table, error) {
 	t := &table{exact: map[string][]*rule{}, byPrefix: map[string][]*rule{}}
 	for _, op := range operations {
+		// A zero count refuses everything, a zero window divides by zero; targets are absolute paths.
 		if op.Count < 1 || op.Window < time.Millisecond || !strings.HasPrefix(op.Target, "/") {
 			return nil, fmt.Errorf("operation %s: invalid rule", op.ID)
 		}

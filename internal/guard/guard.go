@@ -37,6 +37,7 @@ const (
 )
 
 // LogFile is the security log of api in the settings folder.
+// One file per API keeps records apart; the log rotates at maxLogBytes.
 func LogFile(api string) string { return api + "-security.log" }
 
 // Config is what one API's guard enforces: its own operation table and the
@@ -67,6 +68,7 @@ func New(cfg Config) (*Guard, error) {
 	}
 	g := &Guard{api: cfg.API, table: t, roles: slices.Clone(cfg.Roles), limiter: newLimiter(), keys: map[string]*rsa.PublicKey{}}
 	var keys []Key
+	// One key at least, so tokens can verify; 64 bounds the key files read at startup.
 	if err := readJSON(filepath.Join(cfg.Dir, KeysFile), &keys); err != nil || len(keys) == 0 || len(keys) > 64 {
 		return nil, fmt.Errorf("%s: one to 64 trusted keys are required (%v)", KeysFile, err)
 	}
@@ -165,6 +167,7 @@ func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler)
 			r.Header.Del(name)
 		}
 	}
+	// A proxy and the API must read the same target: origin-form only, no CONNECT or Upgrade.
 	if !strings.HasPrefix(r.RequestURI, "/") || r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" {
 		c.refuse("ingress", http.StatusBadRequest, "bad_request", "ingress")
 		return
@@ -199,6 +202,7 @@ func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler)
 		return
 	}
 	c.record.Kind, c.record.Stage, c.record.Decision = "request.admitted", "log", "admit"
+	// The request waits for its record to be synced, so it never runs unlogged.
 	if c.log.commit(r.Context(), c.record) != nil {
 		c.refuse("log", http.StatusServiceUnavailable, "gateway_unavailable", "log_unavailable")
 		return
@@ -282,6 +286,7 @@ func (s *statusRecorder) WriteHeader(status int) {
 }
 
 func requestID() string {
+	// 12 random bytes keep request identifiers apart in the security log.
 	var value [12]byte
 	rand.Read(value[:])
 	return hex.EncodeToString(value[:])

@@ -10,12 +10,15 @@ export default defineConfig({
   globalSetup: './e2e/prepare.ts',
   workers: 1,
   fullyParallel: false,
+  // Tests drive a real deployment through several steps; 3 minutes bounds a hung one.
   timeout: 180_000,
+  // An answer the page waits for arrives within seconds; 15 s allows a busy runner.
   expect: { timeout: 15_000 },
   reporter: [['list']],
   use: {
     channel: 'chrome',
     headless: true,
+    // A click or fill that cannot happen in 15 s fails with its own message, not the test's limit.
     actionTimeout: 15_000,
     viewport: { width: 1280, height: 860 },
     // Kept only for a failing test, so its run can be replayed step by step.

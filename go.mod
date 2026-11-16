@@ -1,5 +1,6 @@
 module github.com/Alex-Zechariah-02/fetch
 
+// An older toolchain refuses the module rather than build it with older semantics.
 go 1.26.0
 
 toolchain go1.27.4

@@ -11,6 +11,7 @@ import (
 // malformed values, negative values and port overflow are errors.
 func Offset(address string) (string, error) {
 	base, err := netip.ParseAddrPort(address)
+	// A literal loopback address with a port only, so the offset never moves a wildcard or host.
 	if err != nil || base.Port() == 0 || !base.Addr().IsLoopback() {
 		return "", errors.New("demo address must be a literal loopback address with a nonzero port")
 	}

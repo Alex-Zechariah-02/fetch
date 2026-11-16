@@ -67,6 +67,7 @@ export function useAction(onDone: () => void) {
     if (answer.kind === 'cancelled') return
     if (outcomeOfWrite(answer) === 'done') {
       setDone(key)
+      // "Saved" stays long enough to notice, then clears so the row looks settled.
       setTimeout(() => setDone((current) => (current === key ? null : current)), 2400)
     } else {
       setProblem({ key, problem: describe(answer, write)! })

@@ -11,6 +11,7 @@ export function httpOrigin(host: string, base: number): string {
   return `http://${host}:${offsetPort(base)}`
 }
 
+// The demo tool's own addresses (cmd/demo/main.go); EAT_PORT_OFFSET moves them all together.
 export const adminURL = httpOrigin('127.0.0.1', 9440)
 export const siteURL = httpOrigin('127.0.0.2', 9480)
 export const controls: Record<string, string> = Object.fromEntries(

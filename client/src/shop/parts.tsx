@@ -58,6 +58,7 @@ export function useAdd(merchant: Pick<Merchant, 'id' | 'name'>) {
   const basket = useBasket()
   const flash = (item: Item) => {
     setAdded(item.id)
+    // Long enough to read "Added", short enough to be gone before the next tap.
     setTimeout(() => setAdded((current) => (current === item.id ? null : current)), 1400)
   }
   const add = (item: Item, quantity = 1) => {

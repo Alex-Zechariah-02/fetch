@@ -95,6 +95,7 @@ func awaitAdmin(admin *adminClient) (string, error) {
 		if err == nil || time.Now().After(deadline) {
 			return mode, err
 		}
+		// One probe a second keeps the wait responsive without hammering a gateway that is starting.
 		time.Sleep(time.Second)
 	}
 }

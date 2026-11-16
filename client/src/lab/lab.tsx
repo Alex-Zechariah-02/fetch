@@ -42,6 +42,7 @@ export function LabPage() {
   }, [])
 
   async function fire(attack: Attack) {
+    // One attack at a time, so each result on screen belongs to the request that made it.
     if (busy) return
     const signal = controller.current.signal
     const expected = attack.expected(user)

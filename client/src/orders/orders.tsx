@@ -10,6 +10,7 @@ import { Empty, Loading, ProblemNotice, RefreshProblem, Skeleton } from '../ui/n
 import { Photo } from '../ui/photo'
 
 export function OrdersPage() {
+  // The 50 latest orders, reread every 15 s so a delivery's progress shows without a reload.
   const orders = useQuery<List<Order>>('/orders/mine?limit=50', { poll: 15_000 })
   const problem = orders.answer && !orders.data ? describe(orders.answer) : null
   const items = orders.data?.items ?? []

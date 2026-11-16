@@ -27,6 +27,7 @@ on('GET', /^\/inventory\/merchants\/([^/]+)$/, 'inventory.merchant', null, 'inve
 })
 on('GET', /^\/inventory\/search$/, 'inventory.search', null, 'inventory', ({ query }) => {
   const q = (query.get('q') ?? '').trim().toLowerCase()
+  // The Inventory service's search bounds.
   if (q.length < 2 || q.length > 40) return err(400, 'invalid_query', 'Search for 2 to 40 characters.', 'q')
   const section = query.get('section')
   const hits = seed.items
@@ -62,6 +63,7 @@ on('PATCH', /^\/inventory\/stock\/([^/]+)$/, 'inventory.stock.adjust', ['MERCHAN
   const delta = Number(body?.delta)
   if (!delta) return err(422, 'invalid_change', 'Change the stock by at least one.')
   const row = seed.stock.get(id)!
+  // Stock never goes below zero (the real service also keeps reserved units).
   if (row.stock! + delta < 0) return err(409, 'insufficient_stock', `Only ${row.stock} in stock.`)
   row.stock = row.stock! + delta
   return [200, { item: id, stock: row.stock, reserved: row.reserved }]
@@ -131,7 +133,7 @@ on('POST', /^\/support\/resolve\/([^/]+)$/, 'support.resolve', ['SUPPORT'], 'sup
 })
 
 // Fetch Accounts: a development token is "dev.<subject>.<expiry ms>"; it means
-// nothing outside this stand-in.
+// nothing outside this stand-in. It lives 15 minutes, as Fetch Accounts' tokens do.
 const lifetime = 15 * 60_000
 const issue = (user: User): [number, unknown] => {
   const expires = Date.now() + lifetime
@@ -157,7 +159,9 @@ function respond(status: number, body: unknown, service: string | null): Respons
   return new Response(JSON.stringify(body), { status, headers })
 }
 
+// The five services' path prefixes; any other path is the app's own page.
 const apiPath = /^\/(inventory|orders|reports|support|accounts)(\/|$)/
+// A short random delay, so loading states show as they would through a real gateway.
 const pause = () => new Promise((resolve) => setTimeout(resolve, 180 + Math.random() * 260))
 
 export function installMock() {

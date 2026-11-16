@@ -114,6 +114,7 @@ func (h gatewayHost) up(apiward string, fresh, stdin bool) error {
 			}
 			fmt.Println("Preserved the unfinished earlier setup in", preserved)
 		}
+		// The install's standard output is kept whole, because the enrolment secret is searched for in it.
 		var install bytes.Buffer
 		if err := h.create(programs, &install); err != nil {
 			return err
@@ -128,10 +129,12 @@ func (h gatewayHost) up(apiward string, fresh, stdin bool) error {
 	running, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ready := make(chan struct{})
+	// The run's single result is buffered, so its goroutine never blocks if up reads it later.
 	finished := make(chan error, 1)
 	go func() {
 		finished <- h.run(running, programs, func() { close(ready) })
 	}()
+	// The run reports ready after admission; its 30s deadline or an interrupt ends a stuck start.
 	select {
 	case <-ready:
 	case err := <-finished:

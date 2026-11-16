@@ -91,6 +91,7 @@ func (d *support) handle(r *http.Request, body []byte) result {
 		if rejected := decodeBody(r, body, ticketBody, &request); rejected != nil {
 			return *rejected
 		}
+		// The lengths bound one stored ticket; a value outside them is refused with 400.
 		if !length(request.Subject, 5, 120) || !length(request.Message, 1, 2000) || request.Order != nil && !length(*request.Order, 8, 8) || request.RequestRef != nil && !length(*request.RequestRef, 16, 64) {
 			return failure(400, "invalid_request", "Check the ticket subject, message and references.", "")
 		}
