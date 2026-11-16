@@ -11,7 +11,7 @@ import (
 )
 
 func TestServiceJSONBoundaries(t *testing.T) {
-	s, _ := New(Config{Name: "support", Secret: testSecret})
+	s := newService(t, Config{Name: "support", Secret: testSecret})
 	for _, body := range []string{`null`, `{"subject":"A valid title","message":"\ud800"}`, `{"subject":"A valid title","message":"\udc00"}`, "{\"subject\":\"A valid title\",\"message\":\"" + string([]byte{255}) + "\"}", `{"Subject":"A valid title","message":"text"}`, `{"subject":"A valid title","message":"text","message":"again"}`} {
 		w := serviceRequest(s, "POST", "/support/tickets", body, "cust-001", "CUSTOMER", "")
 		if w.Code != 400 {
@@ -25,7 +25,7 @@ func TestServiceJSONBoundaries(t *testing.T) {
 }
 
 func TestServiceRequestFieldsAreNotNullable(t *testing.T) {
-	s, _ := New(Config{Name: "support", Secret: testSecret})
+	s := newService(t, Config{Name: "support", Secret: testSecret})
 	for _, member := range []string{`"order":null`, `"request_ref":null`} {
 		body := `{"subject":"Delivery question","message":"Please help",` + member + `}`
 		w := serviceRequest(s, "POST", "/support/tickets", body, "cust-001", "CUSTOMER", "")
@@ -36,7 +36,7 @@ func TestServiceRequestFieldsAreNotNullable(t *testing.T) {
 }
 
 func TestServiceWriteQueryAndMediaBoundaries(t *testing.T) {
-	s, _ := New(Config{Name: "support", Secret: testSecret})
+	s := newService(t, Config{Name: "support", Secret: testSecret})
 	body := `{"subject":"Delivery question","message":"Where is my order?"}`
 	if w := serviceRequest(s, "POST", "/support/tickets?unknown=x", body, "cust-001", "CUSTOMER", ""); w.Code != 400 {
 		t.Errorf("write query accepted: %d", w.Code)
@@ -58,7 +58,7 @@ func TestServiceWriteQueryAndMediaBoundaries(t *testing.T) {
 
 func TestServiceBodyLimitsAndResetIsolation(t *testing.T) {
 	inventory, orders := newCommerce(t)
-	support, _ := New(Config{Name: "support", Secret: testSecret})
+	support := newService(t, Config{Name: "support", Secret: testSecret})
 	for _, tc := range []struct {
 		s                    *Service
 		path, subject, roles string
@@ -67,8 +67,8 @@ func TestServiceBodyLimitsAndResetIsolation(t *testing.T) {
 		{inventory, "/inventory/items/ITM-501", "merchant-005", "MERCHANT", 512},
 		{inventory, "/inventory/stock/ITM-501", "merchant-005", "MERCHANT", 256},
 		{orders, "/orders", "cust-001", "CUSTOMER", 4096},
-		{support, "/support/tickets", "cust-001", "CUSTOMER", 4096},
-		{support, "/support/reply/TKT-1001", "cust-002", "CUSTOMER", 4096},
+		{support, "/support/tickets", "cust-001", "CUSTOMER", 16384},
+		{support, "/support/reply/TKT-1001", "cust-002", "CUSTOMER", 16384},
 	} {
 		method := "POST"
 		if strings.HasPrefix(tc.path, "/inventory/") {
@@ -78,6 +78,15 @@ func TestServiceBodyLimitsAndResetIsolation(t *testing.T) {
 		if w.Code != 413 {
 			t.Errorf("%s limit: %d %s", tc.path, w.Code, w.Body)
 		}
+	}
+	// Every field at its declared maximum in four-byte characters fits.
+	wide := func(n int) string { return strings.Repeat("\U0001F600", n) }
+	ticket := `{"subject":"` + wide(120) + `","message":"` + wide(2000) + `","order":"ORD-1002","request_ref":"` + wide(64) + `"}`
+	if w := serviceRequest(support, "POST", "/support/tickets", ticket, "cust-002", "CUSTOMER", ""); w.Code != 201 {
+		t.Errorf("widest ticket: %d %s", w.Code, w.Body)
+	}
+	if w := serviceRequest(support, "POST", "/support/reply/TKT-1001", `{"message":"`+wide(2000)+`"}`, "cust-002", "CUSTOMER", ""); w.Code != 200 {
+		t.Errorf("widest reply: %d %s", w.Code, w.Body)
 	}
 	before := orders.state().SHA256
 	serviceRequest(inventory, "PATCH", "/inventory/stock/ITM-501", `{"delta":1}`, "ops-01", "OPERATIONS", "")
@@ -92,7 +101,7 @@ func TestServiceBodyLimitsAndResetIsolation(t *testing.T) {
 // An unconfirmed stock release does not undo or deny the cancel: the order
 // is cancelled and refunded, the answer says so, and the release is retried.
 func TestCancellationReportsUnconfirmedStockRelease(t *testing.T) {
-	inventory, _ := New(Config{Name: "inventory", Secret: testSecret})
+	inventory := newService(t, Config{Name: "inventory", Secret: testSecret})
 	var fail atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if fail.Load() && r.Method == "DELETE" {
@@ -130,7 +139,7 @@ func TestCancellationReportsUnconfirmedStockRelease(t *testing.T) {
 }
 
 func TestServiceControlKeyBound(t *testing.T) {
-	s, _ := New(Config{Name: "inventory", Secret: testSecret})
+	s := newService(t, Config{Name: "inventory", Secret: testSecret})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", nil, Ingress{}); err == nil {
@@ -147,7 +156,7 @@ func TestEveryServiceResetReproducesSeed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reportService.data.(*reports).close()
-	supportService, _ := New(Config{Name: "support", Secret: testSecret})
+	supportService := newService(t, Config{Name: "support", Secret: testSecret})
 	accountsService, _, _ := accountService(t)
 	services := []*Service{stockService, orderService, reportService, supportService, accountsService}
 	before := make([]string, len(services))

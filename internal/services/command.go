@@ -79,7 +79,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 		}
 		*ordersURL = "http://" + address
 	}
-	secret, err := readBoundedFile(*secretFile)
+	secret, err := readBoundedFile(*secretFile, nil)
 	if err != nil {
 		return fmt.Errorf("reading service secret: %w", err)
 	}

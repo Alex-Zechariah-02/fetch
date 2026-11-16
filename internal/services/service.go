@@ -5,14 +5,15 @@ package services
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -36,6 +37,9 @@ type Config struct {
 	// Measure keeps receipts as counts with no cap and seeds the load
 	// accounts, so a long load run measures the gateway, not this record.
 	Measure bool
+	// Log records refused assertions, resets and Accounts' signing failures;
+	// nil writes them to standard error.
+	Log *slog.Logger
 }
 
 type result struct {
@@ -81,13 +85,18 @@ type Service struct {
 	counts         *counts      // nil outside measurement mode
 	guard          *guard.Guard // nil without built-in protection
 	gateway        *assertions  // nil when the gateway's assertion is not required
+	log            *slog.Logger
 }
 
 func New(cfg Config) (*Service, error) {
 	if len(cfg.Secret) < 32 || len(cfg.Secret) > 4096 {
 		return nil, errors.New("service secret must contain 32 to 4096 bytes")
 	}
-	s := &Service{name: cfg.Name, secret: slices.Clone(cfg.Secret), instance: randomID()}
+	log := cfg.Log
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
+	s := &Service{name: cfg.Name, secret: slices.Clone(cfg.Secret), instance: randomID(), log: log.With("service", cfg.Name)}
 	switch cfg.Name {
 	case "inventory":
 		s.data = &inventory{measure: cfg.Measure}
@@ -106,7 +115,7 @@ func New(cfg Config) (*Service, error) {
 		}
 		s.data = &reports{orders: client, outside: s.outside}
 	case "accounts":
-		accounts, err := newAccounts(cfg.SigningSettingsFile, cfg.Measure)
+		accounts, err := newAccounts(cfg.SigningSettingsFile, cfg.Measure, s.log)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +131,7 @@ func New(cfg Config) (*Service, error) {
 		if cfg.Protection != "" {
 			return nil, errors.New("built-in protection runs without a gateway: do not give a gateway key with it")
 		}
-		gateway, err := loadAssertions(cfg.GatewayKey, cfg.Name)
+		gateway, err := loadAssertions(cfg.GatewayKey, cfg.Name, s.log)
 		if err != nil {
 			return nil, fmt.Errorf("the gateway key: %w", err)
 		}
@@ -173,7 +182,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Signing in needs no assertion: the demo commands sign in at Accounts
 	// directly, and the account comes from the password, not the gateway.
 	login := s.name == "accounts" && r.URL.Path == "/accounts/login"
-	unasserted := s.gateway != nil && !internal && !login && !s.gateway.admit(r, time.Now())
+	unasserted := s.gateway != nil && !internal && !login && !s.gateway.check(r, time.Now())
 	var body []byte
 	var err error
 	if keyRequired || unasserted {
@@ -181,8 +190,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Connection", "close")
 		}
 	} else {
-		// 4096 bytes is the largest body any operation accepts (rules.go).
-		body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
+		body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 	}
 	res := notFound()
 	var encoded []byte
@@ -243,55 +251,4 @@ func write(w http.ResponseWriter, status int, encoded []byte) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	w.Write(append(encoded, '\n'))
-}
-
-type State struct {
-	Service  string          `json:"service"`
-	Version  string          `json:"version"`
-	Instance string          `json:"instance"`
-	SHA256   string          `json:"sha256"`
-	Data     json.RawMessage `json:"data"`
-}
-
-func (s *Service) state() State {
-	data, _ := json.Marshal(s.data.snapshot())
-	sum := sha256.Sum256(data)
-	return State{s.name, "fetch-1", s.instance, hex.EncodeToString(sum[:]), data}
-}
-
-func (s *Service) Control(secret []byte) http.Handler {
-	secret = slices.Clone(secret)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Service", s.name)
-		values := r.Header.Values("Authorization")
-		if len(secret) < 32 || len(secret) > 4096 || len(values) != 1 || subtle.ConstantTimeCompare([]byte(values[0]), append([]byte("Bearer "), secret...)) != 1 {
-			writeJSON(w, failure(401, "unauthenticated", "Control authentication is required.", ""))
-			return
-		}
-		if r.Method == "PUT" && r.URL.Path == "/blocked" && s.guard != nil {
-			s.guard.Blocked(w, r)
-			return
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		switch {
-		case r.Method == "GET" && r.URL.Path == "/receipts":
-			if s.counts != nil {
-				writeJSON(w, result{status: 200, body: s.counts})
-				return
-			}
-			writeJSON(w, result{status: 200, body: map[string]any{"service": s.name, "instance": s.instance, "receipts": s.kept(), "dropped": s.dropped}})
-		case r.Method == "GET" && r.URL.Path == "/state":
-			writeJSON(w, result{status: 200, body: s.state()})
-		case r.Method == "POST" && r.URL.Path == "/reset":
-			s.data.reset()
-			s.receipts, s.dropped = nil, 0
-			if s.counts != nil {
-				s.counts = newCounts()
-			}
-			writeJSON(w, result{status: 200, body: s.state()})
-		default:
-			writeJSON(w, notFound())
-		}
-	})
 }

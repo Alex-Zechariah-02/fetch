@@ -28,8 +28,12 @@ import (
 const (
 	KeysFile    = "keys.json"
 	BlockedFile = "blocked.json"
-	maxFile     = 64 << 10
-	maxBlocked  = 10000
+	// maxFile bounds each settings file read: a key set of a few keys, or a
+	// blocked list of maxBlocked IDs, fits with room to spare.
+	maxFile = 64 << 10
+	// maxBlocked is far above the demo's accounts and bounds the set every
+	// request is checked against.
+	maxBlocked = 10000
 )
 
 // LogFile is the security log of api in the settings folder.

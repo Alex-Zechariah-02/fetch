@@ -32,6 +32,10 @@ func (g *Guard) setBlocked(subjects []string) error {
 // secret): the body is the new list, a JSON array of account IDs.
 func (g *Guard) Blocked(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFile))
+	if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+		answer(w, http.StatusRequestEntityTooLarge, "payload_too_large")
+		return
+	}
 	var subjects []string
 	if _, reason := decodeJSON(data); err != nil || reason != "" || json.Unmarshal(data, &subjects) != nil || subjects == nil || g.setBlocked(subjects) != nil {
 		answer(w, http.StatusBadRequest, "bad_request")

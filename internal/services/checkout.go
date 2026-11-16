@@ -54,6 +54,14 @@ func (d *orders) create(r *http.Request, body []byte) result {
 			return failure(499, "request_cancelled", "The caller cancelled the request before the order was placed.", "")
 		}
 	}
+	if key != "" {
+		for _, old := range d.recent.expire(time.Now()) {
+			delete(d.idempotency, old)
+		}
+		if d.recent.full() {
+			return failure(503, "checkout_busy", "Too many recent checkouts are held. Try again later.", "")
+		}
+	}
 	epoch, placed := d.epoch, make(chan struct{})
 	if key != "" {
 		d.placing[scope] = placed
@@ -64,13 +72,15 @@ func (d *orders) create(r *http.Request, body []byte) result {
 		return res
 	}
 	delete(d.placing, scope)
-	if key != "" {
+	// A server failure is not kept, so a retry with the key tries again; the
+	// reservation key derives from the checkout key, so Inventory replays a
+	// reservation it already made.
+	if key != "" && res.status < 500 {
 		encoded, _ := json.Marshal(res.body)
-		// Answers are kept without a maximum, because a forgotten key would
-		// let a repeat place a second order; a measurement run keeps only
-		// its recent ones (recent).
+		// Answers are kept at least keyLife (recent), so a retry within it
+		// never places a second order.
 		d.idempotency[scope] = savedOrderResult{digest, res.status, encoded}
-		for _, old := range d.recent.add(scope) {
+		for _, old := range d.recent.add(scope, time.Now()) {
 			delete(d.idempotency, old)
 		}
 		res.body = json.RawMessage(encoded)
@@ -114,9 +124,7 @@ func (d *orders) release(ctx context.Context, key string) bool {
 }
 func (d *orders) place(r *http.Request, body []byte, key string) result {
 	var request orderRequest
-	// 4096 bytes is the operation's body limit (rules.go); the largest valid
-	// order is smaller.
-	if rejected := decodeBody(r, body, 4096, &request); rejected != nil {
+	if rejected := decodeBody(r, body, orderBody, &request); rejected != nil {
 		return *rejected
 	}
 	if !validOrderRequest(request) {

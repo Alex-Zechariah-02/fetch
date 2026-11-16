@@ -19,6 +19,19 @@ var Roles = []string{"CUSTOMER", "MERCHANT", "RIDER", "SUPPORT", "OPERATIONS"}
 // window is every operation's rate window.
 const window = 60 * time.Second
 
+// Request body caps, shared by each handler and the operation table (so the
+// policy and the service agree): each fits its schema's fields at their
+// maxima in UTF-8, up to four bytes per code point. maxBody, the largest,
+// bounds every read and is the demo gateway's max_body_bytes.
+const (
+	stockBody  = 256
+	itemBody   = 512
+	loginBody  = 2048
+	orderBody  = 4096
+	ticketBody = 16 << 10
+	maxBody    = ticketBody
+)
+
 func stringSchema(minimum, maximum int) map[string]any {
 	return map[string]any{"type": "string", "minLength": minimum, "maxLength": maximum}
 }
@@ -57,11 +70,11 @@ func Operations() []guard.Operation {
 		op("inventory.merchant", "inventory", "GET", "/inventory/merchants/*", public, 120, 0, nil),
 		op("inventory.search", "inventory", "GET", "/inventory/search", public, 60, 0, nil),
 		op("inventory.item", "inventory", "GET", "/inventory/items/*", public, 120, 0, nil),
-		op("inventory.item.update", "inventory", "PATCH", "/inventory/items/*", merchant, 30, 512, itemChange),
+		op("inventory.item.update", "inventory", "PATCH", "/inventory/items/*", merchant, 30, itemBody, itemChange),
 		op("inventory.stock.read", "inventory", "GET", "/inventory/stock/*", []string{"MERCHANT", "OPERATIONS"}, 100, 0, nil),
-		op("inventory.stock.adjust", "inventory", "PATCH", "/inventory/stock/*", []string{"MERCHANT", "OPERATIONS"}, 30, 256, stockChange),
+		op("inventory.stock.adjust", "inventory", "PATCH", "/inventory/stock/*", []string{"MERCHANT", "OPERATIONS"}, 30, stockBody, stockChange),
 		op("orders.quote", "orders", "GET", "/orders/quote", customer, 60, 0, nil),
-		op("orders.create", "orders", "POST", "/orders", customer, 10, 4096, checkout),
+		op("orders.create", "orders", "POST", "/orders", customer, 10, orderBody, checkout),
 		op("orders.mine", "orders", "GET", "/orders/mine", customer, 60, 0, nil),
 		op("orders.wallet", "orders", "GET", "/orders/wallet", customer, 60, 0, nil),
 		op("orders.detail", "orders", "GET", "/orders/detail/*", all, 120, 0, nil),
@@ -77,13 +90,13 @@ func Operations() []guard.Operation {
 		op("reports.summary", "reports", "GET", "/reports/summary", operations, 30, 0, nil),
 		op("reports.sales", "reports", "GET", "/reports/sales", operations, 30, 0, nil),
 		op("reports.top-items", "reports", "GET", "/reports/top-items", operations, 30, 0, nil),
-		op("support.create", "support", "POST", "/support/tickets", customer, 5, 4096, ticket),
+		op("support.create", "support", "POST", "/support/tickets", customer, 5, ticketBody, ticket),
 		op("support.mine", "support", "GET", "/support/mine", customer, 60, 0, nil),
 		op("support.queue", "support", "GET", "/support/queue", support, 60, 0, nil),
 		op("support.ticket", "support", "GET", "/support/ticket/*", []string{"CUSTOMER", "SUPPORT"}, 60, 0, nil),
-		op("support.reply", "support", "POST", "/support/reply/*", []string{"CUSTOMER", "SUPPORT"}, 20, 4096, reply),
+		op("support.reply", "support", "POST", "/support/reply/*", []string{"CUSTOMER", "SUPPORT"}, 20, ticketBody, reply),
 		op("support.resolve", "support", "POST", "/support/resolve/*", support, 20, 0, nil),
-		op("accounts.login", "accounts", "POST", "/accounts/login", public, 10, 512, login),
+		op("accounts.login", "accounts", "POST", "/accounts/login", public, 10, loginBody, login),
 		op("accounts.refresh", "accounts", "POST", "/accounts/refresh", all, 30, 0, nil),
 		op("accounts.me", "accounts", "GET", "/accounts/me", all, 60, 0, nil),
 	}

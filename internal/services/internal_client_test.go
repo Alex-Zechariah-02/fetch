@@ -8,7 +8,7 @@ import (
 
 func TestInternalServiceOrigins(t *testing.T) {
 	for _, origin := range []string{"http://127.0.0.1:9101", "http://[::1]:9101", "HTTP://127.0.0.1:9101"} {
-		client, err := newServiceClient(origin, []byte("local-service-key"))
+		client, err := newServiceClient(origin, testSecret)
 		if err != nil {
 			t.Errorf("valid origin %q: %v", origin, err)
 			continue
@@ -22,7 +22,7 @@ func TestInternalServiceOrigins(t *testing.T) {
 		"http://user@127.0.0.1:9101", "http://localhost:9101", "http://192.0.2.1:9101",
 		"http://127.0.0.1:0", "http://127.0.0.1", "https://127.0.0.1:9101",
 	} {
-		client, err := newServiceClient(origin, []byte("local-service-key"))
+		client, err := newServiceClient(origin, testSecret)
 		if err == nil {
 			client.close()
 			t.Errorf("invalid origin %q was accepted", origin)
@@ -34,13 +34,13 @@ func TestInternalServiceRequestTarget(t *testing.T) {
 	var arrived int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		arrived++
-		if r.RequestURI != "/internal/merchants/MER-001" || r.Method != http.MethodGet || r.Header.Get("X-Service-Key") != "local-service-key" {
-			t.Errorf("internal request: %s %s, credential matches %v", r.Method, r.RequestURI, r.Header.Get("X-Service-Key") == "local-service-key")
+		if r.RequestURI != "/internal/merchants/MER-001" || r.Method != http.MethodGet || r.Header.Get("X-Service-Key") != string(testSecret) {
+			t.Errorf("internal request: %s %s, credential matches %v", r.Method, r.RequestURI, r.Header.Get("X-Service-Key") == string(testSecret))
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	client, err := newServiceClient(server.URL, []byte("local-service-key"))
+	client, err := newServiceClient(server.URL, testSecret)
 	if err != nil {
 		t.Fatal(err)
 	}

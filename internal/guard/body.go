@@ -15,7 +15,8 @@ import (
 	"unicode/utf8"
 )
 
-// Bounds of a decoded JSON document, as the gateway applies them.
+// Bounds of a decoded JSON document, as the gateway applies them, so a body
+// either protected setup admits the other admits too.
 const (
 	maxDepth        = 16
 	maxValues       = 4096

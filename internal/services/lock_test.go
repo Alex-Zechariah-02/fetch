@@ -17,7 +17,7 @@ import (
 // request with the waiting checkout's key makes no second reservation; it
 // waits and replays the first answer, and one order is placed.
 func TestServiceCallsReleaseLock(t *testing.T) {
-	inventory, _ := New(Config{Name: "inventory", Secret: testSecret})
+	inventory := newService(t, Config{Name: "inventory", Secret: testSecret})
 	held := make(chan struct{})
 	arrived := make(chan struct{}, 8)
 	var reservations atomic.Int32

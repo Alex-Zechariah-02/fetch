@@ -13,7 +13,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,15 +41,16 @@ type accounts struct {
 	salt         []byte
 	passwordHash []byte
 	measure      bool // also the load accounts
+	log          *slog.Logger
 }
 
-func newAccounts(file string, measure bool) (*accounts, error) {
+func newAccounts(file string, measure bool, log *slog.Logger) (*accounts, error) {
 	if _, _, err := loadSigningKey(file); err != nil {
 		return nil, err
 	}
 	salt := make([]byte, 16)
 	rand.Read(salt)
-	return &accounts{signingFile: file, salt: salt, passwordHash: passwordKey(demoPassword, salt), measure: measure}, nil
+	return &accounts{signingFile: file, salt: salt, passwordHash: passwordKey(demoPassword, salt), measure: measure, log: log}, nil
 }
 func passwordKey(password string, salt []byte) []byte {
 	return argon2.IDKey([]byte(password), salt, 2, 64*1024, 2, 32)
@@ -59,24 +62,40 @@ func (d *accounts) reset() {
 	}
 }
 func (d *accounts) snapshot() any { return map[string]any{"users": d.users} }
-func readBoundedFile(path string) ([]byte, error) {
+
+// maxOperatorFile bounds every settings, key and secret file a service
+// reads; the largest, a key set of a few keys, is a few KiB.
+const maxOperatorFile = 64 << 10
+
+// readBoundedFile reads an operator file of at most maxOperatorFile bytes;
+// check, when not nil, judges the opened file first.
+func readBoundedFile(path string, check func(os.FileInfo) error) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, (64<<10)+1))
+	if check != nil {
+		info, err := file.Stat()
+		if err != nil {
+			return nil, err
+		}
+		if err := check(info); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxOperatorFile+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > 64<<10 {
+	if len(data) > maxOperatorFile {
 		return nil, errors.New("operator file is too large")
 	}
 	return data, nil
 }
 func loadSigningKey(file string) (signingSettings, *rsa.PrivateKey, error) {
 	settings := signingSettings{}
-	data, err := readBoundedFile(file)
+	data, err := readBoundedFile(file, nil)
 	if err != nil {
 		return settings, nil, err
 	}
@@ -89,7 +108,7 @@ func loadSigningKey(file string) (signingSettings, *rsa.PrivateKey, error) {
 	if decoder.Decode(&settings) != nil || !validKid(settings.Kid) || !filepath.IsAbs(settings.PrivateKeyFile) {
 		return settings, nil, errors.New("signing settings require a key ID and absolute private key file")
 	}
-	data, err = readBoundedFile(settings.PrivateKeyFile)
+	data, err = readBoundedFile(settings.PrivateKeyFile, nil)
 	if err != nil {
 		return settings, nil, err
 	}
@@ -129,27 +148,37 @@ func validKid(kid string) bool {
 	}
 	return true
 }
+
+// issue answers a sign-in or refresh with a new token for user. A token that
+// cannot be signed answers 503 and records the cause, which the caller never
+// sees.
 func (d *accounts) issue(user User) result {
+	token, expires, err := d.sign(user, time.Now().UTC().Truncate(time.Second))
+	if err != nil {
+		d.log.Error("token not signed; sign-in refused", "settings", d.signingFile, "error", err)
+		return failure(503, "accounts_unavailable", "Sign-in is temporarily unavailable. Try again later.", "")
+	}
+	return result{status: 200, body: map[string]any{"token": token, "expires_at": expires, "user": user}}
+}
+
+// sign makes user's token, issued at now, with the current signing key.
+func (d *accounts) sign(user User, now time.Time) (string, time.Time, error) {
 	settings, key, err := loadSigningKey(d.signingFile)
 	if err != nil {
-		return failure(503, "accounts_unavailable", "Sign-in is temporarily unavailable. Try again later.", "")
+		return "", time.Time{}, err
 	}
 	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", settings.Kid))
 	if err != nil {
-		return failure(503, "accounts_unavailable", "Sign-in is temporarily unavailable. Try again later.", "")
+		return "", time.Time{}, err
 	}
-	now := time.Now().UTC().Truncate(time.Second)
 	expires := now.Add(15 * time.Minute)
 	claims, _ := json.Marshal(map[string]any{"iss": "fetch-accounts", "aud": "fetch-gateway", "sub": user.ID, "roles": user.Roles, "name": user.Name, "iat": now.Unix(), "nbf": now.Unix(), "exp": expires.Unix()})
 	signed, err := signer.Sign(claims)
 	if err != nil {
-		return failure(503, "accounts_unavailable", "Sign-in is temporarily unavailable. Try again later.", "")
+		return "", time.Time{}, err
 	}
 	token, err := signed.CompactSerialize()
-	if err != nil {
-		return failure(503, "accounts_unavailable", "Sign-in is temporarily unavailable. Try again later.", "")
-	}
-	return result{status: 200, body: map[string]any{"token": token, "expires_at": expires, "user": user}}
+	return token, expires, err
 }
 func (d *accounts) handle(r *http.Request, body []byte) result {
 	if _, ok := query(r); !ok {
@@ -160,7 +189,7 @@ func (d *accounts) handle(r *http.Request, body []byte) result {
 			Email    string `json:"email"`
 			Password string `json:"password"`
 		}
-		if rejected := decodeBody(r, body, 512, &request); rejected != nil {
+		if rejected := decodeBody(r, body, loginBody, &request); rejected != nil {
 			return *rejected
 		}
 		if !length(request.Email, 3, 254) || !length(request.Password, 1, 256) {

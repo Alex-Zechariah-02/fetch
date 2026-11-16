@@ -1,7 +1,12 @@
+// The Support API: its contract answers, its ticket and message bounds and
+// the query parameter its contract declares.
+
 package services
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -51,5 +56,49 @@ func TestSupportContract(t *testing.T) {
 	}
 	if json.Unmarshal(w.Body.Bytes(), &named) != nil || named.Ticket.CustomerName != "Customer 1" || len(named.Ticket.Messages) == 0 || named.Ticket.Messages[0].AuthorName != "Customer 1" {
 		t.Fatalf("ticket names: %s", w.Body)
+	}
+}
+
+// The Support API keeps the newest keptTickets tickets and at most
+// maxMessages messages in one ticket.
+func TestSupportBounds(t *testing.T) {
+	t.Parallel()
+	s, err := New(Config{Name: "support", Secret: testSecret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range maxMessages - 1 {
+		if w := serviceRequest(s, "POST", "/support/reply/TKT-1001", `{"message":"More detail."}`, "cust-002", "CUSTOMER", ""); w.Code != 200 {
+			t.Fatalf("reply %d: %d %s", i+2, w.Code, w.Body)
+		}
+	}
+	if w := serviceRequest(s, "POST", "/support/reply/TKT-1001", `{"message":"One more."}`, "cust-002", "CUSTOMER", ""); w.Code != 409 || !strings.Contains(w.Body.String(), "ticket_full") {
+		t.Fatalf("reply past the message limit: %d %s", w.Code, w.Body)
+	}
+	for i := range keptTickets {
+		if w := serviceRequest(s, "POST", "/support/tickets", `{"subject":"Question","message":"Hello"}`, "cust-001", "CUSTOMER", ""); w.Code != 201 {
+			t.Fatalf("ticket %d: %d %s", i, w.Code, w.Body)
+		}
+	}
+	tickets := s.data.(*support).tickets
+	if len(tickets) != keptTickets || tickets[0].ID != "TKT-1002" || tickets[len(tickets)-1].ID != "TKT-2001" {
+		t.Fatalf("kept %d tickets, %s to %s", len(tickets), tickets[0].ID, tickets[len(tickets)-1].ID)
+	}
+}
+
+// The queue's status filter is declared in the contract with the values the
+// handler accepts.
+func TestSupportContractDeclaresStatus(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", "openapi", "support.openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, queue, found := strings.Cut(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n  /support/queue:\n")
+	queue, _, _ = strings.Cut(queue, "\n  /")
+	for _, want := range []string{"- in: query\n          name: status\n", "- open\n", "- answered\n", "- resolved\n"} {
+		if !found || !strings.Contains(queue, want) {
+			t.Errorf("the /support/queue contract lacks %q", want)
+		}
 	}
 }

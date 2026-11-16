@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 type Line struct {
@@ -47,7 +48,7 @@ func (d *inventory) reserve(r *http.Request, body []byte) result {
 		return result{status: 200, body: previous.response}
 	}
 	var request purchase
-	if rejected := decodeBody(r, body, 4096, &request); rejected != nil {
+	if rejected := decodeBody(r, body, orderBody, &request); rejected != nil {
 		return *rejected
 	}
 	merchant, found := d.merchant(request.Merchant)
@@ -87,7 +88,7 @@ func (d *inventory) reserve(r *http.Request, body []byte) result {
 		}
 	}
 	d.reservations[key] = reservation{digest: digest, counts: counts, response: response}
-	for _, old := range d.recent.add(key) {
+	for _, old := range d.recent.add(key, time.Now()) {
 		d.forget(old)
 	}
 	return result{status: 200, body: response, effect: "reserved stock"}

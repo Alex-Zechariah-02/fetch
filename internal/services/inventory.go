@@ -13,14 +13,16 @@ type inventory struct {
 	items        []stockItem
 	reservations map[string]reservation
 	measure      bool     // measurement mode: the oldest reservations are forgotten
-	recent       arrivals // reservation identities of a measurement run
+	recent       arrivals // reservation identities, oldest first
 }
 
 func (d *inventory) reset() {
 	d.merchants = seedMerchants()
 	d.items = seedItems()
 	d.reservations = map[string]reservation{}
-	d.recent = measured(d.measure)
+	// Orders repeats a reservation only within one placement, so Inventory
+	// forgets by count alone.
+	d.recent = measured(d.measure, 0)
 }
 func (d *inventory) snapshot() any {
 	return struct {
@@ -177,7 +179,7 @@ func (d *inventory) handle(r *http.Request, body []byte) result {
 				Price     *int64 `json:"price_sen"`
 				Available *bool  `json:"available"`
 			}
-			if rejected := decodeBody(r, body, 512, &change); rejected != nil {
+			if rejected := decodeBody(r, body, itemBody, &change); rejected != nil {
 				return *rejected
 			}
 			if change.Price == nil && change.Available == nil || change.Price != nil && (*change.Price < 50 || *change.Price > 100000) {
@@ -209,7 +211,7 @@ func (d *inventory) handle(r *http.Request, body []byte) result {
 			var change struct {
 				Delta *int `json:"delta"`
 			}
-			if rejected := decodeBody(r, body, 256, &change); rejected != nil {
+			if rejected := decodeBody(r, body, stockBody, &change); rejected != nil {
 				return *rejected
 			}
 			if change.Delta == nil || *change.Delta == 0 || *change.Delta < -100 || *change.Delta > 100 {

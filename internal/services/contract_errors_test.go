@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"slices"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestInternalKeyPrecedesUntrustedBody(t *testing.T) {
-	s, _ := New(Config{Name: "inventory", Secret: testSecret})
+	s := newService(t, Config{Name: "inventory", Secret: testSecret})
 	request := httptest.NewRequest("POST", "/internal/reservations", strings.NewReader(strings.Repeat("x", 5000)))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, request)
@@ -52,6 +53,30 @@ func TestOrderContractErrorsAndInventoryOutage(t *testing.T) {
 	w = serviceRequest(service, "POST", "/orders", checkoutBody, "cust-003", "CUSTOMER", "inventory-offline-key")
 	if w.Code != 503 || !strings.Contains(w.Body.String(), "inventory_unavailable") || service.data.(*orders).wallets["cust-003"] != 10000 || len(service.data.(*orders).list) != len(seedOrders()) {
 		t.Fatalf("unavailable Inventory changed checkout: %d %s", w.Code, w.Body)
+	}
+	// The outage is not kept as the key's answer: a retry tries again.
+	if kept := len(service.data.(*orders).idempotency); kept != 0 {
+		t.Fatalf("an Inventory outage was kept as %d checkout answers", kept)
+	}
+}
+
+// A checkout memory full of keys younger than a day refuses a new keyed
+// checkout rather than forget one a client may still retry.
+func TestCheckoutRefusesWhenKeysFull(t *testing.T) {
+	_, orderService := newCommerce(t)
+	orderService.data.(*orders).recent = arrivals{limit: 1, life: time.Hour}
+	cash := strings.Replace(checkoutBody, `"wallet"`, `"cash"`, 1)
+	for i := range 4 {
+		if w := serviceRequest(orderService, "POST", "/orders", cash, "cust-001", "CUSTOMER", fmt.Sprintf("full-memory-key-%02d", i)); w.Code != 201 {
+			t.Fatalf("checkout %d: %d %s", i, w.Code, w.Body)
+		}
+	}
+	w := serviceRequest(orderService, "POST", "/orders", cash, "cust-001", "CUSTOMER", "full-memory-key-04")
+	if w.Code != 503 || !strings.Contains(w.Body.String(), "checkout_busy") {
+		t.Fatalf("checkout past a full memory: %d %s", w.Code, w.Body)
+	}
+	if w := serviceRequest(orderService, "POST", "/orders", cash, "cust-001", "CUSTOMER", "full-memory-key-00"); w.Code != 201 {
+		t.Fatalf("a kept key no longer replays: %d %s", w.Code, w.Body)
 	}
 }
 

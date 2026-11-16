@@ -1,6 +1,10 @@
+// The gateway's assertion: what a service admits, what it refuses, and the
+// bounded record of its refusals.
+
 package services
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -8,6 +12,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"log/slog"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -39,18 +44,17 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 	if err := os.WriteFile(keyFile, set, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(Config{Name: "support", Secret: testSecret, GatewayKey: keyFile})
-	if err != nil {
-		t.Fatal(err)
-	}
+	var refusals bytes.Buffer
+	s := newService(t, Config{Name: "support", Secret: testSecret, GatewayKey: keyFile, Log: slog.New(slog.NewTextHandler(&refusals, nil))})
 
 	now := time.Now()
+	issuer := "apiward"
 	sign := func(key *ecdsa.PrivateKey, audience, method, path string, issued time.Time) string {
 		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "gateway-a"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		payload, _ := json.Marshal(map[string]any{"iss": "apiward", "aud": audience, "sub": "cust-001", "roles": []string{"CUSTOMER"},
+		payload, _ := json.Marshal(map[string]any{"iss": issuer, "aud": audience, "sub": "cust-001", "roles": []string{"CUSTOMER"},
 			"method": method, "path": path, "iat": issued.Unix(), "exp": issued.Add(30 * time.Second).Unix(), "jti": "request-1"})
 		signed, err := signer.Sign(payload)
 		if err != nil {
@@ -63,6 +67,9 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 		return token
 	}
 	valid := sign(gateway, "support", "GET", "/support/mine", now)
+	issuer = "another-gateway"
+	foreign := sign(gateway, "support", "GET", "/support/mine", now)
+	issuer = "apiward"
 	for _, tc := range []struct {
 		name       string
 		assertions []string
@@ -77,6 +84,7 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 		{"issued in the future", []string{sign(gateway, "support", "GET", "/support/mine", now.Add(time.Minute))}, 401},
 		{"signed by another key", []string{sign(other, "support", "GET", "/support/mine", now)}, 401},
 		{"two assertions", []string{valid, valid}, 401},
+		{"made by another issuer", []string{foreign}, 401},
 	} {
 		// The plain headers claim support staff, to whom a customer's own
 		// ticket list does not exist; the assertion names a customer.
@@ -94,6 +102,16 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 		if tc.status == 200 && (r.Header.Get("X-Gateway-Subject") != "cust-001" || r.Header.Get("X-Gateway-Roles") != "CUSTOMER") {
 			t.Errorf("%s: the handler read subject %q and roles %q", tc.name, r.Header.Get("X-Gateway-Subject"), r.Header.Get("X-Gateway-Roles"))
 		}
+	}
+
+	// Nine refusals within a second leave one log line; a refusal a second
+	// later counts itself and the eight not logged.
+	if lines := strings.Count(refusals.String(), "gateway assertion refused"); lines != 1 || !strings.Contains(refusals.String(), "reason=") {
+		t.Fatalf("%d refusal lines: %s", lines, refusals.String())
+	}
+	r := httptest.NewRequest("GET", "/support/mine", nil)
+	if s.gateway.check(r, time.Now().Add(2*refusalGap)) || !strings.Contains(refusals.String(), "refused=9") {
+		t.Fatalf("the next refusal line: %s", refusals.String())
 	}
 
 	// Accounts takes the account for me and refresh from the gateway, so a

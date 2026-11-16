@@ -197,6 +197,14 @@ func TestProtectionAccountsBlockedRateAndLog(t *testing.T) {
 		t.Fatalf("blocked account admitted: %d", w.Code)
 	}
 	setBlocked(`[]`)
+	// A list above the file bound is refused by size, not as malformed.
+	large := httptest.NewRequest("PUT", "/blocked", strings.NewReader(`["`+strings.Repeat("x", 64<<10)+`"]`))
+	large.Header.Set("Authorization", "Bearer "+string(testSecret))
+	rec := httptest.NewRecorder()
+	control.ServeHTTP(rec, large)
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "payload_too_large") {
+		t.Fatalf("oversized blocked list: %d %s", rec.Code, rec.Body)
+	}
 
 	// orders.cancel allows 10 per minute per account; only admitted requests count.
 	for i := range 11 {

@@ -9,10 +9,38 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 )
 
+// freeAddress is a loopback address with a port nothing listens on now.
+func freeAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	return listener.Addr().String()
+}
+
+// answers reports whether address accepts a connection within wait,
+// trying once when wait is zero.
+func answers(address string, wait time.Duration) bool {
+	deadline := time.Now().Add(wait)
+	for {
+		if conn, err := net.DialTimeout("tcp", address, time.Second); err == nil {
+			conn.Close()
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestInventoryPublicContract(t *testing.T) {
-	s, err := New(Config{Name: "inventory", Secret: []byte("01234567890123456789012345678901")})
+	s, err := New(Config{Name: "inventory", Secret: testSecret})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +58,7 @@ func TestInventoryPublicContract(t *testing.T) {
 }
 
 func TestInventoryStateResetAndLimits(t *testing.T) {
-	s, _ := New(Config{Name: "inventory", Secret: []byte("01234567890123456789012345678901")})
+	s := newService(t, Config{Name: "inventory", Secret: testSecret})
 	before := s.state().SHA256
 	call := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -89,8 +117,8 @@ func TestInventoryStateResetAndLimits(t *testing.T) {
 }
 
 func TestInventoryReservationTransactions(t *testing.T) {
-	secret := []byte("01234567890123456789012345678901")
-	s, _ := New(Config{Name: "inventory", Secret: secret})
+	secret := testSecret
+	s := newService(t, Config{Name: "inventory", Secret: secret})
 	call := func(method, path, body, key string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -134,11 +162,31 @@ func TestInventoryReservationTransactions(t *testing.T) {
 func TestServiceRunStopsOwnedListeners(t *testing.T) {
 	// Real listener lifecycle, with addresses allocated independently of the
 	// frontend's fixed ports.
-	s, _ := New(Config{Name: "inventory", Secret: []byte("01234567890123456789012345678901")})
+	s := newService(t, Config{Name: "inventory", Secret: testSecret})
+	listen, control := freeAddress(t), freeAddress(t)
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, s, listen, control, s.secret, Ingress{}) }()
+	for _, address := range []string{listen, control} {
+		if !answers(address, 5*time.Second) {
+			cancel()
+			t.Fatalf("%s never listened: %v", address, <-done)
+		}
+	}
 	cancel()
-	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", s.secret, Ingress{}); err != nil {
+	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	for _, address := range []string{listen, control} {
+		if answers(address, 0) {
+			t.Errorf("%s still listens after Run returned", address)
+		}
+	}
+	// Over loopback the services call each other in plain HTTP at the API's
+	// port, so TLS there is refused before anything listens.
+	tls := Ingress{Certificate: "cert.pem", Key: "key.pem", ClientCA: "ca.pem"}
+	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", s.secret, tls); err == nil || !strings.Contains(err.Error(), "not a loopback one") {
+		t.Fatalf("TLS on a loopback API address: %v", err)
 	}
 	// Every interface, and a network address this machine could bind, are
 	// refused without TLS.
@@ -169,7 +217,7 @@ func networkAddress(t *testing.T) string {
 }
 
 func TestInventoryRefusalsAndOwnership(t *testing.T) {
-	s, err := New(Config{Name: "inventory", Secret: []byte("01234567890123456789012345678901")})
+	s, err := New(Config{Name: "inventory", Secret: testSecret})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -71,7 +71,7 @@ type orders struct {
 	releasing map[string]bool
 	placing   map[string]chan struct{}
 	measure   bool     // also the load accounts' wallets
-	recent    arrivals // checkout identities of a measurement run
+	recent    arrivals // checkout identities, oldest first
 }
 
 var orderStatuses = []string{"placed", "accepted", "ready", "picked_up", "delivered", "cancelled"}
@@ -80,7 +80,7 @@ var states = []string{"Johor", "Kedah", "Kelantan", "Melaka", "Negeri Sembilan",
 func (d *orders) reset() {
 	d.list = seedOrders()
 	d.seeded = len(d.list)
-	d.recent = measured(d.measure)
+	d.recent = measured(d.measure, keyLife)
 	d.wallets = map[string]int64{"cust-001": walletSeed, "cust-002": walletSeed, "cust-003": walletSeed}
 	if d.measure {
 		for _, user := range loadUsers() {

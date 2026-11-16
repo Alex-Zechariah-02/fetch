@@ -20,6 +20,16 @@ paths:
   /support/queue:
     get:
       operationId: queue
+      parameters:
+        - in: query
+          name: status
+          required: false
+          schema:
+            enum:
+              - open
+              - answered
+              - resolved
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow

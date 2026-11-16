@@ -115,7 +115,7 @@ func TestAccountsCredentialFailures(t *testing.T) {
 			t.Errorf("anonymous %s: %d", path, w.Code)
 		}
 	}
-	if w := serviceRequest(s, "POST", "/accounts/login", strings.Repeat(" ", 512)+`{}`, "", "", ""); w.Code != 413 {
+	if w := serviceRequest(s, "POST", "/accounts/login", strings.Repeat(" ", 2048)+`{}`, "", "", ""); w.Code != 413 {
 		t.Errorf("login body limit: %d", w.Code)
 	}
 }

@@ -2,12 +2,28 @@ package services
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-var testSecret = []byte("01234567890123456789012345678901")
+// testSecret is this run's service key, made fresh so no key is committed.
+var testSecret = []byte(randomID() + randomID())
+
+// newService is New for a test: a failure stops the test, and the
+// service's log is discarded unless cfg names one.
+func newService(t *testing.T, cfg Config) *Service {
+	t.Helper()
+	if cfg.Log == nil {
+		cfg.Log = slog.New(slog.DiscardHandler)
+	}
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
 
 const checkoutBody = `{"merchant":"MER-005","items":[{"item":"ITM-501","quantity":2}],"address":{"line1":"12 Jalan Telawi 3","line2":"","postcode":"59100","city":"Kuala Lumpur","state":"Wilayah Persekutuan Kuala Lumpur"},"payment":"wallet","note":"Please ring the bell"}`
 

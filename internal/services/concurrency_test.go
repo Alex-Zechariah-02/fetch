@@ -1,3 +1,7 @@
+// Concurrent changes: reservation compensation, two checkouts or rider
+// claims at once, and a cancel racing an accept, each with its interleaving
+// forced.
+
 package services
 
 import (
@@ -11,7 +15,7 @@ import (
 )
 
 func TestReservationTimeoutCompensation(t *testing.T) {
-	inventory, _ := New(Config{Name: "inventory", Secret: testSecret})
+	inventory := newService(t, Config{Name: "inventory", Secret: testSecret})
 	var refuseRelease atomic.Bool
 	refuseRelease.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,22 +65,60 @@ func TestReservationTimeoutCompensation(t *testing.T) {
 	}
 }
 
+// together runs each call in its own goroutine, all released at once, and
+// waits for them.
+func together(calls ...func()) {
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, call := range calls {
+		wg.Go(func() {
+			<-start
+			call()
+		})
+	}
+	close(start)
+	wg.Wait()
+}
+
+// overlapped is newCommerce whose Inventory holds each reservation until n
+// have arrived, so n checkouts all reserve before any reads the wallet.
+func overlapped(t *testing.T, n int) (*Service, *Service) {
+	t.Helper()
+	inventory := newService(t, Config{Name: "inventory", Secret: testSecret})
+	var arrived atomic.Int32
+	all := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/internal/reservations" {
+			if arrived.Add(1) == int32(n) {
+				close(all)
+			}
+			select {
+			case <-all:
+			case <-time.After(5 * time.Second):
+				t.Error("the reservations did not overlap")
+			}
+		}
+		inventory.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	return inventory, newService(t, Config{Name: "orders", Secret: testSecret, InventoryURL: server.URL})
+}
+
 func TestConcurrentWalletAndRiderClaims(t *testing.T) {
 	for _, wallet := range []bool{true, false} {
 		t.Run(map[bool]string{true: "wallet", false: "rider"}[wallet], func(t *testing.T) {
-			inventory, orders := newCommerce(t)
+			inventory, orders := overlapped(t, 2)
 			statuses := make([]int, 2)
-			var wg sync.WaitGroup
-			for i := range 2 {
-				wg.Go(func() {
+			claim := func(i int) func() {
+				return func() {
 					if wallet {
 						statuses[i] = serviceRequest(orders, "POST", "/orders", checkoutBody, "cust-003", "CUSTOMER", []string{"parallel-wallet-first", "parallel-wallet-second"}[i]).Code
 					} else {
 						statuses[i] = serviceRequest(orders, "POST", "/orders/pickup/ORD-1004", "", []string{"rider-01", "rider-02"}[i], "RIDER", "").Code
 					}
-				})
+				}
 			}
-			wg.Wait()
+			together(claim(0), claim(1))
 			wins, conflicts := 0, 0
 			for _, code := range statuses {
 				if code == 200 || code == 201 {
@@ -104,14 +146,11 @@ func TestCancelAcceptRace(t *testing.T) {
 	for range 15 {
 		_, orders := newCommerce(t)
 		statuses := make([]int, 2)
-		var wg sync.WaitGroup
-		wg.Go(func() {
+		together(func() {
 			statuses[0] = serviceRequest(orders, "POST", "/orders/cancel/ORD-1001", "", "cust-001", "CUSTOMER", "").Code
-		})
-		wg.Go(func() {
+		}, func() {
 			statuses[1] = serviceRequest(orders, "POST", "/orders/accept/ORD-1001", "", "merchant-001", "MERCHANT", "").Code
 		})
-		wg.Wait()
 		if !(statuses[0] == 200 && statuses[1] == 409 || statuses[0] == 409 && statuses[1] == 200) {
 			t.Fatalf("cancel/accept race: %v", statuses)
 		}

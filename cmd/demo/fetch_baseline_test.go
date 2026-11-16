@@ -61,13 +61,13 @@ func checkFetchBaseline(t *testing.T) {
 		"reports.summary GET /reports/summary required 30 OPERATIONS 0",
 		"reports.sales GET /reports/sales required 30 OPERATIONS 0",
 		"reports.top-items GET /reports/top-items required 30 OPERATIONS 0",
-		"support.create POST /support/tickets required 5 CUSTOMER 4096",
+		"support.create POST /support/tickets required 5 CUSTOMER 16384",
 		"support.mine GET /support/mine required 60 CUSTOMER 0",
 		"support.queue GET /support/queue required 60 SUPPORT 0",
 		"support.ticket GET /support/ticket/* required 60 CUSTOMER,SUPPORT 0",
-		"support.reply POST /support/reply/* required 20 CUSTOMER,SUPPORT 4096",
+		"support.reply POST /support/reply/* required 20 CUSTOMER,SUPPORT 16384",
 		"support.resolve POST /support/resolve/* required 20 SUPPORT 0",
-		"accounts.login POST /accounts/login none 10 - 512",
+		"accounts.login POST /accounts/login none 10 - 2048",
 		"accounts.refresh POST /accounts/refresh required 30 CUSTOMER,MERCHANT,RIDER,SUPPORT,OPERATIONS 0",
 		"accounts.me GET /accounts/me required 60 CUSTOMER,MERCHANT,RIDER,SUPPORT,OPERATIONS 0",
 		"web.page.home GET / none 600 - 0",
@@ -157,9 +157,9 @@ func TestFetchStackLayout(t *testing.T) {
 }
 
 func TestFetchCommandArgumentRefusals(t *testing.T) {
-	for _, command := range []func([]string) error{attack, keys, policy} {
-		if command(nil) == nil {
-			t.Error("command accepted missing required arguments")
+	for want, command := range map[string]func([]string) error{"choose flood-search": attack, "choose keys rotate": keys, "choose policy export": policy} {
+		if err := command(nil); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("missing arguments: %v, want an error naming %q", err, want)
 		}
 	}
 }

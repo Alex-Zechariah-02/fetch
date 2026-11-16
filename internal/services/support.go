@@ -1,3 +1,7 @@
+// The Support API: customers open tickets and reply, support agents read
+// the queue, answer and resolve. Tickets live in memory, the newest
+// keptTickets of them, each with at most maxMessages messages.
+
 package services
 
 import (
@@ -27,6 +31,16 @@ type Ticket struct {
 	Messages     []Message `json:"messages"`
 	CreatedAt    time.Time `json:"created_at"`
 }
+
+// keptTickets bounds the tickets kept: the oldest go first, as Orders forgets
+// its oldest placed orders. maxMessages ends a long conversation in a new
+// ticket; together they hold the Support API under about 160 MiB at the
+// largest messages.
+const (
+	keptTickets = 1000
+	maxMessages = 20
+)
+
 type support struct {
 	tickets []Ticket
 	next    int
@@ -74,7 +88,7 @@ func (d *support) handle(r *http.Request, body []byte) result {
 			Order      *string `json:"order"`
 			RequestRef *string `json:"request_ref"`
 		}
-		if rejected := decodeBody(r, body, 4096, &request); rejected != nil {
+		if rejected := decodeBody(r, body, ticketBody, &request); rejected != nil {
 			return *rejected
 		}
 		if !length(request.Subject, 5, 120) || !length(request.Message, 1, 2000) || request.Order != nil && !length(*request.Order, 8, 8) || request.RequestRef != nil && !length(*request.RequestRef, 16, 64) {
@@ -86,6 +100,9 @@ func (d *support) handle(r *http.Request, body []byte) result {
 			Subject: request.Subject, Status: "open", Messages: []Message{newMessage("customer", subject, request.Message, now)}, CreatedAt: now,
 		}
 		d.next++
+		if len(d.tickets) >= keptTickets {
+			d.tickets = slices.Delete(d.tickets, 0, len(d.tickets)-keptTickets+1)
+		}
 		d.tickets = append(d.tickets, ticket)
 		return result{status: 201, body: map[string]any{"ticket": ticket}, effect: "created " + ticket.ID}
 	}
@@ -135,10 +152,13 @@ func (d *support) handle(r *http.Request, body []byte) result {
 		if ticket.Status == "resolved" {
 			return failure(409, "invalid_transition", "This ticket is resolved. Start a new ticket for another question.", "")
 		}
+		if len(ticket.Messages) >= maxMessages {
+			return failure(409, "ticket_full", "This ticket has reached its message limit. Start a new ticket to continue.", "")
+		}
 		var request struct {
 			Message string `json:"message"`
 		}
-		if rejected := decodeBody(r, body, 4096, &request); rejected != nil {
+		if rejected := decodeBody(r, body, ticketBody, &request); rejected != nil {
 			return *rejected
 		}
 		if !length(request.Message, 1, 2000) {

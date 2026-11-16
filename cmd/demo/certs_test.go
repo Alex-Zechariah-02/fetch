@@ -82,7 +82,7 @@ func TestCertsAdmitOnlyGateway(t *testing.T) {
 
 	// An API started with the Fetch folder's key set answers a request the
 	// gateway folder's assertion key signed, and no request without one.
-	support, err := services.New(services.Config{Name: "support", Secret: []byte("0123456789abcdef0123456789abcdef"), GatewayKey: filepath.Join(fetch, assertionSetFile)})
+	support, err := services.New(services.Config{Name: "support", Secret: newSecret(), GatewayKey: filepath.Join(fetch, assertionSetFile)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func signedAssertion(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	payload, _ := json.Marshal(map[string]any{"aud": "support", "sub": "cust-001", "roles": []string{"CUSTOMER"},
+	payload, _ := json.Marshal(map[string]any{"iss": "apiward", "aud": "support", "sub": "cust-001", "roles": []string{"CUSTOMER"},
 		"method": "GET", "path": "/support/mine", "iat": now.Unix(), "exp": now.Add(30 * time.Second).Unix()})
 	signed, err := signer.Sign(payload)
 	if err != nil {

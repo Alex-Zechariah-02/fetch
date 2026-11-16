@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMeasureCountsReceiptsWithoutCap(t *testing.T) {
@@ -132,14 +133,44 @@ func TestMeasureBoundsData(t *testing.T) {
 
 	keys := arrivals{limit: 2}
 	var forgotten []string
+	start := time.Now()
 	for _, key := range []string{"a", "b", "c", "d", "e"} {
-		forgotten = append(forgotten, keys.add(key)...)
+		forgotten = append(forgotten, keys.add(key, start)...)
 	}
-	if strings.Join(forgotten, "") != "ab" || strings.Join(keys.keys, "") != "cde" {
+	if strings.Join(forgotten, "") != "ab" || len(keys.keys) != 3 || keys.keys[0].key != "c" {
 		t.Fatalf("forgotten %v, kept %v", forgotten, keys.keys)
 	}
-	if kept := measured(false); kept.limit != keptKeys {
+	if kept := measured(false, 0); kept.limit != keptKeys {
 		t.Fatalf("a service outside measurement mode keeps %d keys", kept.limit)
+	}
+	// Checkout identities are kept a day in either mode; reservations go by
+	// count.
+	for _, measure := range []bool{true, false} {
+		checkouts, stock := &orders{measure: measure}, &inventory{measure: measure}
+		checkouts.reset()
+		stock.reset()
+		if checkouts.recent.life != keyLife || stock.recent.life != 0 {
+			t.Fatalf("measure=%v: checkout keys kept %v, reservations %v", measure, checkouts.recent.life, stock.recent.life)
+		}
+	}
+
+	// With a life, a key is kept past the count until it is old enough, and
+	// a full memory refuses rather than forgets.
+	young := arrivals{limit: 2, life: time.Hour}
+	for i := range 7 {
+		if old := young.add(fmt.Sprint(i), start); old != nil {
+			t.Fatalf("forgot %v before they were an hour old", old)
+		}
+	}
+	if young.full() {
+		t.Fatal("seven keys under a limit of two fill the memory")
+	}
+	young.add("7", start)
+	if !young.full() {
+		t.Fatal("eight young keys under a limit of two do not fill the memory")
+	}
+	if old := young.expire(start.Add(time.Hour)); strings.Join(old, "") != "01" || young.full() {
+		t.Fatalf("an hour later forgot %v", old)
 	}
 
 	// A forgotten reservation that was neither released nor committed

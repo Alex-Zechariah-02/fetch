@@ -49,6 +49,11 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 	if address, err := netip.ParseAddrPort(control); err != nil || !address.Addr().IsLoopback() {
 		return errors.New("the control listener must be a literal loopback address")
 	}
+	// Over loopback the services call each other in plain HTTP at the API's
+	// port, which a TLS listener there would already hold.
+	if address, err := netip.ParseAddrPort(listen); err == nil && address.Addr().IsLoopback() && ingress != (Ingress{}) {
+		return errors.New("TLS takes this host's network address, not a loopback one")
+	}
 	listeners := []net.Listener{}
 	defer func() {
 		for _, l := range listeners {
@@ -78,6 +83,8 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 	// before the API does; without IdleTimeout, net/http would close idle
 	// connections after the 10 s ReadTimeout.
 	const idleTimeout = 2 * time.Minute
+	// 10 s reads a maxBody body on a slow link and outlasts the slowest
+	// answer, a report that waits at most 4 s for Orders.
 	var servers []*http.Server
 	for _, handler := range handlers {
 		servers = append(servers, &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: idleTimeout})

@@ -18,12 +18,17 @@ import (
 )
 
 const (
+	// queueSize holds a second of refusals at the demo's rates; past it
+	// refusals are counted in a loss record, never waited for.
 	queueSize = 1024
+	// batchSize records share one sync, bounding an admission's wait under
+	// load.
 	batchSize = 128
 	// commitWait bounds an admission's wait for its sync (the gateway's
 	// default audit wait).
 	commitWait = 2 * time.Second
-	maxPath    = 512
+	// maxPath bounds a log line; every Fetch API path is far shorter.
+	maxPath = 512
 	// maxMethod is longer than any registered HTTP method; Go accepts any
 	// token up to its 1 MiB header limit.
 	maxMethod = 32

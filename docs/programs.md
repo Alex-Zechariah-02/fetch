@@ -11,10 +11,14 @@ The programs and folders of this repository, with their flags. Back to the [READ
 - A service holds its newest 10,000 receipts; `GET /receipts` on the control listener lists them oldest first with `dropped`, the number of older ones let go since the last reset.
 - Defaults honor `EAT_PORT_OFFSET`; `-listen` and `-control` select explicit loopback addresses.
 - Orders uses `-inventory <http-origin>` and Reports uses `-orders <http-origin>` for authenticated internal calls.
+- `POST /reset` on the control listener clears the data and the receipts; the service writes a line to its log (standard error) first.
+- A checkout's `Idempotency-Key` is kept at least a day, so a retry replays the first answer; a server failure (5xx) is not kept, so a retry tries again.
+- Support keeps its newest 1,000 tickets, each with at most 20 messages; a reply past that is answered `409 ticket_full`.
+- Support bodies may be up to 16 KiB, so every field fits at its declared length in any UTF-8 text.
 
 ### TLS
 
-- With `-tls-cert`, `-tls-key` and `-client-ca` (all three, or none) the API serves TLS and admits only clients presenting a certificate issued by that CA; only then may `-listen` name an address other than loopback.
+- With `-tls-cert`, `-tls-key` and `-client-ca` (all three, or none) the API serves TLS and admits only clients presenting a certificate issued by that CA; only then may `-listen` name an address other than loopback, and then it must.
 - Inventory and Orders then also answer their `/internal/` endpoints, and nothing else, on `127.0.0.1` at the same port, where the other services' calls arrive.
 - The control listener is always loopback.
 - Accounts takes the same TLS flags.
@@ -24,7 +28,10 @@ The programs and folders of this repository, with their flags. Back to the [READ
 - `-gateway-key <file>` (the JSON Web Key Set that `apiward jwks` prints; Accounts takes it too and requires the assertion for `refresh` and `me`, while signing in needs none) makes the API answer only requests carrying the gateway's signed `X-Gateway-Assertion` made for this service, valid for its 30 seconds with 5 seconds of clock difference allowed, and read the account and roles from it instead of `X-Gateway-Subject` and `X-Gateway-Roles`; anything else is answered `401 gateway_assertion_required`, while `/internal/` calls keep using the service key.
 - `demo up` on one machine creates the gateway's assertion key and starts the four APIs and Accounts with its key set (signing in at Accounts stays directly reachable, as the demo commands sign in there); delete `assertion-keys.json` from the state folder and restart to let the APIs answer direct requests again, as the standalone condition of `cmd/measure` needs.
 - The two-host and container setups always require the assertion: `demo certs` writes the gateway's assertion key into the `gateway` folder and its key set into the `fetch` folder, and `demo up -role fetch` starts the four APIs with it, so a client certificate alone no longer reaches an API.
-- The assertion must also name the request's own method and path.
+- The assertion must also name the request's own method and path, and the issuer `apiward`.
+- An assertion can be replayed on the same method and path until it expires, at most 35 seconds; there is no one-time memory. Reading one needs the gateway-to-service connection, which mutual TLS protects in the two-host setup.
+- On Unix the key set file must not be writable by the group or others and must belong to the service's user or root.
+- Refused assertions are written to the service's log, at most one line a second with the reason and the number refused since the last line.
 
 ### Built-in protection
 
@@ -40,12 +47,13 @@ The programs and folders of this repository, with their flags. Back to the [READ
 ## cmd/demo
 
 - `cmd/demo` builds, sets up and runs the full local stack with `up`.
-- `up -role fetch -programs <folder>` runs the services, Accounts and shop already built in that folder instead of building them, as the container image does; `-measure` adds measurement mode, where each service keeps only answer counts per status with no cap (`GET /receipts` on its control listener) and Accounts and Orders also seed the customers `load-0001` to `load-1000` (`load0001@fetch.test`, demo password, full wallet), and Orders and Inventory keep their data from growing (Orders holds its seed orders and the newest 1,000 to 2,000 placed ones; checkout and reservation identities older than the newest 10,000 are forgotten and could be used again, and a forgotten reservation returns its stock); outside measurement mode the same bounds are 5,000 to 10,000 orders and 50,000 identities, below the 20,000 orders a report reads, so a long load run costs the same per request at its end as at its start and is not cut short by one account's rate limit; `prepare` gives a new gateway started from the APIWard image its administrator and baseline; `health` succeeds once every Fetch service on the host answers, the image's health check.
+- `up -role fetch -programs <folder>` runs the services, Accounts and shop already built in that folder instead of building them, as the container image does; `-measure` adds measurement mode, where each service keeps only answer counts per status with no cap (`GET /receipts` on its control listener) and Accounts and Orders also seed the customers `load-0001` to `load-1000` (`load0001@fetch.test`, demo password, full wallet), and Orders and Inventory keep their data from growing (Orders holds its seed orders and the newest 1,000 to 2,000 placed ones; reservation identities older than the newest 10,000 are forgotten and could be used again, and a forgotten reservation returns its stock; checkout identities past the newest 10,000 are forgotten only once a day old, and at 40,000 younger ones a new keyed checkout is answered `503 checkout_busy`); outside measurement mode the same bounds are 5,000 to 10,000 orders and 50,000 identities (200,000 for the checkout refusal), below the 20,000 orders a report reads, so a long load run costs the same per request at its end as at its start and is not cut short by one account's rate limit; `prepare` gives a new gateway started from the APIWard image its administrator and baseline; `health` succeeds once every Fetch service on the host answers, the image's health check.
 - `setup` writes `gateway.json`, complete baseline and deny-all policies, `service.secret`, a signing key pair and `accounts.json` into a new identified private directory, then installs the first administrator.
 - `run` starts the five services and the gateway, serves the shop's built files on the website upstream, reports protected admission separately from listening, and stops its own children gracefully.
 - `token` is an optional client of Accounts for a seeded subject; it cannot change the fixed 15-minute lifetime.
 - `reset` restores every service's seed and clears its receipts.
-- `events` prints request events from the gateway's active audit file; retained rotated files are not searched.
+- `events` prints request events from the gateway's active audit file (`-last` 1 to 10,000); retained rotated files are not searched.
+- `run` says at start when the state folder has no `assertion-keys.json`, as the APIs then answer direct requests.
 
 ## cmd/measure
 
