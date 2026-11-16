@@ -85,8 +85,14 @@ func runDemo(ctx context.Context, dir, web, gateway, serviceBinary, accountsBina
 	// The APIs require the gateway's assertion while its key set is in the
 	// directory; without the file they answer direct requests too, which a
 	// direct measurement of an API needs.
-	if _, err := os.Stat(filepath.Join(dir, assertionSetFile)); err == nil {
+	_, err = os.Stat(filepath.Join(dir, assertionSetFile))
+	switch {
+	case err == nil:
 		running.keySet = filepath.Join(dir, assertionSetFile)
+	case errors.Is(err, os.ErrNotExist):
+		fmt.Printf("no %s in %s: the APIs answer direct requests without the gateway's assertion\n", assertionSetFile, dir)
+	default:
+		return err
 	}
 	addresses, err := running.startServices(dir, serviceBinary, accountsBinary, nil, false)
 	if err != nil {

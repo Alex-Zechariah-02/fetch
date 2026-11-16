@@ -6,6 +6,16 @@ import (
 	"testing"
 )
 
+// digestOf is demoDigest for a fixture file the test just wrote.
+func digestOf(t *testing.T, path string) string {
+	t.Helper()
+	digest, err := demoDigest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
+}
+
 func TestFreshReplacesOnlyIdentifiedEarlierNativeState(t *testing.T) {
 	for _, valid := range []bool{true, false} {
 		dir := filepath.Join(t.TempDir(), "state")
@@ -18,8 +28,8 @@ func TestFreshReplacesOnlyIdentifiedEarlierNativeState(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "fixture.secret"), []byte("owned old demo secret"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		config, _ := demoDigest(filepath.Join(dir, configFile))
-		secret, _ := demoDigest(filepath.Join(dir, "fixture.secret"))
+		config := digestOf(t, filepath.Join(dir, configFile))
+		secret := digestOf(t, filepath.Join(dir, "fixture.secret"))
 		if !valid {
 			config = "different"
 		}

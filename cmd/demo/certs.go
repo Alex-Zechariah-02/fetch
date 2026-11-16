@@ -96,7 +96,7 @@ func writeFolders(out string, folders map[string]map[string][]byte) (err error) 
 	}
 	defer func() {
 		if err != nil {
-			os.RemoveAll(out)
+			err = errors.Join(err, removeFailed(out))
 		}
 	}()
 	for folder, files := range folders {

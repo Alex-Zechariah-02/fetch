@@ -38,7 +38,7 @@ go run ./cmd/demo block -local [-unblock] cust-002
 - The demo process only routes each API path to its service with the caller's token, and names the caller in `X-Forwarded-For`.
 - An API trusts that header only from a peer on the same host (the demo process), so its public limits count each visitor; any other peer counts as itself.
 - Each run makes a new folder `local` in the demo home with a new signing key, the public key file every API trusts (`keys.json`), an empty `blocked.json` and the security logs.
-- `block -local` changes `blocked.json` and then each running API's list through its control listener.
+- `block -local` changes `blocked.json` and then each running API's list through its control listener; every API is tried and each one that did not take the list is named.
 - Changing a role, a rate or a schema means editing `internal/services/rules.go` and restarting the APIs; a new signing key means restarting every API.
 
 ## Moving the APIs behind APIWard

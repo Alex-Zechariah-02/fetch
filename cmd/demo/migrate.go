@@ -71,7 +71,9 @@ func migrate(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(*out, data, 0o600); err != nil {
+	// The early check only spares a slow import; a file made meanwhile is
+	// still never overwritten.
+	if err := writeNewFile(*out, data); err != nil {
 		return err
 	}
 	fmt.Printf("Wrote %s. Stage it with: go run ./cmd/demo policy stage -dir %s -file %s\n", *out, state, *out)

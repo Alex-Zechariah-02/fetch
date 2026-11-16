@@ -225,15 +225,12 @@ func policy(args []string) error {
 		if err != nil {
 			return err
 		}
-		if len(document) > 1<<20 {
-			return errors.New("policy file is too large")
-		}
 	}
 	admin, err := operatorSession(dir)
 	if err != nil {
 		return err
 	}
-	defer admin.signOut()
+	defer admin.signOut(os.Stderr)
 	response, body, err := admin.send("GET", "/admin/policy", nil, nil, 200)
 	if err != nil {
 		return err

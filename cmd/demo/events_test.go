@@ -102,4 +102,7 @@ bad complete record
 	if _, _, err := readEvents(t, "-dir", dir, "-last", "0"); err == nil {
 		t.Fatal("invalid event limit was accepted")
 	}
+	if _, _, err := readEvents(t, "-dir", dir, "-last", "10001"); err == nil || !strings.Contains(err.Error(), "1 to 10000") {
+		t.Fatalf("event limit above the maximum: %v", err)
+	}
 }

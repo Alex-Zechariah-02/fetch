@@ -117,6 +117,10 @@ func auditLines(data []byte, atEOF bool) (int, []byte, error) {
 	return len(data) - len(bytes.TrimLeft(data, "\x00")), nil, nil
 }
 
+// maxLast bounds the events demo events keeps in memory: about a day of
+// demo traffic, at most a few MiB of decoded records.
+const maxLast = 10000
+
 // events prints the gateway's request events from the audit file, oldest
 // first: every event of one request, or the last N.
 func events(args []string) error {
@@ -127,8 +131,8 @@ func events(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *last < 1 {
-		return errors.New("-last must be at least 1")
+	if *last < 1 || *last > maxLast {
+		return fmt.Errorf("-last must be 1 to %d", maxLast)
 	}
 	file, err := os.Open(filepath.Join(dir, auditFile))
 	if err != nil {

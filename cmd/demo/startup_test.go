@@ -50,8 +50,8 @@ func earlierStartupState(t *testing.T) string {
 	if err != nil || closeErr != nil {
 		t.Fatalf("earlier state: %v %v", err, closeErr)
 	}
-	config, _ := demoDigest(filepath.Join(state, configFile))
-	secret, _ := demoDigest(filepath.Join(state, "fixture.secret"))
+	config := digestOf(t, filepath.Join(state, configFile))
+	secret := digestOf(t, filepath.Join(state, "fixture.secret"))
 	identity := map[string]string{"format": "gateway-demo-1", "directory": state, "config_sha256": config, "fixture_secret_sha256": secret}
 	if err := os.WriteFile(filepath.Join(state, identityFile), indented(identity), 0600); err != nil {
 		t.Fatal(err)
@@ -169,7 +169,7 @@ func TestEarlierSetupWithAuthorityOrCorruptionIsNeverReplaced(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			before, _ := demoDigest(path)
+			before := digestOf(t, path)
 			if _, err := preserveUnfinishedEarlierDemo(state); err == nil {
 				t.Fatal("replaced an earlier deployment with saved authority or invalid state")
 			}

@@ -1,9 +1,26 @@
+// Drives one demonstration for the browser suites: setup, demo run started
+// and stopped within deadlines, demo tool commands and each service's
+// receipts and state through its control listener.
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { controls, temporaryDir } from './backend'
 
 const exe = process.platform === 'win32' ? '.exe' : ''
+
+// The run command stops each child within 12 s, one after another.
+const stopWait = 60_000
+
+function exitOf(child: ChildProcessWithoutNullStreams, wait: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), wait)
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolve(true)
+    })
+  })
+}
 
 export interface Receipt {
   seq: number
@@ -66,7 +83,10 @@ export class Demo {
     const deadline = Date.now() + 60_000
     while (!this.output.includes('gateway   process')) {
       if (child.exitCode !== null || child.signalCode !== null) throw new Error(`demo run exited: ${this.output}`)
-      if (Date.now() > deadline) throw new Error(`demo run not ready: ${this.output}`)
+      if (Date.now() > deadline) {
+        await this.stop().catch(() => undefined)
+        throw new Error(`demo run not ready: ${this.output}`)
+      }
       await new Promise((r) => setTimeout(r, 100))
     }
     this.pids = {}
@@ -76,15 +96,17 @@ export class Demo {
   }
 
   // stop closes the run command's input, which stops it and every process
-  // it started.
+  // it started. A run still alive after the wait is killed and reported.
   async stop(): Promise<void> {
     const child = this.process
     if (!child) return
     this.process = null
     if (child.exitCode !== null || child.signalCode !== null) return
-    const exited = new Promise((r) => child.once('exit', r))
     child.stdin.end()
-    await exited
+    if (await exitOf(child, stopWait)) return
+    child.kill('SIGKILL')
+    await exitOf(child, 5_000)
+    throw new Error(`demo run did not stop within ${stopWait / 1000} s and was killed; its processes may remain: ${this.output}`)
   }
 
   log(): string {

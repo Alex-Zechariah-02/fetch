@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+// maxTrusted is the gateway's own limit on gateway.jwt.keys; a 65th key would
+// make the reload and the next start refuse the settings.
+const maxTrusted = 64
+
 func keys(args []string) error {
 	if len(args) == 0 || args[0] != "rotate" && args[0] != "retire" {
 		return errors.New("choose keys rotate or keys retire")
@@ -33,7 +37,7 @@ func keys(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer admin.signOut()
+	defer admin.signOut(os.Stderr)
 	if args[0] == "retire" {
 		warnRecentKeyUse(admin, kid, time.Now())
 	}
@@ -82,6 +86,9 @@ func changeKeys(dir string, admin *adminClient, action, kid string) (string, err
 	newPrivate := ""
 	switch action {
 	case "rotate":
+		if len(trusted) >= maxTrusted {
+			return "", fmt.Errorf("the gateway trusts at most %d keys: retire one before rotating", maxTrusted)
+		}
 		kid = "fetch-" + time.Now().UTC().Format("20060102T150405") + "-" + newKey()[:8]
 		private, public, err := signingKeys()
 		if err != nil {

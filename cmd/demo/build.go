@@ -182,7 +182,7 @@ func prepareGateway(state string, firstRun bool, secret, password string) error 
 		}
 		return fmt.Errorf("%w\nIf the earlier setup never finished, start over with: go run ./cmd/demo up -fresh", err)
 	}
-	defer admin.signOut()
+	defer admin.signOut(os.Stderr)
 	fmt.Println("Establishing the baseline policy...")
 	return admin.establishBaseline(state)
 }

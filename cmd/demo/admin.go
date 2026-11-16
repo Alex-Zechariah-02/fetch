@@ -130,8 +130,12 @@ func (a *adminClient) signIn(password string) error {
 	return nil
 }
 
-func (a *adminClient) signOut() {
-	a.send(http.MethodDelete, "/admin/session", nil, nil, http.StatusNoContent)
+// signOut ends the session; a failure is reported to out, as the command's own
+// result already stands and the session still ends at the idle timeout.
+func (a *adminClient) signOut(out io.Writer) {
+	if _, _, err := a.send(http.MethodDelete, "/admin/session", nil, nil, http.StatusNoContent); err != nil {
+		fmt.Fprintf(out, "sign-out failed; the session ends at the gateway's idle timeout: %v\n", err)
+	}
 }
 
 type stagedCandidate struct {
@@ -208,14 +212,34 @@ func (a *adminClient) establishBaseline(state string) error {
 	return err
 }
 
+// maxPolicy is the gateway's largest policy document (limits.policy_bytes
+// cannot exceed it); a policy file may be up to 16 times that with layout.
+const (
+	maxPolicy     = 64 << 10
+	maxPolicyFile = 16 * maxPolicy
+)
+
+// compactFile reads the policy file at path, at most maxPolicyFile bytes, and
+// returns it compacted, refusing a document the gateway would refuse by size.
 func compactFile(path string) ([]byte, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxPolicyFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxPolicyFile {
+		return nil, fmt.Errorf("%s is larger than %d bytes", path, maxPolicyFile)
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, data); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if compact.Len() > maxPolicy {
+		return nil, fmt.Errorf("%s: the policy is %d bytes compacted; the gateway accepts at most %d", path, compact.Len(), maxPolicy)
 	}
 	return compact.Bytes(), nil
 }

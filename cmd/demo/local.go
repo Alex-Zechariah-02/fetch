@@ -107,29 +107,39 @@ func block(args []string) error {
 	if err != nil {
 		return err
 	}
-	return putBlocked(content, strings.TrimSpace(string(secret)))
+	return putBlocked(fetchServices, content, strings.TrimSpace(string(secret)))
 }
 
-// putBlocked replaces the blocked list of every API; one that does not take
-// it is named, and a rerun repeats the whole list.
-func putBlocked(list []byte, secret string) error {
+// putBlocked replaces the blocked list of every API, trying each one even
+// after a failure; every API that does not take it is named in the error.
+func putBlocked(services []demoService, list []byte, secret string) error {
 	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: refuseRedirect}
 	defer client.CloseIdleConnections()
-	for _, service := range fetchServices {
-		request, err := http.NewRequest("PUT", "http://"+service.control+"/blocked", bytes.NewReader(list))
-		if err != nil {
-			return err
-		}
-		request.Header.Set("Authorization", "Bearer "+secret)
-		response, err := client.Do(request)
-		if err != nil {
-			return fmt.Errorf("%s: no answer; its blocked list may be the old one: %w", service.name, err)
-		}
-		response.Body.Close()
-		if response.StatusCode != http.StatusNoContent {
-			return fmt.Errorf("%s refused the blocked list (status %d)", service.name, response.StatusCode)
+	var failed error
+	for _, service := range services {
+		if err := putList(client, "http://"+service.control+"/blocked", list, secret); err != nil {
+			failed = errors.Join(failed, fmt.Errorf("%s: %w; its blocked list may be the old one", service.name, err))
+			continue
 		}
 		fmt.Printf("%-9s blocked list updated\n", service.name)
+	}
+	return failed
+}
+
+// putList sends one blocked list to one control address.
+func putList(client *http.Client, address string, list []byte, secret string) error {
+	request, err := http.NewRequest("PUT", address, bytes.NewReader(list))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+secret)
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("no answer: %w", err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("refused (status %d)", response.StatusCode)
 	}
 	return nil
 }

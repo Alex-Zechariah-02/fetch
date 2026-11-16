@@ -98,6 +98,15 @@ func assertionKeys() (private, set []byte, err error) {
 	return pemBlock("PRIVATE KEY", der), set, err
 }
 
+// removeFailed removes a half-written private directory; a failure names the
+// directory, which may still hold private keys to delete by hand.
+func removeFailed(dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("%s was not removed and may hold private keys; delete it: %w", dir, err)
+	}
+	return nil
+}
+
 // createState makes the new private directory dir holding files, the
 // baseline and deny-all documents and the identity, then runs the gateway's
 // install. An existing directory is never reused, and a failure removes the
@@ -108,7 +117,7 @@ func createState(dir string, files map[string][]byte, baseline map[string]any, g
 	}
 	defer func() {
 		if err != nil {
-			os.RemoveAll(dir)
+			err = errors.Join(err, removeFailed(dir))
 		}
 	}()
 	files[baselineFile] = indented(baseline)

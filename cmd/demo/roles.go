@@ -42,8 +42,8 @@ func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 	if err != nil || bind.IsUnspecified() {
 		return errors.New("-role fetch takes -bind: this host's IP address, which the gateway connects to")
 	}
-	if bind == netip.AddrFrom4([4]byte{127, 0, 0, 1}) {
-		return errors.New("-bind 127.0.0.1 is where the services call each other; use this host's network address")
+	if bind.Unmap().IsLoopback() {
+		return errors.New("-bind takes this host's network address; loopback is where the services call each other")
 	}
 	folder, err := certFolder(certs, caFile, serverCertFile, serverKeyFile, privateKeyFile, assertionSetFile)
 	if err != nil {

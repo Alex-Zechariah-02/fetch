@@ -57,7 +57,8 @@ func runStandalone(ctx context.Context, dir string, shop fs.FS, serviceBinary, a
 // last, after every child, mirroring demo run. Once everything listens it
 // lists the processes and prints banner.
 func serveFetch(ctx context.Context, dir string, listener net.Listener, handler http.Handler, serviceBinary, accountsBinary string, host *fetchHost, protect bool, banner string) (runErr error) {
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	// Forwarded answers take up to the services' own 10 s write deadline.
+	server := demoServer(handler, 15*time.Second)
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	defer func() {

@@ -119,8 +119,7 @@ func (h gatewayHost) up(apiward string, fresh, stdin bool) error {
 			return err
 		}
 		if secret, err = enrolmentSecret(install.String()); err != nil {
-			os.RemoveAll(h.state)
-			return err
+			return errors.Join(err, removeFailed(h.state))
 		}
 	}
 

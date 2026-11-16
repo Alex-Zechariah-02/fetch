@@ -64,10 +64,11 @@ The order flood signs in as Customer 2 (`cust-002`), keeping Customer 1's (`cust
 
 - Key and policy commands prompt for the `root` Dashboard password and use its session, Origin and CSRF protections.
 - Rotation writes a new pair locally, adds public trust and reloads it before switching Accounts; the old key remains trusted until retirement.
-- The current Accounts key cannot be retired.
+- The current Accounts key cannot be retired; rotation is refused once the gateway trusts 64 keys, its maximum.
+- A failed sign-out at the end is reported; the session still ends at the gateway's idle timeout.
 - A failed or unconfirmed reload leaves Accounts signing unchanged and reports the uncertainty.
 - Policy export writes only to a new file.
-- Policy staging validates a complete candidate against the current confirmed revision and does not activate it.
+- Policy staging validates a complete candidate against the current confirmed revision and does not activate it; it reads at most 1 MiB and refuses a policy above the gateway's 64 KiB once compacted.
 - No command automatically repeats a write without an answer.
 
 ### Data

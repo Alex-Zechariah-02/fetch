@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -48,26 +49,34 @@ func TestOrderFloodUsesASeparateCustomerAccount(t *testing.T) {
 }
 
 func TestOperatorBoundaryRefusals(t *testing.T) {
-	for _, args := range [][]string{
-		{"-scenario", "unknown"},
-		{"-scenario", "flood-search", "-from", "8.8.8.8"},
-		{"-scenario", "flood-search", "-from", "::1"},
-		{"-scenario", "flood-search", "-count", "0"},
-		{"-scenario", "flood-search", "-count", "10001"},
+	// Each case runs against a valid demonstration directory, so only the
+	// guard named by its error can refuse it.
+	dir := operatorTestState(t)
+	refused := func(name string, err error, want string) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want an error naming %q", name, err, want)
+		}
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-scenario", "unknown"}, "choose flood-search"},
+		{[]string{"-scenario", "flood-search", "-from", "8.8.8.8"}, "IPv4 loopback source"},
+		{[]string{"-scenario", "flood-search", "-from", "::1"}, "IPv4 loopback source"},
+		{[]string{"-scenario", "flood-search", "-count", "0"}, "count from 1 to 10000"},
+		{[]string{"-scenario", "flood-search", "-count", "10001"}, "count from 1 to 10000"},
 	} {
-		if attack(append(args, "-dir", t.TempDir())) == nil {
-			t.Errorf("attack accepted %v", args)
-		}
+		refused(strings.Join(c.args, " "), attack(append(c.args, "-dir", dir)), c.want)
 	}
-	for _, args := range [][]string{{"retire", "-dir", t.TempDir()}, {"unknown"}} {
-		if keys(args) == nil {
-			t.Errorf("keys accepted %v", args)
-		}
-	}
-	for _, args := range [][]string{{"export", "-dir", t.TempDir()}, {"stage", "-dir", t.TempDir(), "-file", filepath.Join(t.TempDir(), "missing.json")}, {"unknown"}} {
-		if policy(args) == nil {
-			t.Errorf("policy accepted %v", args)
-		}
+	refused("keys retire", keys([]string{"retire", "-dir", dir}), "-kid is required")
+	refused("keys unknown", keys([]string{"unknown"}), "choose keys rotate")
+	refused("policy export", policy([]string{"export", "-dir", dir}), "output or input file is required")
+	refused("policy unknown", policy([]string{"unknown"}), "choose policy export")
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	if err := policy([]string{"stage", "-dir", dir, "-file", missing}); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("policy stage of a missing file: %v", err)
 	}
 	path := filepath.Join(t.TempDir(), "owned.txt")
 	if err := writeNewFile(path, []byte("first")); err != nil {
@@ -89,7 +98,7 @@ func operatorTestState(t *testing.T) string {
 	dir := t.TempDir()
 	files := map[string][]byte{
 		configFile:  []byte(`{"gateway":{"jwt":{"keys":[{"kid":"active","public_key_file":"active.pem"}]}}}`),
-		secretFile:  []byte("01234567890123456789012345678901"),
+		secretFile:  newSecret(),
 		signingFile: []byte(`{"kid":"active","private_key_file":"active-key.pem"}`),
 	}
 	for name, data := range files {

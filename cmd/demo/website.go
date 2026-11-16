@@ -125,10 +125,18 @@ func isPlainName(name string) bool {
 	return true
 }
 
+// demoServer bounds every connection of a demo server as the services do;
+// write must outlast the slowest answer handler gives. Idle connections stay
+// two minutes, past the gateway's own idle close, as in services.Run.
+func demoServer(handler http.Handler, write time.Duration) *http.Server {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: write, IdleTimeout: 2 * time.Minute}
+}
+
 // serveWebsite serves files on listener until ctx ends, then stops within
-// the bound and reports why the server ended, nil for a requested stop.
+// the bound and reports why the server ended, nil for a requested stop. The
+// write deadline lets the largest shop asset reach a slow link.
 func serveWebsite(ctx context.Context, listener net.Listener, files fs.FS) error {
-	server := &http.Server{Handler: website(files), ReadHeaderTimeout: 5 * time.Second}
+	server := demoServer(website(files), 30*time.Second)
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
