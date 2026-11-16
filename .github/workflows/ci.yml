@@ -59,7 +59,11 @@ jobs:
           commit=$(git -C "$GITHUB_WORKSPACE/apiward" rev-parse --verify --end-of-options "$REF^{commit}")
           git -C "$GITHUB_WORKSPACE/apiward" checkout --quiet --detach "$commit"
       - run: go mod verify
-      - run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      # pipefail stops the step when git or gofmt fails; every file name reaches gofmt intact.
+      - shell: bash
+        run: |
+          git ls-files -z '*.go' | xargs -0 -r gofmt -l > "$RUNNER_TEMP/unformatted.txt"
+          if [ -s "$RUNNER_TEMP/unformatted.txt" ]; then cat "$RUNNER_TEMP/unformatted.txt"; exit 1; fi
       - run: go vet ./...
       - run: go test ./... -count=1
       # The test binary's own limit ends a deadlock with a goroutine dump before the job limit cuts it off.
@@ -67,6 +71,7 @@ jobs:
 
   vuln:
     runs-on: ubuntu-24.04
+    # A stalled module download or vulnerability scan is cancelled, freeing the runner.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,6 +95,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-24.04
+    # A stalled linter download or scan is cancelled, freeing the runner.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,6 +117,7 @@ jobs:
       matrix:
         shard: [1, 2]
     runs-on: ubuntu-24.04
+    # A wedged browser test or a stalled package download is cancelled, freeing the runner.
     timeout-minutes: 30
     env:
       EAT_PORT_OFFSET: "3000"
@@ -183,6 +190,7 @@ jobs:
   deps:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    # A stalled dependency review is cancelled, freeing the runner.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
