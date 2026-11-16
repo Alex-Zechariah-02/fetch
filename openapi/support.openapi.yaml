@@ -5,6 +5,7 @@ components:
       scheme: bearer
       type: http
 info:
+  description: Customer support tickets of the Fetch shop.
   title: Fetch Support API
   version: "1"
 openapi: 3.1.0
@@ -21,7 +22,8 @@ paths:
     get:
       operationId: queue
       parameters:
-        - in: query
+        - description: Only tickets with this status.
+          in: query
           name: status
           required: false
           schema:
@@ -39,7 +41,8 @@ paths:
     post:
       operationId: reply
       parameters:
-        - in: path
+        - description: The ticket ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -68,7 +71,8 @@ paths:
     post:
       operationId: resolve
       parameters:
-        - in: path
+        - description: The ticket ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -82,7 +86,8 @@ paths:
     get:
       operationId: ticket
       parameters:
-        - in: path
+        - description: The ticket ID.
+          in: path
           name: rest
           required: true
           schema:

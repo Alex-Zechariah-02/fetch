@@ -96,7 +96,7 @@ func TestSupportContractDeclaresStatus(t *testing.T) {
 	}
 	_, queue, found := strings.Cut(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n  /support/queue:\n")
 	queue, _, _ = strings.Cut(queue, "\n  /")
-	for _, want := range []string{"- in: query\n          name: status\n", "- open\n", "- answered\n", "- resolved\n"} {
+	for _, want := range []string{" in: query\n          name: status\n", "- open\n", "- answered\n", "- resolved\n"} {
 		if !found || !strings.Contains(queue, want) {
 			t.Errorf("the /support/queue contract lacks %q", want)
 		}

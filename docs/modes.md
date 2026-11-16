@@ -44,7 +44,8 @@ go run ./cmd/demo block -local [-unblock] cust-002
 ## Moving the APIs behind APIWard
 
 - Each API has an OpenAPI 3.1 description in `openapi/`: `inventory`, `orders`, `reports`, `support` and `accounts` `.openapi.yaml`.
-- They describe the endpoints, sign-in and request bodies, and carry Fetch's own `x-fetch-roles` and `x-fetch-access` members.
+- They describe the endpoints, sign-in, query parameters and request bodies, and carry Fetch's own `x-fetch-roles` and `x-fetch-access` members.
+- APIWard's schema checks cover headers and request bodies, not query parameters: the import report lists each query parameter as not enforced, and the service itself refuses an unknown or invalid one (`400 invalid_query`).
 - APIWard's import passes `x-fetch-*` members through unread and takes no roles or rate limits from a description, so an administrator sets those in the Dashboard.
 
 ```

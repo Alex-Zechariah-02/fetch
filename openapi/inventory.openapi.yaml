@@ -5,6 +5,7 @@ components:
       scheme: bearer
       type: http
 info:
+  description: Merchants, categories, items and stock of the Fetch shop.
   title: Fetch Inventory API
   version: "1"
 openapi: 3.1.0
@@ -18,7 +19,8 @@ paths:
     get:
       operationId: item
       parameters:
-        - in: path
+        - description: The item ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -28,7 +30,8 @@ paths:
     patch:
       operationId: item.update
       parameters:
-        - in: path
+        - description: The item ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -56,13 +59,45 @@ paths:
   /inventory/merchants:
     get:
       operationId: merchants
+      parameters:
+        - description: Only merchants of this section.
+          in: query
+          name: section
+          required: false
+          schema:
+            enum:
+              - food
+              - mart
+            type: string
+        - description: A category ID from /inventory/categories.
+          in: query
+          name: category
+          required: false
+          schema:
+            type: string
+        - description: Most merchants on a page.
+          in: query
+          name: limit
+          required: false
+          schema:
+            default: 20
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: The last merchant ID of the previous page.
+          in: query
+          name: after
+          required: false
+          schema:
+            type: string
       security: []
       x-fetch-access: allow
   /inventory/merchants/{rest}:
     get:
       operationId: merchant
       parameters:
-        - in: path
+        - description: The merchant ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -72,13 +107,32 @@ paths:
   /inventory/search:
     get:
       operationId: search
+      parameters:
+        - description: Text to find in item names, descriptions and merchant names.
+          in: query
+          name: q
+          required: true
+          schema:
+            maxLength: 40
+            minLength: 2
+            type: string
+        - description: Only items of this section.
+          in: query
+          name: section
+          required: false
+          schema:
+            enum:
+              - food
+              - mart
+            type: string
       security: []
       x-fetch-access: allow
   /inventory/stock/{rest}:
     get:
       operationId: stock.read
       parameters:
-        - in: path
+        - description: The item ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -92,7 +146,8 @@ paths:
     patch:
       operationId: stock.adjust
       parameters:
-        - in: path
+        - description: The item ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -104,6 +159,7 @@ paths:
               additionalProperties: false
               properties:
                 delta:
+                  description: The stock change; zero is refused (422 invalid_change).
                   maximum: 100
                   minimum: -100
                   type: integer

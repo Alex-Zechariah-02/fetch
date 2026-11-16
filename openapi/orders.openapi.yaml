@@ -5,6 +5,7 @@ components:
       scheme: bearer
       type: http
 info:
+  description: Checkout, order lists, the order lifecycle and the wallet of the Fetch shop.
   title: Fetch Orders API
   version: "1"
 openapi: 3.1.0
@@ -12,6 +13,35 @@ paths:
   /orders:
     get:
       operationId: all
+      parameters:
+        - description: Only orders with this status.
+          in: query
+          name: status
+          required: false
+          schema:
+            enum:
+              - placed
+              - accepted
+              - ready
+              - picked_up
+              - delivered
+              - cancelled
+            type: string
+        - description: Most orders on a page.
+          in: query
+          name: limit
+          required: false
+          schema:
+            default: 20
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: The last order ID of the previous page.
+          in: query
+          name: after
+          required: false
+          schema:
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow
@@ -118,7 +148,8 @@ paths:
     post:
       operationId: accept
       parameters:
-        - in: path
+        - description: The order ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -132,7 +163,8 @@ paths:
     post:
       operationId: cancel
       parameters:
-        - in: path
+        - description: The order ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -146,7 +178,8 @@ paths:
     post:
       operationId: deliver
       parameters:
-        - in: path
+        - description: The order ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -160,7 +193,8 @@ paths:
     get:
       operationId: detail
       parameters:
-        - in: path
+        - description: The order ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -185,6 +219,20 @@ paths:
   /orders/merchant:
     get:
       operationId: merchant
+      parameters:
+        - description: Only orders with this status.
+          in: query
+          name: status
+          required: false
+          schema:
+            enum:
+              - placed
+              - accepted
+              - ready
+              - picked_up
+              - delivered
+              - cancelled
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow
@@ -193,6 +241,22 @@ paths:
   /orders/mine:
     get:
       operationId: mine
+      parameters:
+        - description: Most orders on a page.
+          in: query
+          name: limit
+          required: false
+          schema:
+            default: 20
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: The last order ID of the previous page.
+          in: query
+          name: after
+          required: false
+          schema:
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow
@@ -202,7 +266,8 @@ paths:
     post:
       operationId: pickup
       parameters:
-        - in: path
+        - description: The order ID.
+          in: path
           name: rest
           required: true
           schema:
@@ -215,6 +280,13 @@ paths:
   /orders/quote:
     get:
       operationId: quote
+      parameters:
+        - description: The merchant ID to quote delivery from.
+          in: query
+          name: merchant
+          required: true
+          schema:
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow
@@ -224,7 +296,8 @@ paths:
     post:
       operationId: ready
       parameters:
-        - in: path
+        - description: The order ID.
+          in: path
           name: rest
           required: true
           schema:

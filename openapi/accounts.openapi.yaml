@@ -5,6 +5,7 @@ components:
       scheme: bearer
       type: http
 info:
+  description: Sign-in, token refresh and the signed-in profile of the Fetch shop.
   title: Fetch Accounts API
   version: "1"
 openapi: 3.1.0

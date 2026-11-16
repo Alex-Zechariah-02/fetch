@@ -5,6 +5,7 @@ components:
       scheme: bearer
       type: http
 info:
+  description: Sales reports of the Fetch shop for merchants and operations staff.
   title: Fetch Reports API
   version: "1"
 openapi: 3.1.0
@@ -12,6 +13,21 @@ paths:
   /reports/merchant:
     get:
       operationId: merchant
+      parameters:
+        - description: First day (UTC); without it, 89 days before to.
+          in: query
+          name: from
+          required: false
+          schema:
+            format: date
+            type: string
+        - description: Last day (UTC), not before from; without it, today.
+          in: query
+          name: to
+          required: false
+          schema:
+            format: date
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow
@@ -20,6 +36,21 @@ paths:
   /reports/sales:
     get:
       operationId: sales
+      parameters:
+        - description: First day (UTC); without it, 89 days before to.
+          in: query
+          name: from
+          required: false
+          schema:
+            format: date
+            type: string
+        - description: Last day (UTC), not before from; without it, today.
+          in: query
+          name: to
+          required: false
+          schema:
+            format: date
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow
@@ -28,6 +59,21 @@ paths:
   /reports/summary:
     get:
       operationId: summary
+      parameters:
+        - description: First day (UTC); without it, 89 days before to.
+          in: query
+          name: from
+          required: false
+          schema:
+            format: date
+            type: string
+        - description: Last day (UTC), not before from; without it, today.
+          in: query
+          name: to
+          required: false
+          schema:
+            format: date
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow
@@ -36,6 +82,30 @@ paths:
   /reports/top-items:
     get:
       operationId: top-items
+      parameters:
+        - description: First day (UTC); without it, 89 days before to.
+          in: query
+          name: from
+          required: false
+          schema:
+            format: date
+            type: string
+        - description: Last day (UTC), not before from; without it, today.
+          in: query
+          name: to
+          required: false
+          schema:
+            format: date
+            type: string
+        - description: Most items in the report.
+          in: query
+          name: limit
+          required: false
+          schema:
+            default: 20
+            maximum: 100
+            minimum: 1
+            type: integer
       security:
         - bearer: []
       x-fetch-access: allow
