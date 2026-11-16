@@ -145,7 +145,47 @@ test.describe.serial('Staff and accounts on the real services', () => {
     await expect(stale.getByTitle(/^Full reference [0-9a-f]{32}$/)).toBeVisible()
     await expect(board).toBeVisible()
     await shot(rider1, 'flows-07-refresh-refused')
+    // Where the browser refuses to copy, the full reference is shown to select.
+    await rider1.evaluate(() => {
+      navigator.clipboard.writeText = () => Promise.reject(new Error('refused'))
+    })
+    await stale.getByRole('button', { name: 'Copy full reference' }).click()
+    await expect(stale.getByText('Copying isn’t available here.')).toBeVisible()
+    await expect(stale.getByText(/^[0-9a-f]{32}$/)).toBeVisible()
     await api.resolve('rollback')
     await expect(stale).toHaveCount(0)
+  })
+
+  test('the menu says when its stock read is refused, and a price changed elsewhere replaces an untouched field but never an edit', async ({ browser }) => {
+    const merchant5 = await person(browser, 'merchant5@fetch.test')
+    const baseline = JSON.parse(demo.file('baseline.json'))
+    baseline.permits = baseline.permits.filter((permit: { role: string; operation: string }) => !(permit.role === 'MERCHANT' && permit.operation === 'inventory.stock.read'))
+    await api.activate(await api.stage(JSON.stringify(baseline)), 300)
+    await merchant5.goto(siteURL + '/merchant?view=menu', { waitUntil: 'networkidle' })
+    const bread = merchant5.getByRole('listitem').filter({ hasText: 'Wholemeal Bread' })
+    await expect(bread.getByText('Stock not loaded')).toBeVisible()
+    await api.resolve('rollback')
+    await bread.getByRole('button', { name: 'Try again' }).click()
+    await expect(bread.getByText(/in stock/)).toBeVisible()
+
+    // Another session sets the price; the menu rereads after the next change.
+    const token = demo.token('merchant-005')
+    const setPrice = async (sen: number) => {
+      const response = await fetch(siteURL + '/inventory/items/ITM-505', { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ price_sen: sen }) })
+      expect(response.status).toBe(200)
+    }
+    const adjust = async () => {
+      await bread.getByLabel('Change stock by').fill('1')
+      await bread.getByRole('button', { name: 'Adjust' }).click()
+      await expect(bread.getByText('Stock updated.')).toBeVisible()
+    }
+    await setPrice(520)
+    await adjust()
+    await expect(bread.getByLabel('Price in ringgit')).toHaveValue('5.20')
+    await bread.getByLabel('Price in ringgit').fill('6.00')
+    await setPrice(530)
+    await adjust()
+    await expect(bread.getByLabel('Price in ringgit')).toHaveValue('6.00')
+    await expect(bread.getByText('The menu now shows RM 5.30. Save to replace it with RM 6.00.')).toBeVisible()
   })
 })

@@ -1,4 +1,6 @@
-import { useState, type ReactNode } from 'react'
+// Shared pieces of the partner workspaces: titles, view tabs, one write at a
+// time with its outcome, order cards and board columns.
+import { useRef, useState, type ReactNode } from 'react'
 import { outcomeOfWrite, type Answer } from '../lib/api'
 import { rm, time, reference } from '../lib/format'
 import { describe, type Problem, type Write } from '../lib/messages'
@@ -41,19 +43,26 @@ export function Tabs({ tabs, current, href }: { tabs: { id: string; label: strin
   )
 }
 
-// useAction runs one write at a time for a card and describes its outcome.
-// It never resends: after an unknown outcome the person checks first.
+// useAction runs one write at a time across every card that shares it and
+// describes its outcome; blocked(key) tells the other cards to disable their
+// buttons meanwhile. It never resends: after an unknown outcome the person
+// checks first.
 export function useAction(onDone: () => void) {
   const [busy, setBusy] = useState<string | null>(null)
+  // running guards against a second click before busy reaches the screen.
+  const running = useRef(false)
   const [problem, setProblem] = useState<{ key: string; problem: Problem } | null>(null)
   // done names the last action that succeeded, for a brief "Saved" message.
   const [done, setDone] = useState<string | null>(null)
+  const blocked = (key: string) => busy !== null && busy !== key
   const run = async (key: string, path: string, write: Write, body?: unknown) => {
-    if (busy) return
+    if (running.current) return
+    running.current = true
     setBusy(key)
     setProblem(null)
     setDone(null)
     const answer: Answer<unknown> = await call({ method: body === undefined ? 'POST' : 'PATCH', path, body })
+    running.current = false
     setBusy(null)
     if (answer.kind === 'cancelled') return
     if (outcomeOfWrite(answer) === 'done') {
@@ -64,7 +73,7 @@ export function useAction(onDone: () => void) {
     }
     onDone()
   }
-  return { busy, problem, done, run }
+  return { busy, blocked, problem, done, run }
 }
 
 // OrderCard shows one order as the person looking at it needs it: a shop

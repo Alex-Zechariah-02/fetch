@@ -1,3 +1,5 @@
+// Notices: a problem in plain words with who answered and the reference, a
+// failed refresh over stale data, loading skeletons and empty states.
 import { useState, type ReactNode } from 'react'
 import { Check, Copy, Question, ShieldWarning, WarningCircle } from '@phosphor-icons/react'
 import { describe, type Problem } from '../lib/messages'
@@ -17,22 +19,34 @@ export function shortRef(value: string): string {
 // RefTag shows the reference the gateway put on an answer in a short,
 // readable form; the full reference is its tooltip and what the copy button
 // copies, so support can still look it up exactly.
+// When the browser cannot copy (no clipboard access, or the write is
+// refused), the tag shows the full reference instead, ready to select.
 export function RefTag({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false)
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const copy = () => {
-    navigator.clipboard.writeText(value).then(
-      () => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 1600)
-      },
-      () => setCopied(false),
+    const done = () => {
+      setState('copied')
+      setTimeout(() => setState((s) => (s === 'copied' ? 'idle' : s)), 1600)
+    }
+    try {
+      navigator.clipboard.writeText(value).then(done, () => setState('failed'))
+    } catch {
+      setState('failed')
+    }
+  }
+  if (state === 'failed') {
+    return (
+      <span className="inline-flex max-w-full flex-col gap-0.5 rounded-md bg-sunken px-2 py-1 text-xs text-ink-2 ring-1 ring-line" role="status">
+        <span>Copying isn’t available here. Select the reference to copy it:</span>
+        <span className="font-semibold break-all text-ink tabular-nums select-all">{value}</span>
+      </span>
     )
   }
   return (
     <span className="inline-flex max-w-full items-center gap-1 rounded-md bg-sunken py-0.5 pr-0.5 pl-2 text-xs text-ink-2 ring-1 ring-line" title={`Full reference ${value}`}>
       Ref <span className="min-w-0 font-semibold tracking-tight break-all text-ink tabular-nums">{shortRef(value)}</span>
-      <button type="button" onClick={copy} className="relative flex size-6 items-center justify-center rounded text-ink-3 hover:bg-surface hover:text-ink" aria-label={copied ? 'Full reference copied' : 'Copy full reference'}>
-        {copied ? <Check size={13} weight="bold" /> : <Copy size={13} />}
+      <button type="button" onClick={copy} className="relative flex size-6 items-center justify-center rounded text-ink-3 hover:bg-surface hover:text-ink" aria-label={state === 'copied' ? 'Full reference copied' : 'Copy full reference'}>
+        {state === 'copied' ? <Check size={13} weight="bold" /> : <Copy size={13} />}
       </button>
     </span>
   )

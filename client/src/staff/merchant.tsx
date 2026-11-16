@@ -1,3 +1,5 @@
+// The merchant workspace: the order board, the menu with prices, availability
+// and stock, and the sales report.
 import { useState, type FormEvent } from 'react'
 import { ChartBar, CookingPot, Storefront } from '@phosphor-icons/react'
 import { day, rm } from '../lib/format'
@@ -59,13 +61,13 @@ function OrdersBoard() {
         <Column title="New" hint="Accept to start preparing." count={placed.length}>
           {placed.length === 0 && <p className="px-2 pb-2 text-sm text-ink-3">No new orders. New ones appear here within seconds.</p>}
           {placed.map((o) => (
-            <OrderCard key={o.id} order={o} view="shop" problem={cardProblem(o.id)} action={<Button block busyLabel="Accepting…" busy={action.busy === o.id} onClick={() => void action.run(o.id, `/orders/accept/${encodeURIComponent(o.id)}`, { object: `accepting ${o.id}`, done: 'accepted', check: 'Wait for the board to refresh' })}>Accept order</Button>} />
+            <OrderCard key={o.id} order={o} view="shop" problem={cardProblem(o.id)} action={<Button block busyLabel="Accepting…" busy={action.busy === o.id} disabled={action.blocked(o.id)} onClick={() => void action.run(o.id, `/orders/accept/${encodeURIComponent(o.id)}`, { object: `accepting ${o.id}`, done: 'accepted', check: 'Wait for the board to refresh' })}>Accept order</Button>} />
           ))}
         </Column>
         <Column title="Being prepared" hint="Mark ready when it’s packed." count={accepted.length}>
           {accepted.length === 0 && <p className="px-2 pb-2 text-sm text-ink-3">Nothing in the kitchen.</p>}
           {accepted.map((o) => (
-            <OrderCard key={o.id} order={o} view="shop" problem={cardProblem(o.id)} action={<Button block busyLabel="Updating…" busy={action.busy === o.id} onClick={() => void action.run(o.id, `/orders/ready/${encodeURIComponent(o.id)}`, { object: `marking ${o.id} ready`, done: 'marked ready', check: 'Wait for the board to refresh' })}>Mark ready for pickup</Button>} />
+            <OrderCard key={o.id} order={o} view="shop" problem={cardProblem(o.id)} action={<Button block busyLabel="Updating…" busy={action.busy === o.id} disabled={action.blocked(o.id)} onClick={() => void action.run(o.id, `/orders/ready/${encodeURIComponent(o.id)}`, { object: `marking ${o.id} ready`, done: 'marked ready', check: 'Wait for the board to refresh' })}>Mark ready for pickup</Button>} />
           ))}
         </Column>
         <Column title="Waiting for a rider" hint="A rider picks these up from the job board." count={ready.length}>
@@ -85,11 +87,16 @@ function MenuEditor({ query }: { query: ReturnType<typeof useQuery<MerchantAnswe
   const items = query.data.menu.flatMap((g) => g.items)
   if (items.length === 0) return <Empty icon={<CookingPot size={26} weight="bold" />} title="Your menu is empty" body="Items are added through Fetch’s merchant team for now." />
   return (
-    <ul className="flex flex-col gap-3">
-      {items.map((item) => <MenuRow key={item.id} item={item} section={query.data!.merchant.section} onChanged={query.reload} />)}
-    </ul>
+    <>
+      <RefreshProblem query={query} className="mb-4" />
+      <ul className="flex flex-col gap-3">
+        {items.map((item) => <MenuRow key={item.id} item={item} section={query.data!.merchant.section} onChanged={query.reload} />)}
+      </ul>
+    </>
   )
 }
+
+const ringgit = (sen: number) => (sen / 100).toFixed(2)
 
 function MenuRow({ item, section, onChanged }: { item: Item; section: 'food' | 'mart'; onChanged: () => void }) {
   const stocked = item.stock_state !== 'made_to_order'
@@ -98,7 +105,15 @@ function MenuRow({ item, section, onChanged }: { item: Item; section: 'food' | '
     onChanged()
     stock.reload()
   })
-  const [price, setPrice] = useState((item.price_sen / 100).toFixed(2))
+  const [price, setPrice] = useState(ringgit(item.price_sen))
+  // When the menu reloads with another price, an untouched field follows it;
+  // an edit in progress is kept and the new price is named beside it.
+  const [loaded, setLoaded] = useState(item.price_sen)
+  if (item.price_sen !== loaded) {
+    if (price === ringgit(loaded)) setPrice(ringgit(item.price_sen))
+    setLoaded(item.price_sen)
+  }
+  const edited = price !== ringgit(item.price_sen)
   const [delta, setDelta] = useState('')
   const priceSen = Math.round(Number(price) * 100)
   const priceValid = /^\d{1,4}(\.\d{1,2})?$/.test(price) && priceSen >= 50 && priceSen <= 100000
@@ -130,7 +145,7 @@ function MenuRow({ item, section, onChanged }: { item: Item; section: 'food' | '
           <span className="text-ink-3">RM</span>
           <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" aria-label="Price in ringgit" aria-invalid={!priceValid || undefined} className="w-16 bg-transparent pl-1.5 text-right font-semibold tabular-nums outline-none" />
         </label>
-        <Button type="submit" size="sm" variant="secondary" busy={action.busy === 'price'} busyLabel="Saving" disabled={!priceValid || priceSen === item.price_sen}>Save</Button>
+        <Button type="submit" size="sm" variant="secondary" busy={action.busy === 'price'} busyLabel="Saving" disabled={!priceValid || priceSen === item.price_sen || action.blocked('price')}>Save</Button>
       </form>
       <label className="flex cursor-pointer items-center gap-2.5 text-sm font-semibold">
         <span className="relative inline-flex">
@@ -142,13 +157,20 @@ function MenuRow({ item, section, onChanged }: { item: Item; section: 'food' | '
       </label>
       {stocked ? (
         <form onSubmit={adjust} className="flex items-center gap-2" aria-label={`Stock of ${item.name}`}>
-          <span className="text-sm text-ink-2 tabular-nums">{stock.data ? <><span className="font-bold text-ink">{stock.data.stock}</span> in stock{stock.data.reserved ? ` · ${stock.data.reserved} reserved` : ''}</> : '…'}</span>
+          {stock.data ? (
+            <span className="text-sm text-ink-2 tabular-nums"><span className="font-bold text-ink">{stock.data.stock}</span> in stock{stock.data.reserved ? ` · ${stock.data.reserved} reserved` : ''}{stock.answer?.kind !== 'ok' && !stock.loading && <span className="text-warn"> · may be out of date</span>}</span>
+          ) : stock.answer && !stock.loading ? (
+            <span className="flex items-center gap-1 text-sm text-bad">Stock not loaded<Button type="button" size="sm" variant="ghost" onClick={stock.reload}>Try again</Button></span>
+          ) : (
+            <span className="text-sm text-ink-3" role="status">Loading stock…</span>
+          )}
           <input value={delta} onChange={(e) => setDelta(e.target.value.replace(/[^\d-]/g, '').slice(0, 4))} inputMode="numeric" placeholder="+10" aria-label="Change stock by" className="h-10 w-16 rounded-xl bg-sunken px-2 text-right text-sm font-semibold tabular-nums ring-1 ring-line outline-none focus:ring-2 focus:ring-brand" />
-          <Button type="submit" size="sm" variant="secondary" busy={action.busy === 'stock'} busyLabel="Saving" disabled={!deltaValid}>Adjust</Button>
+          <Button type="submit" size="sm" variant="secondary" busy={action.busy === 'stock'} busyLabel="Saving" disabled={!deltaValid || action.blocked('stock')}>Adjust</Button>
         </form>
       ) : (
         <span className="text-sm text-ink-3">Made to order</span>
       )}
+      {edited && item.price_sen !== priceSen && action.busy !== 'price' && <p className="text-xs text-ink-2 md:col-span-4">The menu now shows {rm(item.price_sen)}. Save to replace it with RM {price}.</p>}
       <p className="text-xs font-semibold text-ok md:col-span-4 empty:hidden" role="status">
         {action.done === 'price' ? 'New price saved.' : action.done === 'available' ? 'Now available to order.' : action.done === 'unavailable' ? 'Marked unavailable.' : action.done === 'stock' ? 'Stock updated.' : ''}
       </p>
