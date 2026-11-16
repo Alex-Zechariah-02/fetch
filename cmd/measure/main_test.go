@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -18,10 +19,15 @@ func TestMeasurementArgumentRefusals(t *testing.T) {
 }
 
 func TestPairedMeasurementChecksIdentityAndAnswers(t *testing.T) {
+	// The handler runs on server goroutines; the lock orders its writes
+	// before the test's reads.
+	var lock sync.Mutex
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "/orders/wallet")
+		lock.Lock()
 		calls = append(calls, name)
+		lock.Unlock()
 		if name == "direct" {
 			if r.Header.Get("Authorization") != "" || r.Header.Get("X-Gateway-Subject") != "cust-001" || r.Header.Get("X-Gateway-Roles") != "CUSTOMER" {
 				t.Error("direct baseline identity incorrect")
@@ -38,6 +44,8 @@ func TestPairedMeasurementChecksIdentityAndAnswers(t *testing.T) {
 	defer server.Close()
 	conditions := []condition{{"direct", server.URL + "/direct", ""}, {"builtin", server.URL + "/builtin", "token-builtin"}, {"gateway", server.URL + "/gateway", "token-gateway"}}
 	result, err := measure(server.Client(), conditions, "cust-001", 3)
+	lock.Lock()
+	defer lock.Unlock()
 	if err != nil || result.Samples != 3 || len(calls) != 3*(3+warmupRounds) {
 		t.Fatalf("rotating counts %d: %v", len(calls), err)
 	}

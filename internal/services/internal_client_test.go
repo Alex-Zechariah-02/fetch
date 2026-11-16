@@ -3,6 +3,7 @@ package services
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
@@ -31,9 +32,10 @@ func TestInternalServiceOrigins(t *testing.T) {
 }
 
 func TestInternalServiceRequestTarget(t *testing.T) {
-	var arrived int
+	// Counted on a server goroutine and read on the test's.
+	var arrived atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		arrived++
+		arrived.Add(1)
 		if r.RequestURI != "/internal/merchants/MER-001" || r.Method != http.MethodGet || r.Header.Get("X-Service-Key") != string(testSecret) {
 			t.Errorf("internal request: %s %s, credential matches %v", r.Method, r.RequestURI, r.Header.Get("X-Service-Key") == string(testSecret))
 		}
@@ -46,7 +48,7 @@ func TestInternalServiceRequestTarget(t *testing.T) {
 	}
 	defer client.close()
 	code, _, err := client.call(t.Context(), http.MethodGet, "/internal/merchants/MER-001", nil, "")
-	if err != nil || code != http.StatusNoContent || arrived != 1 {
-		t.Fatalf("internal call: status %d, arrived %d, error %v", code, arrived, err)
+	if err != nil || code != http.StatusNoContent || arrived.Load() != 1 {
+		t.Fatalf("internal call: status %d, arrived %d, error %v", code, arrived.Load(), err)
 	}
 }

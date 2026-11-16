@@ -74,6 +74,8 @@ func run(args []string, output io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	// 50 rounds and the warm-ups stay under the wallet's 60 calls a minute an
+	// account; offset 50000 keeps the highest port (9505) below 65536.
 	if flags.NArg() != 0 || *samples < 1 || *samples > 50 || *builtin < -1 || *builtin > 50000 {
 		return errors.New("use 1 to 50 samples, a built-in offset of -1 to 50000 and no positional arguments")
 	}
@@ -137,6 +139,8 @@ func login(client *http.Client, origin, email string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("Accounts login at %s did not answer: %w", origin, err)
 	}
+	// A sign-in answer is a token and a profile; 64 KiB (one byte more read
+	// to see an overrun) bounds a wrong service's reply.
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 65537))
 	response.Body.Close()
 	var reply struct {
@@ -214,6 +218,7 @@ func wallet(client *http.Client, c condition, subject string, clock sampleClock)
 	if err != nil {
 		return 0, 0, fmt.Errorf("wallet request (%s) did not answer: %w", c.name, err)
 	}
+	// A wallet answer is one balance; above 4 KiB it is not the wallet.
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 4097))
 	closeErr := response.Body.Close()
 	ended, clockErr := clock.read()
