@@ -72,9 +72,8 @@ func (d *orders) create(r *http.Request, body []byte) result {
 		return res
 	}
 	delete(d.placing, scope)
-	// A server failure is not kept, so a retry with the key tries again; the
-	// reservation key derives from the checkout key, so Inventory replays a
-	// reservation it already made.
+	// A server failure is not kept, so a retry with the key tries again
+	// under a new reservation; the failed attempt's own is released.
 	if key != "" && res.status < 500 {
 		encoded, _ := json.Marshal(res.body)
 		// Answers are kept at least keyLife (recent), so a retry within it
@@ -131,10 +130,11 @@ func (d *orders) place(r *http.Request, body []byte, key string) result {
 		return failure(400, "invalid_request", "Check the items, delivery address and payment choice.", "")
 	}
 	subject := r.Header.Get("X-Gateway-Subject")
-	if key == "" {
-		key = randomID()
-	}
-	hash := sha256.Sum256([]byte(subject + ":" + key))
+	// Each attempt reserves under its own identity: a failed attempt's
+	// reservation is released and its identity stays refused in Inventory
+	// (so a delayed request cannot reserve again), and a retry with the same
+	// checkout key must still be able to reserve.
+	hash := sha256.Sum256([]byte(subject + ":" + key + ":" + randomID()))
 	reservationKey := hex.EncodeToString(hash[:])
 	data, _ := json.Marshal(purchase{request.Merchant, request.Items})
 	var status int

@@ -16,7 +16,7 @@ import (
 
 func TestReservationTimeoutCompensation(t *testing.T) {
 	inventory := newService(t, Config{Name: "inventory", Secret: testSecret})
-	var refuseRelease atomic.Bool
+	var refuseRelease, prompt atomic.Bool
 	refuseRelease.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Service-Key") != string(testSecret) || r.Header.Get("Authorization") != "" {
@@ -26,7 +26,7 @@ func TestReservationTimeoutCompensation(t *testing.T) {
 			w.WriteHeader(503)
 			return
 		}
-		if r.Method == "POST" && r.URL.Path == "/internal/reservations" {
+		if r.Method == "POST" && r.URL.Path == "/internal/reservations" && !prompt.Load() {
 			// Apply a real reservation, then withhold its HTTP acknowledgement.
 			recorded := httptest.NewRecorder()
 			inventory.ServeHTTP(recorded, r)
@@ -62,6 +62,13 @@ func TestReservationTimeoutCompensation(t *testing.T) {
 	w = serviceRequest(orderService, "POST", "/orders", checkoutBody, "cust-003", "CUSTOMER", "checkout-timeout-01")
 	if w.Code != 503 {
 		t.Fatalf("failed checkout identity unexpectedly re-applied: %d %s", w.Code, w.Body)
+	}
+	// Once Inventory answers in time, the same checkout key places the order:
+	// the released reservations of the failed attempts do not block it.
+	prompt.Store(true)
+	w = serviceRequest(orderService, "POST", "/orders", checkoutBody, "cust-003", "CUSTOMER", "checkout-timeout-01")
+	if w.Code != 201 {
+		t.Fatalf("retry after failed attempts: %d %s", w.Code, w.Body)
 	}
 }
 
