@@ -35,9 +35,9 @@ type tlsProfile struct {
 
 // upFetch is demo up -role fetch: it builds the services, Accounts and the
 // shop (or takes them from programs), makes a new folder in home for this run
-// and serves everything on bindIP until interrupted. Services restart from
-// seed on every run; with measure, in measurement mode.
-func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
+// and serves everything on bindIP, with checks, until interrupted. Services
+// restart from seed on every run; with measure, in measurement mode.
+func upFetch(home, bindIP, certs, programs string, checks hostChecks, measure, stdin bool) error {
 	bind, err := netip.ParseAddr(bindIP)
 	if err != nil || bind.IsUnspecified() {
 		return errors.New("-role fetch takes -bind: this host's IP address, which the gateway connects to")
@@ -55,7 +55,10 @@ func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 		Certificate: filepath.Join(folder, serverCertFile),
 		Key:         filepath.Join(folder, serverKeyFile),
 		ClientCA:    filepath.Join(folder, caFile),
-	}, keySet: filepath.Join(folder, assertionSetFile), measure: measure}
+	}, measure: measure}
+	if checks == gatewayChecks {
+		host.keySet = filepath.Join(folder, assertionSetFile)
+	}
 	site := deployedAddress(siteListen, bind)
 	// The Inventory and Orders loopback addresses carry the internal calls.
 	addresses := []string{site, fetchServices[0].listen, fetchServices[1].listen}
@@ -75,7 +78,10 @@ func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 		return err
 	}
 	dir := filepath.Join(home, "fetch")
-	files := map[string][]byte{secretFile: newSecret(), signingFile: signingSettings(kid, filepath.Join(folder, privateKeyFile))}
+	files, err := hostFiles(dir, folder, kid, checks)
+	if err != nil {
+		return err
+	}
 	if err := prepareFolder(dir, files); err != nil {
 		return err
 	}
@@ -86,9 +92,8 @@ func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 	ctx, stop := stopContext(stdin)
 	defer stop()
 	first, last := deployedAddress(fetchServices[0].listen, bind), deployedAddress(fetchServices[len(fetchServices)-1].listen, bind)
-	banner := fmt.Sprintf("Fetch admits only the gateway's client certificate, and its four APIs only requests the gateway signed:\n  APIs and Accounts: https://%s to %s\n  shop:              https://%s/\n"+
-		"On the gateway host: go run ./cmd/demo up -role gateway -fetch %s -certs <gateway folder>\nPress Ctrl+C to stop.", first, last, site, bind)
-	return serveFetch(ctx, dir, listener, website(os.DirFS(shop)), serviceBinary, accountsBinary, host, false, banner)
+	banner := hostBanner(checks, first, last, site, bind.String())
+	return serveFetch(ctx, dir, listener, website(os.DirFS(shop)), serviceBinary, accountsBinary, host, checks == builtinChecks, banner)
 }
 
 // gatewayRole is demo up -role gateway: the gateway alone, with its state in

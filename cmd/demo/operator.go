@@ -26,18 +26,23 @@ func accountLogin(origin, email string) (string, time.Time, error) {
 	// Five seconds: an Accounts that does not answer fails the sign-in instead of hanging.
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: refuseRedirect}
 	defer client.CloseIdleConnections()
-	return loginWithClient(client, origin, email)
+	return loginWithClient(client, origin, email, "")
 }
 
 func refuseRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-func loginWithClient(client *http.Client, origin, email string) (string, time.Time, error) {
+// loginWithClient signs email in at the Accounts at origin; visitor, when
+// not empty, is the client address X-Forwarded-For names.
+func loginWithClient(client *http.Client, origin, email, visitor string) (string, time.Time, error) {
 	request, err := http.NewRequest("POST", origin+"/accounts/login", bytes.NewReader(marshal(map[string]string{"email": email, "password": "FetchDemo2026!"})))
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	request.GetBody = nil
 	request.Header.Set("Content-Type", "application/json")
+	if visitor != "" {
+		request.Header.Set("X-Forwarded-For", visitor)
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("Accounts did not answer: %w", err)
@@ -101,7 +106,7 @@ func attack(args []string) error {
 	if *scenario == "flood-orders" {
 		// This limit is per account: a different source address alone would
 		// still consume Customer 1's checkout budget.
-		token, _, err = loginWithClient(client, origin, "customer2@fetch.test")
+		token, _, err = loginWithClient(client, origin, "customer2@fetch.test", "")
 		if err != nil {
 			return err
 		}

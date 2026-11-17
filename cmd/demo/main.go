@@ -91,7 +91,7 @@ const usage = `usage:
   demo up     -local [-home H] [-stdin]   (no gateway: built-in protection in each API)
   demo block  -local [-home H] [-unblock] ACCOUNT   (blocked list of every API of demo up -local)
   demo certs  -out DIR -fetch IP -gateway NAME[,NAME]   (files for two hosts)
-  demo up     -role fetch -bind IP -certs DIR [-programs DIR] [-measure] [-home H] [-stdin]
+  demo up     -role fetch -bind IP -certs DIR [-standalone | -local] [-programs DIR] [-measure] [-home H] [-stdin]
   demo up     -role gateway -fetch IP -certs DIR [-tls-cert F -tls-key F] [-home H] [-fresh] [-stdin] [-apiward DIR]
   demo prepare -certs DIR   (a new gateway from the APIWard image: administrator and baseline)
   demo health   (the Fetch services on this host answer)
@@ -99,6 +99,7 @@ const usage = `usage:
   demo setup  -dir D -web W -gateway G [-admin NAME]
   demo run    -dir D -web W -gateway G -services S -accounts A [-stdin]
   demo token  -dir D -subject ID [-ttl 15m]
+  demo tokens -accounts IP:PORT -certs DIR -out F   (load accounts' tokens for a load run)
   demo reset  -dir D
   demo attack -dir D -scenario flood-search|flood-login|flood-orders [-from 127.0.0.50] [-count N]
   demo attack -target https://HOST:PORT -scenario ... [-ca F] [-count N]
@@ -126,6 +127,7 @@ func main() {
 		"setup":   setup,
 		"run":     run,
 		"token":   token,
+		"tokens":  tokens,
 		"reset":   reset,
 		"events":  events,
 		"attack":  attack,

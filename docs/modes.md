@@ -40,6 +40,7 @@ go run ./cmd/demo block -local [-unblock] cust-002
 - Each run makes a new folder `local` in the demo home with a new signing key, the public key file every API trusts (`keys.json`), an empty `blocked.json` and the security logs.
 - `block -local` changes `blocked.json` and then each running API's list through its control listener; every API is tried and each one that did not take the list is named.
 - Changing a role, a rate or a schema means editing `internal/services/rules.go` and restarting the APIs; a new signing key means restarting every API.
+- `demo up -role fetch -local` runs the same checks on a Fetch host's `-bind` address over TLS, without the demo's proxy, for measurements ([programs.md](programs.md)).
 
 ## Moving the APIs behind APIWard
 

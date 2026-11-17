@@ -34,8 +34,8 @@ func up(args []string) error {
 	fresh := set.Bool("fresh", false, "delete the earlier demonstration state, including its administrator and policy, and start over")
 	stdin := set.Bool("stdin", false, "also stop when standard input closes")
 	apiward := set.String("apiward", "", "APIWard checkout that builds the gateway and the Dashboard (default: ../apiward beside this repository)")
-	standalone := set.Bool("standalone", false, "run the shop and services with no gateway: nothing is checked (unprotected)")
-	local := set.Bool("local", false, "run the shop and services with no gateway, each API checking requests itself (built-in protection)")
+	standalone := set.Bool("standalone", false, "run the shop and services with no gateway: nothing is checked (unprotected); with -role fetch, the APIs believe the identity headers (for measurement)")
+	local := set.Bool("local", false, "run the shop and services with no gateway, each API checking requests itself (built-in protection); also with -role fetch")
 	role := set.String("role", "", "run one host of a two-host setup: fetch (the shop, APIs and Accounts) or gateway (APIWard)")
 	bind := set.String("bind", "", "-role fetch: this host's IP address, which the gateway connects to")
 	fetch := set.String("fetch", "", "-role gateway: the Fetch host's IP address")
@@ -55,6 +55,15 @@ func up(args []string) error {
 		return err
 	}
 	switch {
+	case *role == "fetch":
+		if err := onlyFlags(set, "home", "stdin", "role", "bind", "certs", "programs", "measure", "standalone", "local"); err != nil {
+			return err
+		}
+		checks, err := checksOf(*standalone, *local)
+		if err != nil {
+			return err
+		}
+		return upFetch(homeDir, *bind, *certs, *programs, checks, *measure, *stdin)
 	case *standalone:
 		// The standalone mode has no gateway state to delete or build.
 		if err := onlyFlags(set, "home", "stdin", "standalone"); err != nil {
@@ -66,11 +75,6 @@ func up(args []string) error {
 			return err
 		}
 		return upLocal(homeDir, *stdin)
-	case *role == "fetch":
-		if err := onlyFlags(set, "home", "stdin", "role", "bind", "certs", "programs", "measure"); err != nil {
-			return err
-		}
-		return upFetch(homeDir, *bind, *certs, *programs, *measure, *stdin)
 	case *role == "gateway":
 		if err := onlyFlags(set, "home", "fresh", "stdin", "apiward", "role", "fetch", "certs", "tls-cert", "tls-key"); err != nil {
 			return err

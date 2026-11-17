@@ -51,6 +51,19 @@ The programs and folders of this repository, with their flags. Back to the [READ
 - `setup` writes `gateway.json`, complete baseline and deny-all policies, `service.secret`, a signing key pair and `accounts.json` into a new identified private directory, then installs the first administrator.
 - `run` starts the five services and the gateway, serves the shop's built files on the website upstream, reports protected admission separately from listening, and stops its own children gracefully.
 - `token` is an optional client of Accounts for a seeded subject; it cannot change the fixed 15-minute lifetime.
+- `up -role fetch -standalone` serves the APIs on the `-bind` address with nothing checked but the client certificate: they believe the identity headers a client sends. It exists to measure the unprotected floor; never use it to protect anything.
+- `up -role fetch -local` serves them on the `-bind` address with built-in protection ([modes.md](modes.md)), trusting the key Accounts signs with from the `-certs` folder.
+- Neither takes the gateway's assertion key, and each works with `-measure`.
+- `tokens -accounts IP:PORT -certs <gateway folder> -out F` signs in `load-0001` to `load-1000`, Merchant 5 and Merchant 6 at Accounts on this host and writes their tokens to `F` (mode 600) for a load run.
+- It connects from `127.0.0.1` with the gateway's client certificate and names a different visitor (`198.18.0.0/15`, the benchmarking range) for each sign-in, so built-in protection counts each one separately; it checks that the CA of the folder issued the server's certificate.
+
+## load
+
+- `load/run.js` is a k6 run of a mix at a constant arrival rate: `MODE=gateway` through the gateway, `local` straight to each API with the caller's token (built-in protection), `direct` straight to each API with identity headers (nothing checked).
+- Tokens come from the file `demo tokens` wrote (`TOKENS`), so sign-in is never timed.
+- The n-th request takes the n-th class of a cycle that spreads the classes by share, and the n-th account of a seeded shuffle, so no account's rate depends on chance.
+- `STEPS` (comma-separated rates) with `STEP` (duration) runs a capacity ramp instead of one rate; the header of `run.js` lists every setting.
+- Mixes: `mix.json` (`fetch-mix-1`, every class), `poster.json` (signed-in reads and the checkout, which answer the same in every mode) and `security.json` (that mix plus refusals, for modes with checks).
 - `reset` restores every service's seed and clears its receipts.
 - `events` prints request events from the gateway's active audit file (`-last` 1 to 10,000); retained rotated files are not searched.
 - `run` says at start when the state folder has no `assertion-keys.json`, as the APIs then answer direct requests.

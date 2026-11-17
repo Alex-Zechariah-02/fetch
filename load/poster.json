@@ -1,0 +1,12 @@
+{
+  "name": "fetch-mix-poster",
+  "note": "Shares are percent of requests. Only the classes that answer the same with no checks, with built-in protection and behind the gateway: signed-in reads and the checkout, as customer = load-0001 to load-0999. Left out of fetch-mix-1: public reads (counted per client address, and a load generator is one address), refusals (nothing refuses with no checks) and the merchant stock read (two merchant accounts would pass its per-account rate). Never change this file; write a new name instead.",
+  "kinds": [
+    {"share": 40, "class": "read", "method": "GET", "path": "/orders/mine", "as": "customer", "expect": 200},
+    {"share": 40, "class": "read", "method": "GET", "path": "/orders/wallet", "as": "customer", "expect": 200},
+    {"share": 20, "class": "write", "method": "POST", "path": "/orders", "as": "customer", "body": "order", "expect": 201}
+  ],
+  "bodies": {
+    "order": {"merchant": "MER-001", "items": [{"item": "ITM-001", "quantity": 1}, {"item": "ITM-002", "quantity": 1}], "address": {"line1": "12 Jalan Telawi 3", "line2": "", "postcode": "59100", "city": "Kuala Lumpur", "state": "Wilayah Persekutuan Kuala Lumpur"}, "payment": "cash", "note": ""}
+  }
+}
