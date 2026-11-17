@@ -99,8 +99,12 @@ func TestStockContractDeclaresZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, delta, _ := strings.Cut(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n                delta:\n")
-	if !strings.HasPrefix(delta, "                  description: The stock change; zero is refused (422 invalid_change).\n") {
+	line, _, _ := strings.Cut(delta, "\n")
+	if !strings.HasPrefix(line, "                  description: The stock change; zero is refused (422 invalid_change)") {
 		t.Error("the stock.adjust contract does not say that a zero delta is refused")
+	}
+	if !strings.Contains(line, "below the units reserved for orders (409 insufficient_stock)") {
+		t.Error("the stock.adjust contract does not say that a decrease below the reserved units is refused")
 	}
 	inventory, err := New(Config{Name: "inventory", Secret: testSecret})
 	if err != nil {

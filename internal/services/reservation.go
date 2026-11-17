@@ -130,6 +130,13 @@ func (d *inventory) release(key string) result {
 	// that delayed request cannot reserve orphaned stock afterwards.
 	entry.released = true
 	d.reservations[key] = entry
+	// A tombstone for a reservation never made joins the same bounded memory
+	// as a reservation, so it is forgotten in turn and Inventory stays bounded.
+	if !found {
+		for _, old := range d.recent.add(key, time.Now()) {
+			d.forget(old)
+		}
+	}
 	return result{status: 200, body: map[string]any{"released": true}}
 }
 

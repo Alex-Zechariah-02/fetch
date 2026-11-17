@@ -115,7 +115,13 @@ func TestAccountsCredentialFailures(t *testing.T) {
 			t.Errorf("anonymous %s: %d", path, w.Code)
 		}
 	}
-	if w := serviceRequest(s, "POST", "/accounts/login", strings.Repeat(" ", 2048)+`{}`, "", "", ""); w.Code != 413 {
+	if w := serviceRequest(s, "POST", "/accounts/login", strings.Repeat(" ", loginBody)+`{}`, "", "", ""); w.Code != 413 {
 		t.Errorf("login body limit: %d", w.Code)
+	}
+	// A body with both fields at their schema maxima in four-byte characters
+	// is read, so it is answered as a failed sign-in, not as too large.
+	widest := `{"email":"` + strings.Repeat("\U0001F600", 254) + `","password":"` + strings.Repeat("\U0001F600", 256) + `"}`
+	if w := serviceRequest(s, "POST", "/accounts/login", widest, "", "", ""); w.Code == 413 {
+		t.Errorf("a %d-byte login body within the schema refused as too large", len(widest))
 	}
 }

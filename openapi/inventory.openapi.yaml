@@ -161,7 +161,7 @@ paths:
               additionalProperties: false
               properties:
                 delta:
-                  description: The stock change; zero is refused (422 invalid_change).
+                  description: The stock change; zero is refused (422 invalid_change), and so is a decrease below the units reserved for orders (409 insufficient_stock).
                   # The handler refuses a delta below -100 or above 100 with 422 invalid_change.
                   maximum: 100
                   minimum: -100

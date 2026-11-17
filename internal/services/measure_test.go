@@ -184,4 +184,12 @@ func TestMeasureBoundsData(t *testing.T) {
 	if item.Reserved != 0 || len(stock.reservations) != 0 {
 		t.Fatalf("forgotten reservation left %d reserved", item.Reserved)
 	}
+	// Releases of reservations never made leave tombstones that are
+	// forgotten by the same count, so Inventory stays bounded.
+	for i := range 3 * measureKeys {
+		stock.release(fmt.Sprintf("never-reserved-%06d", i))
+	}
+	if len(stock.reservations) > 2*measureKeys {
+		t.Fatalf("%d tombstones kept, bound %d", len(stock.reservations), 2*measureKeys)
+	}
 }

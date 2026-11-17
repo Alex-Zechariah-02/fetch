@@ -67,7 +67,7 @@ func checkFetchBaseline(t *testing.T) {
 		"support.ticket GET /support/ticket/* required 60 CUSTOMER,SUPPORT 0",
 		"support.reply POST /support/reply/* required 20 CUSTOMER,SUPPORT 16384",
 		"support.resolve POST /support/resolve/* required 20 SUPPORT 0",
-		"accounts.login POST /accounts/login none 10 - 2048",
+		"accounts.login POST /accounts/login none 10 - 3072",
 		"accounts.refresh POST /accounts/refresh required 30 CUSTOMER,MERCHANT,RIDER,SUPPORT,OPERATIONS 0",
 		"accounts.me GET /accounts/me required 60 CUSTOMER,MERCHANT,RIDER,SUPPORT,OPERATIONS 0",
 		"web.page.home GET / none 600 - 0",

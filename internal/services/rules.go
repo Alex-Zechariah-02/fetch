@@ -26,7 +26,7 @@ const window = 60 * time.Second
 const (
 	stockBody  = 256
 	itemBody   = 512
-	loginBody  = 2048
+	loginBody  = 3 << 10
 	orderBody  = 4096
 	ticketBody = 16 << 10
 	maxBody    = ticketBody
