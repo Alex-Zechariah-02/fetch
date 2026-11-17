@@ -4,7 +4,7 @@ import { addToBasket, demoPassword, signIn } from './pages'
 import { person, quiet, useRoles } from './roles'
 
 // How the app treats what it is given: a visitor's basket survives signing
-// in, an unusable Fetch Accounts answer never becomes a session, and an
+// in, a lapsed person's does not, an unusable Fetch Accounts answer never becomes a session, and an
 // error code the app does not know is shown in plain words. The odd answers
 // are written over real ones in the browser, as no Fetch service sends them.
 test.describe.serial('Answers the app is given', () => {
@@ -20,6 +20,21 @@ test.describe.serial('Answers the app is given', () => {
     await visitor.goto(siteURL + '/checkout', { waitUntil: 'networkidle' })
     await expect(visitor.getByText('Full Cream Milk 1 L').first()).toBeVisible()
     await visitor.context().close()
+  })
+
+  test('a session that lapsed before the page loaded leaves its basket to nobody', async ({ browser }) => {
+    const customer = await person(browser, null)
+    await signIn(customer, siteURL, 'customer2@fetch.test')
+    await addToBasket(customer, siteURL, 'MER-005', 'Full Cream Milk 1 L')
+    await expect.poll(() => customer.evaluate(() => sessionStorage.getItem('fetch.basket'))).toContain('Full Cream Milk 1 L')
+    await customer.evaluate(() => {
+      const stored = JSON.parse(sessionStorage.getItem('fetch.session') ?? '{}') as Record<string, unknown>
+      sessionStorage.setItem('fetch.session', JSON.stringify({ ...stored, expiresAt: Date.now() - 1000 }))
+    })
+    await customer.reload({ waitUntil: 'networkidle' })
+    expect(await customer.evaluate(() => sessionStorage.getItem('fetch.session'))).toBeNull()
+    expect(await customer.evaluate(() => sessionStorage.getItem('fetch.basket'))).toBeNull()
+    await customer.context().close()
   })
 
   test('a sign-in answer with an unreadable expiry or a foreign home page is refused, and no refresh follows', async ({ browser }) => {

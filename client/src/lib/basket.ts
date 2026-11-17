@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { onIdentityChange } from './session'
+import { lapsedAtLoad, onIdentityChange } from './session'
 import type { Item, Merchant } from './types'
 
 // The basket for this tab: one shop at a time, as on GrabFood and
@@ -64,6 +64,8 @@ function save(next: Basket | null) {
 onIdentityChange((hadSession) => {
   if (hadSession) save(null)
 })
+// A session that lapsed before this page loaded was a person too.
+if (lapsedAtLoad()) save(null)
 
 export type AddResult = 'added' | 'other-shop' | 'full'
 

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { onIdentityChange } from './session'
+import { lapsedAtLoad, onIdentityChange } from './session'
 import { states, type Address } from './types'
 
 // The delivery address for this tab, chosen in the header or at checkout and
@@ -37,6 +37,8 @@ export function setAddress(next: Address | null) {
 onIdentityChange((hadSession) => {
   if (hadSession) setAddress(null)
 })
+// A session that lapsed before this page loaded was a person too.
+if (lapsedAtLoad()) setAddress(null)
 
 export function useAddress(): Address | null {
   return useSyncExternalStore(

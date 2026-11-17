@@ -39,6 +39,9 @@ export const roleNames: Record<Role, string> = {
 // so any other value is refused. Declared before state, which reads it.
 const homes = ['/', '/merchant', '/rider', '/support', '/ops']
 
+// lapsed is set when this tab's stored session had expired at load: what the
+// tab still holds for that person must not pass to the next one.
+let lapsed = false
 let state: State = { session: readStored(), generation: 0, notice: null }
 const listeners = new Set<() => void>()
 const identityListeners = new Set<(hadSession: boolean) => void>()
@@ -68,6 +71,7 @@ function readStored(): Session | null {
     const value = checked(JSON.parse(raw) as Partial<Session> | null)
     if (!value) return null
     if (value.expiresAt <= Date.now()) {
+      lapsed = true
       sessionStorage.removeItem(storageKey)
       return null
     }
@@ -176,6 +180,12 @@ export async function call<T>(request: Omit<Request, 'token' | 'signal'> & { sig
     signOut('Your session ended. Sign in again to continue.')
   }
   return answer
+}
+
+// lapsedAtLoad reports whether this tab's stored session had expired when
+// the page loaded, so the person's other tab data is to be cleared.
+export function lapsedAtLoad(): boolean {
+  return lapsed
 }
 
 // onIdentityChange calls listener whenever the person changes, with
