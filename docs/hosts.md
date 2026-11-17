@@ -8,7 +8,7 @@ Fetch and the gateway can run on separate machines: the Fetch host serves the sh
 
 ```
 go run ./cmd/demo certs -out <new-folder> -fetch <fetch-ip> -gateway <gateway-name-or-ip>[,...]
-go run ./cmd/demo up -role fetch -bind <fetch-ip> -certs <folder>/fetch                (on the Fetch host; not a loopback address)
+go run ./cmd/demo up -role fetch -bind <fetch-ip> -certs <folder>/fetch                (on the Fetch host; never 127.0.0.1)
 go run ./cmd/demo up -role gateway -fetch <fetch-ip> -certs <folder>/gateway           (on the gateway host)
 ```
 

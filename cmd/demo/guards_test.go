@@ -16,9 +16,17 @@ import (
 
 func TestFetchBindRefusesLoopback(t *testing.T) {
 	t.Parallel()
-	for _, address := range []string{"127.0.0.1", "127.0.0.2", "127.255.255.254", "::1", "::ffff:127.0.0.3"} {
+	const refused = "another address than 127.0.0.1"
+	for _, address := range []string{"127.0.0.1", "::ffff:127.0.0.1"} {
 		err := upFetch(t.TempDir(), address, t.TempDir(), "", false, false)
-		if err == nil || !strings.Contains(err.Error(), "loopback") {
+		if err == nil || !strings.Contains(err.Error(), refused) {
+			t.Errorf("-bind %s: %v", address, err)
+		}
+	}
+	// Other loopback addresses hold no internal listener: the documented
+	// one-host route binds 127.0.0.3 (it then stops at the empty certificate folder).
+	for _, address := range []string{"127.0.0.3", "::1"} {
+		if err := upFetch(t.TempDir(), address, t.TempDir(), "", false, false); err == nil || strings.Contains(err.Error(), refused) {
 			t.Errorf("-bind %s: %v", address, err)
 		}
 	}

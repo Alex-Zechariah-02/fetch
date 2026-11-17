@@ -182,11 +182,16 @@ func TestServiceRunStopsOwnedListeners(t *testing.T) {
 			t.Errorf("%s still listens after Run returned", address)
 		}
 	}
-	// Over loopback the services call each other in plain HTTP at the API's
-	// port, so TLS there is refused before anything listens.
+	// On 127.0.0.1 the services call each other in plain HTTP at the API's
+	// port, so TLS there is refused before anything listens; another
+	// loopback address passes this check (and stops at the missing files).
 	tls := Ingress{Certificate: "cert.pem", Key: "key.pem", ClientCA: "ca.pem"}
-	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", s.secret, tls); err == nil || !strings.Contains(err.Error(), "not a loopback one") {
-		t.Fatalf("TLS on a loopback API address: %v", err)
+	const refused = "another address than 127.0.0.1"
+	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", s.secret, tls); err == nil || !strings.Contains(err.Error(), refused) {
+		t.Fatalf("TLS on 127.0.0.1: %v", err)
+	}
+	if err := Run(ctx, s, "127.0.0.3:0", "127.0.0.1:0", s.secret, tls); err == nil || strings.Contains(err.Error(), refused) {
+		t.Fatalf("TLS on 127.0.0.3: %v", err)
 	}
 	// Every interface, and a network address this machine could bind, are
 	// refused without TLS.

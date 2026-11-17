@@ -10,10 +10,13 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 )
+
+// InternalHost is where the services call each other in plain HTTP, at
+// their APIs' ports.
+var InternalHost = netip.AddrFrom4([4]byte{127, 0, 0, 1})
 
 // internal serves only the /internal/ endpoints, each still requiring the
 // service key; every other path is not found.
@@ -49,10 +52,10 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 	if address, err := netip.ParseAddrPort(control); err != nil || !address.Addr().IsLoopback() {
 		return errors.New("the control listener must be a literal loopback address")
 	}
-	// Over loopback the services call each other in plain HTTP at the API's
+	// On InternalHost the services call each other in plain HTTP at the API's
 	// port, which a TLS listener there would already hold.
-	if address, err := netip.ParseAddrPort(listen); err == nil && address.Addr().IsLoopback() && ingress != (Ingress{}) {
-		return errors.New("TLS takes this host's network address, not a loopback one")
+	if address, err := netip.ParseAddrPort(listen); err == nil && address.Addr().Unmap() == InternalHost && ingress != (Ingress{}) {
+		return errors.New("TLS takes another address than 127.0.0.1, where the services call each other")
 	}
 	listeners := []net.Listener{}
 	defer func() {
@@ -70,7 +73,7 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 	if ingress != (Ingress{}) && slices.Contains(internalCallees, s.name) {
 		port := api.Addr().(*net.TCPAddr).Port
 		handlers = append(handlers, s.internal())
-		addresses = append(addresses, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		addresses = append(addresses, netip.AddrPortFrom(InternalHost, uint16(port)).String()) // #nosec G115 -- a TCP port fits 16 bits
 	}
 	for _, address := range addresses {
 		listener, err := Listen(address, Ingress{})

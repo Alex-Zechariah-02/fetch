@@ -42,9 +42,10 @@ func upFetch(home, bindIP, certs, programs string, measure, stdin bool) error {
 	if err != nil || bind.IsUnspecified() {
 		return errors.New("-role fetch takes -bind: this host's IP address, which the gateway connects to")
 	}
-	// The services reach each other on loopback; the gateway connects to this host's network address.
-	if bind.Unmap().IsLoopback() {
-		return errors.New("-bind takes this host's network address; loopback is where the services call each other")
+	// The services reach each other on 127.0.0.1 at the same ports; another
+	// loopback address such as 127.0.0.3 keeps Fetch on this host only.
+	if bind.Unmap() == services.InternalHost {
+		return errors.New("-bind takes another address than 127.0.0.1, where the services call each other")
 	}
 	folder, err := certFolder(certs, caFile, serverCertFile, serverKeyFile, privateKeyFile, assertionSetFile)
 	if err != nil {
