@@ -97,8 +97,10 @@ function update(next: Partial<State>) {
 
 // fromAnswer reads Fetch Accounts' answer; null when it is not a usable
 // session, such as an expiry that does not parse (which would make the
-// refresh timer fire at once, again and again).
-function fromAnswer(data: SignedIn): Session | null {
+// refresh timer fire at once, again and again), or an answer with no body
+// (an ok answer whose body was empty or not JSON reaches here as null).
+function fromAnswer(data: SignedIn | null): Session | null {
+  if (!data || typeof data !== 'object') return null
   return checked({ token: data.token, expiresAt: Date.parse(data.expires_at), user: data.user })
 }
 

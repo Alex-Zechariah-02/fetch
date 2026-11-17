@@ -37,11 +37,12 @@ test.describe.serial('Answers the app is given', () => {
     await customer.context().close()
   })
 
-  test('a sign-in answer with an unreadable expiry or a foreign home page is refused, and no refresh follows', async ({ browser }) => {
-    for (const change of [{ expires_at: 'soon' }, { home: 'javascript:alert(1)' }]) {
+  test('a sign-in answer with an unreadable expiry, a foreign home page or no body is refused, and no refresh follows', async ({ browser }) => {
+    for (const change of [{ expires_at: 'soon' }, { home: 'javascript:alert(1)' }, { empty: true }]) {
       const visitor = await person(browser, null)
       await visitor.route('**/accounts/login', async (route) => {
         const response = await route.fetch()
+        if ('empty' in change) return route.fulfill({ response, body: '' })
         const answer = (await response.json()) as { expires_at: string; user: Record<string, unknown> }
         if ('home' in change) answer.user.home = change.home
         else answer.expires_at = change.expires_at
