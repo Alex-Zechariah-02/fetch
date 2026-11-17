@@ -38,29 +38,45 @@ if (!['gateway', 'local', 'direct'].includes(mode)) {
   throw new Error(`MODE ${mode}: gateway, local or direct`);
 }
 
-// One scenario per measured window: measured, or step-<rate> in a ramp.
+// One scenario for the whole run, so the warm-up's connections carry into the
+// measured windows; each request is tagged with its window by the time it
+// starts: warmup, then measured, or step-<rate> in a ramp. Durations are in
+// seconds (k6 durations ending in s).
+const seconds = (text) => Number(text.replace(/s$/, ''));
 const steps = env('STEPS', '').split(',').filter(Boolean).map(Number);
-const scenario = (target, duration, start) => ({
-  executor: 'constant-arrival-rate', rate: target, timeUnit: '1s', duration, startTime: start,
-  preAllocatedVUs: Math.max(50, target / 5), maxVUs: Math.max(200, target), exec: 'request',
-});
-const warmup = env('WARMUP', '30s');
-const scenarios = {};
+const warmup = seconds(env('WARMUP', '30s'));
+const step = seconds(env('STEP', '40s'));
+const top = steps.length > 0 ? Math.max(...steps) : rate;
+const vus = { preAllocatedVUs: Math.max(50, top / 5), maxVUs: Math.max(200, top), exec: 'request' };
+let windows;
+let scenarios;
 if (steps.length > 0) {
-  const seconds = (text) => Number(text.replace(/s$/, ''));
-  scenarios.warmup = scenario(steps[0], warmup, '0s');
-  steps.forEach((step, i) => {
-    scenarios[`step-${step}`] = scenario(step, env('STEP', '40s'), `${seconds(warmup) + i * seconds(env('STEP', '40s'))}s`);
-  });
+  windows = steps.map((s, i) => ({ name: `step-${s}`, from: warmup + i * step }));
+  // Each step is reached within one second and then held.
+  const stages = [{ duration: `${warmup}s`, target: steps[0] }];
+  for (const s of steps) {
+    stages.push({ duration: '1s', target: s }, { duration: `${step - 1}s`, target: s });
+  }
+  scenarios = { run: { executor: 'ramping-arrival-rate', startRate: steps[0], timeUnit: '1s', stages, ...vus } };
 } else {
-  scenarios.warmup = scenario(rate, warmup, '0s');
-  scenarios.measured = scenario(rate, env('DURATION', '120s'), warmup);
+  windows = [{ name: 'measured', from: warmup }];
+  const duration = `${warmup + seconds(env('DURATION', '120s'))}s`;
+  scenarios = { run: { executor: 'constant-arrival-rate', rate, timeUnit: '1s', duration, ...vus } };
+}
+function windowAt(elapsed) {
+  let name = 'warmup';
+  for (const w of windows) {
+    if (elapsed >= w.from) {
+      name = w.name;
+    }
+  }
+  return name;
 }
 
 // Every series the summary must show is named by a threshold that always passes.
-const thresholds = {};
-for (const name of Object.keys(scenarios).filter((n) => n !== 'warmup')) {
-  const own = `scenario:${name}`;
+const thresholds = { dropped_iterations: ['count>=0'] };
+for (const { name } of windows) {
+  const own = `window:${name}`;
   for (const kind of mix.kinds) {
     thresholds[`http_req_duration{class:${kind.class},${own}}`] = ['max>=0'];
     thresholds[`expected{class:${kind.class},${own}}`] = ['rate>=0'];
@@ -74,7 +90,7 @@ for (const name of Object.keys(scenarios).filter((n) => n !== 'warmup')) {
   thresholds[`http_reqs{proto:HTTP/1.1,${own}}`] = ['count>=0'];
   thresholds[`http_reqs{proto:HTTP/2.0,${own}}`] = ['count>=0'];
   thresholds[`expected{${own}}`] = ['rate>=0'];
-  thresholds[`dropped_iterations{${own}}`] = ['count>=0'];
+  thresholds[`http_reqs{${own}}`] = ['count>=0'];
 }
 
 export const options = {
@@ -175,7 +191,8 @@ export function request() {
     // Fetch admits keys of 16 to 64 letters, digits, underscores or hyphens.
     headers['Idempotency-Key'] = `load-${String(__VU).padStart(5, '0')}-${String(__ITER).padStart(9, '0')}-${Math.floor(random() * 1e9)}`;
   }
-  const tags = { class: kind.class, expect: String(kind.expect) };
+  const window = windowAt((Date.now() - exec.scenario.startTime) / 1000);
+  const tags = { class: kind.class, expect: String(kind.expect), window };
   const response = http.request(kind.method, origin(path) + path, body, { headers, tags });
   expected.add(response.status === kind.expect, tags);
   const status = String(response.status);
