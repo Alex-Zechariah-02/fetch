@@ -197,8 +197,9 @@ func TestProtectionAccountsBlockedRateAndLog(t *testing.T) {
 		t.Fatalf("blocked account admitted: %d", w.Code)
 	}
 	setBlocked(`[]`)
-	// A list above the file bound is refused by size, not as malformed.
-	large := httptest.NewRequest("PUT", "/blocked", strings.NewReader(`["`+strings.Repeat("x", 64<<10)+`"]`))
+	// A list above its size bound (10,000 IDs of 128 bytes) is refused by
+	// size, not as malformed.
+	large := httptest.NewRequest("PUT", "/blocked", strings.NewReader(`["`+strings.Repeat("x", 2<<20)+`"]`))
 	large.Header.Set("Authorization", "Bearer "+string(testSecret))
 	rec := httptest.NewRecorder()
 	control.ServeHTTP(rec, large)

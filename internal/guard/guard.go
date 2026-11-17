@@ -28,12 +28,15 @@ import (
 const (
 	KeysFile    = "keys.json"
 	BlockedFile = "blocked.json"
-	// maxFile bounds each settings file read: a key set of a few keys, or a
-	// blocked list of maxBlocked IDs, fits with room to spare.
+	// maxFile bounds each key file read: a key set of a few keys fits with
+	// room to spare.
 	maxFile = 64 << 10
 	// maxBlocked is far above the demo's accounts and bounds the set every
 	// request is checked against.
 	maxBlocked = 10000
+	// maxBlockedBytes fits maxBlocked IDs of maxSubject bytes, each quoted
+	// and followed by a comma, inside the brackets.
+	maxBlockedBytes = maxBlocked*(maxSubject+3) + 2
 )
 
 // LogFile is the security log of api in the settings folder.
@@ -73,7 +76,7 @@ func New(cfg Config) (*Guard, error) {
 		return nil, fmt.Errorf("%s: one to 64 trusted keys are required (%v)", KeysFile, err)
 	}
 	for _, key := range keys {
-		data, err := readFile(key.PublicKeyFile)
+		data, err := readFile(key.PublicKeyFile, maxFile)
 		if err != nil {
 			return nil, err
 		}
@@ -81,12 +84,8 @@ func New(cfg Config) (*Guard, error) {
 			return nil, fmt.Errorf("key %s: %w", key.Kid, err)
 		}
 	}
-	var blocked []string
-	if err := readJSON(filepath.Join(cfg.Dir, BlockedFile), &blocked); err != nil {
+	if err := g.loadBlocked(filepath.Join(cfg.Dir, BlockedFile)); err != nil {
 		return nil, fmt.Errorf("%s: %w", BlockedFile, err)
-	}
-	if err := g.setBlocked(blocked); err != nil {
-		return nil, err
 	}
 	if g.log, err = openLog(filepath.Join(cfg.Dir, LogFile(cfg.API))); err != nil {
 		return nil, err
@@ -97,14 +96,15 @@ func New(cfg Config) (*Guard, error) {
 // Close writes every queued record and closes the log.
 func (g *Guard) Close() { g.log.close() }
 
-func readFile(path string) ([]byte, error) {
+// readFile reads at most limit bytes of path, refusing a longer file.
+func readFile(path string, limit int64) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxFile+1))
-	if err == nil && len(data) > maxFile {
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err == nil && int64(len(data)) > limit {
 		err = errors.New(path + " is too large")
 	}
 	return data, err
@@ -112,7 +112,7 @@ func readFile(path string) ([]byte, error) {
 
 // readJSON decodes one strict JSON value: no unknown or repeated members.
 func readJSON(path string, value any) error {
-	data, err := readFile(path)
+	data, err := readFile(path, maxFile)
 	if err != nil {
 		return err
 	}

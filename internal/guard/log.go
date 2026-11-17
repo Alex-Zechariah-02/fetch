@@ -73,17 +73,19 @@ var errLogFailed = errors.New("security log unavailable")
 
 // securityLog owns its file: only run writes, rotates or closes it.
 type securityLog struct {
-	path   string
-	file   *os.File
-	size   int64 // bytes in the active file
-	limit  int64 // rotation size, maxLogBytes
-	queue  chan entry
-	seq    atomic.Uint64
-	lost   atomic.Uint64
-	failed atomic.Bool
-	mu     sync.RWMutex // orders queueing against close
-	closed bool
-	done   chan struct{}
+	path  string
+	file  *os.File
+	size  int64 // bytes in the active file
+	limit int64 // rotation size, maxLogBytes
+	// rotating is set while rotations fail, so the warning is printed once.
+	rotating bool
+	queue    chan entry
+	seq      atomic.Uint64
+	lost     atomic.Uint64
+	failed   atomic.Bool
+	mu       sync.RWMutex // orders queueing against close
+	closed   bool
+	done     chan struct{}
 }
 
 // openLog appends to path, creating it private to this user.
@@ -197,8 +199,28 @@ func (l *securityLog) write(batch []entry) error {
 	}
 	if l.size >= l.limit {
 		if err := l.rotate(); err != nil {
-			return l.fail(err)
+			return l.keepActive(err)
 		}
+		l.rotating = false
+	}
+	return nil
+}
+
+// keepActive handles a failed rotation, such as a rotated file held open on
+// Windows or an active file moved away: the batch is already synced, so the
+// active path is reopened and the rotation retried at each later write. The
+// active file may grow to twice its bound; past that, or when the path cannot
+// be reopened, the log fails, so no request runs without a record.
+func (l *securityLog) keepActive(err error) error {
+	if l.size >= 2*l.limit {
+		return l.fail(err)
+	}
+	if reopenErr := l.open(); reopenErr != nil {
+		return l.fail(errors.Join(err, reopenErr))
+	}
+	if !l.rotating {
+		l.rotating = true
+		fmt.Fprintf(os.Stderr, "security log rotation failed; writing continues to %s and the rotation is retried: %v\n", l.path, err)
 	}
 	return nil
 }

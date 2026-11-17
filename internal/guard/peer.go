@@ -20,8 +20,11 @@ func clientOf(peer netip.Addr, header http.Header) netip.Addr {
 	if len(values) == 0 {
 		return peer
 	}
-	entries := strings.Split(values[len(values)-1], ",")
-	named, err := netip.ParseAddr(strings.TrimSpace(entries[len(entries)-1]))
+	// Only the last entry counts, so only it is cut out: a client-written
+	// prefix of many commas costs nothing.
+	last := values[len(values)-1]
+	last = last[strings.LastIndexByte(last, ',')+1:]
+	named, err := netip.ParseAddr(strings.TrimSpace(last))
 	if err != nil {
 		return peer
 	}
