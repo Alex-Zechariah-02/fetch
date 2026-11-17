@@ -125,6 +125,10 @@ func isPlainName(name string) bool {
 	return true
 }
 
+// shopWrite lets the largest shop asset reach a slow link; it also covers
+// forwarded answers, which take at most the services' own 10 s.
+const shopWrite = 30 * time.Second
+
 // demoServer bounds every connection of a demo server as the services do;
 // write must outlast the slowest answer handler gives. Idle connections stay
 // two minutes, past the gateway's own idle close, as in services.Run.
@@ -136,7 +140,7 @@ func demoServer(handler http.Handler, write time.Duration) *http.Server {
 // the bound and reports why the server ended, nil for a requested stop. The
 // write deadline lets the largest shop asset reach a slow link.
 func serveWebsite(ctx context.Context, listener net.Listener, files fs.FS) error {
-	server := demoServer(website(files), 30*time.Second)
+	server := demoServer(website(files), shopWrite)
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)

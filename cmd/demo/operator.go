@@ -1,5 +1,5 @@
 // Operator commands of the demo tool: Fetch sign-ins, bounded attack traffic,
-// policy export and staging, and whole-file writes.
+// policy export and staging.
 
 package main
 
@@ -261,37 +261,4 @@ func policy(args []string) error {
 	}
 	fmt.Printf("candidate %d staged; checksum %s; policy is not activated\n", candidate.ID, candidate.Checksum)
 	return nil
-}
-
-// O_EXCL and 0600: a new export or key file is never overwritten, and only this user reads it.
-func writeNewFile(path string, data []byte) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := file.Write(data)
-	return errors.Join(writeErr, file.Sync(), file.Close())
-}
-
-// Operator updates replace a whole regular file. The temporary file is owned
-// by this invocation; a failed write cannot leave a partially parsed key set.
-func replaceOperatorFile(path string, data []byte) error {
-	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
-		return errors.New("operator target must be an existing regular file")
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".fetch-operator-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	// 0600 before any write, so the rename lands a file no other user can read.
-	if err = file.Chmod(0600); err != nil {
-		file.Close()
-		return err
-	}
-	_, writeErr := file.Write(data)
-	if err = errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
 }

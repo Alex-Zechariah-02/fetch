@@ -88,6 +88,10 @@ func TestOperatorBoundaryRefusals(t *testing.T) {
 	if data, err := os.ReadFile(path); err != nil || string(data) != "first" {
 		t.Fatal("exclusive output did not preserve existing data")
 	}
+	// The file is written beside its place and linked in; nothing else stays.
+	if entries, err := os.ReadDir(filepath.Dir(path)); err != nil || len(entries) != 1 {
+		t.Fatalf("files beside the output: %v %v", entries, err)
+	}
 	if err := replaceOperatorFile(filepath.Dir(path), []byte("invalid")); err == nil {
 		t.Fatal("operator replaced a directory")
 	}
