@@ -84,17 +84,17 @@ func (d *reports) handle(r *http.Request, body []byte) result {
 		return invalidQuery()
 	}
 	to := time.Now().UTC().Truncate(24 * time.Hour)
-	// Without dates a report covers the last 90 days, today included: a quarter.
-	from := to.AddDate(0, 0, -89)
 	var err error
-	if q.Has("from") {
-		from, err = time.Parse(time.DateOnly, q.Get("from"))
+	if q.Has("to") {
+		to, err = time.Parse(time.DateOnly, q.Get("to"))
 		if err != nil {
 			return invalidQuery()
 		}
 	}
-	if q.Has("to") {
-		to, err = time.Parse(time.DateOnly, q.Get("to"))
+	// Without from a report covers the 90 days ending at to, to included: a quarter.
+	from := to.AddDate(0, 0, -89)
+	if q.Has("from") {
+		from, err = time.Parse(time.DateOnly, q.Get("from"))
 		if err != nil {
 			return invalidQuery()
 		}

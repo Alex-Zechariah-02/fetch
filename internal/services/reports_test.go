@@ -28,6 +28,11 @@ func TestReportsContractAndLiveOrders(t *testing.T) {
 			t.Fatalf("%s: %d %s", tc.path, w.Code, w.Body)
 		}
 	}
+	// Without from, the window is the 90 days ending at to, whatever today is.
+	w := serviceRequest(reportService, "GET", "/reports/summary?to=2026-03-31", "", "ops-01", "OPERATIONS", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"from":"2026-01-01"`) {
+		t.Errorf("to without from: %d %s", w.Code, w.Body)
+	}
 	for _, path := range []string{"/reports/summary?from=2026-02-30", "/reports/summary?from=2026-10-31&to=2026-10-01", "/reports/top-items?limit=101", "/reports/sales?from=x&from=y"} {
 		w := serviceRequest(reportService, "GET", path, "", "ops-01", "OPERATIONS", "")
 		if w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_query") {
@@ -46,7 +51,7 @@ func TestReportsContractAndLiveOrders(t *testing.T) {
 		return result.Orders, result.Revenue
 	}
 	before, revenue := read()
-	w := serviceRequest(orderService, "POST", "/orders", checkoutBody, "cust-003", "CUSTOMER", "reports-live-checkout")
+	w = serviceRequest(orderService, "POST", "/orders", checkoutBody, "cust-003", "CUSTOMER", "reports-live-checkout")
 	if w.Code != 201 {
 		t.Fatalf("live order: %d %s", w.Code, w.Body)
 	}
