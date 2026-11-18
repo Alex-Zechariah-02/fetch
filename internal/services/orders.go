@@ -254,7 +254,19 @@ func (d *orders) handle(r *http.Request, body []byte) result {
 		if path == "/orders/mine" && q.Has("status") {
 			return invalidQuery()
 		}
-		ordered := slices.Clone(d.list)
+		status := q.Get("status")
+		listed := func(order Order) bool {
+			return (path != "/orders/mine" || order.Customer == subject) && (ownMerchant == "" || order.Merchant == ownMerchant) && (status == "" || order.Status == status)
+		}
+		// Only the caller's orders and the cursor's are sorted (sorting the
+		// whole list on every read was most of Orders' work); a sorted subset
+		// keeps its relative order, so pages and the cursor check are unchanged.
+		var ordered []Order
+		for _, order := range d.list {
+			if order.ID == after || listed(order) {
+				ordered = append(ordered, order)
+			}
+		}
 		slices.SortFunc(ordered, func(a, b Order) int {
 			if compared := b.CreatedAt.Compare(a.CreatedAt); compared != 0 {
 				return compared
@@ -270,7 +282,7 @@ func (d *orders) handle(r *http.Request, body []byte) result {
 				}
 				continue
 			}
-			if path == "/orders/mine" && order.Customer != subject || ownMerchant != "" && order.Merchant != ownMerchant || q.Get("status") != "" && order.Status != q.Get("status") {
+			if !listed(order) {
 				continue
 			}
 			items = append(items, order)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -106,7 +107,7 @@ func TestOrderCheckoutAndCancellation(t *testing.T) {
 }
 
 func TestOrderRoutesAndErrors(t *testing.T) {
-	_, orders := newCommerce(t)
+	_, service := newCommerce(t)
 	for _, tc := range []struct {
 		method, path, body, subject, roles, code string
 		status                                   int
@@ -126,9 +127,52 @@ func TestOrderRoutesAndErrors(t *testing.T) {
 		{"POST", "/orders", strings.Replace(checkoutBody, `"quantity":2`, `"quantity":4`, 1), "cust-003", "CUSTOMER", "insufficient_wallet", 409},
 		{"POST", "/orders/ready/ORD-1001", "", "merchant-001", "MERCHANT", "invalid_transition", 409},
 	} {
-		w := serviceRequest(orders, tc.method, tc.path, tc.body, tc.subject, tc.roles, "")
+		w := serviceRequest(service, tc.method, tc.path, tc.body, tc.subject, tc.roles, "")
 		if w.Code != tc.status || tc.code != "" && !strings.Contains(w.Body.String(), `"error":"`+tc.code+`"`) {
 			t.Errorf("%s %s: %d %s", tc.method, tc.path, w.Code, w.Body)
+		}
+	}
+
+	// A customer's page equals the one cut from the whole list sorted newest
+	// first, for every cursor, also another customer's order as the cursor.
+	data := service.data.(*orders)
+	all := slices.Clone(data.list)
+	slices.SortFunc(all, func(a, b Order) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+	for _, customer := range []string{"cust-001", "cust-002", "cust-003"} {
+		for i := -1; i < len(all); i += 7 {
+			after, want := "", []string{}
+			for _, order := range all[i+1:] {
+				if order.Customer == customer && len(want) < 4 {
+					want = append(want, order.ID)
+				}
+			}
+			if i >= 0 {
+				after = "&after=" + all[i].ID
+			}
+			w := serviceRequest(service, "GET", "/orders/mine?limit=3"+after, "", customer, "CUSTOMER", "")
+			var page struct {
+				Items []Order `json:"items"`
+				Next  string  `json:"next"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || w.Code != 200 {
+				t.Fatalf("%s %s: %d %s", customer, after, w.Code, w.Body)
+			}
+			got := []string{}
+			for _, order := range page.Items {
+				got = append(got, order.ID)
+			}
+			wantNext := ""
+			if len(want) > 3 {
+				wantNext, want = want[2], want[:3]
+			}
+			if !slices.Equal(got, want) || page.Next != wantNext {
+				t.Fatalf("%s%s: got %v next %q, want %v next %q", customer, after, got, page.Next, want, wantNext)
+			}
 		}
 	}
 }
