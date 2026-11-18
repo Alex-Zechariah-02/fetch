@@ -42,7 +42,7 @@ func up(args []string) error {
 	certs := set.String("certs", "", "-role: this host's folder from demo certs")
 	tlsCert := set.String("tls-cert", "", "-role gateway: the shop's certificate chain instead of the folder's data.pem, such as certbot's fullchain.pem")
 	tlsKey := set.String("tls-key", "", "-role gateway: the private key of -tls-cert")
-	measure := set.Bool("measure", false, "-role fetch: measurement mode (receipts as counts with no cap, and the load-0001 to load-1000 accounts)")
+	measure := set.Bool("measure", false, "-role fetch: measurement mode (receipts as counts with no cap, and the load-0001 to load-10000 accounts)")
 	programs := set.String("programs", "", "-role fetch: run the services, Accounts and shop already built in this folder (as in the container image) instead of building them")
 	if err := set.Parse(args); err != nil {
 		return err

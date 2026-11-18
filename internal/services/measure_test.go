@@ -143,15 +143,32 @@ func TestMeasureBoundsData(t *testing.T) {
 	if kept := measured(false, 0); kept.limit != keptKeys {
 		t.Fatalf("a service outside measurement mode keeps %d keys", kept.limit)
 	}
-	// Checkout identities are kept a day in either mode; reservations go by
-	// count.
+	// Outside measurement mode checkout identities are kept a day;
+	// reservations, and in measurement mode both, go by count.
 	for _, measure := range []bool{true, false} {
 		checkouts, stock := &orders{measure: measure}, &inventory{measure: measure}
 		checkouts.reset()
 		stock.reset()
-		if checkouts.recent.life != keyLife || stock.recent.life != 0 {
+		want := keyLife
+		if measure {
+			want = 0
+		}
+		if checkouts.recent.life != want || stock.recent.life != 0 {
 			t.Fatalf("measure=%v: checkout keys kept %v, reservations %v", measure, checkouts.recent.life, stock.recent.life)
 		}
+	}
+	// A measurement run never refuses a checkout for holding too many: past
+	// four times the bound of young identities it has forgotten the oldest.
+	run = &orders{measure: true}
+	run.reset()
+	for i := range 4*measureKeys + 1 {
+		run.recent.add(fmt.Sprint(i), start)
+		if run.recent.full() {
+			t.Fatalf("measurement memory full after %d young identities", i+1)
+		}
+	}
+	if held := len(run.recent.keys); held < measureKeys || held >= 2*measureKeys {
+		t.Fatalf("measurement memory holds %d identities, want the newest %d to %d", held, measureKeys, 2*measureKeys-1)
 	}
 
 	// With a life, a key is kept past the count until it is old enough, and

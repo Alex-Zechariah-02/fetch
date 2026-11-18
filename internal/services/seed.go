@@ -5,9 +5,10 @@ import "fmt"
 // walletSeed is every seeded customer's opening wallet balance, in sen.
 const walletSeed = 10000
 
-// loadAccounts is the number of measurement-mode accounts: enough that a
-// 500 requests/s run stays under each account's own rate limit.
-const loadAccounts = 1000
+// loadAccounts is the number of measurement-mode accounts: enough that the
+// full mix stays under each account's own checkout rate up to about 8,300
+// requests/s.
+const loadAccounts = 10000
 
 type User struct {
 	ID       string   `json:"id"`
@@ -38,7 +39,7 @@ func Users() []User {
 	}
 }
 
-// loadUsers are the CUSTOMER accounts load-0001 to load-1000, which exist
+// loadUsers are the CUSTOMER accounts load-0001 to load-10000, which exist
 // only in measurement mode and share the demo password.
 func loadUsers() []User {
 	users := make([]User, 0, loadAccounts)

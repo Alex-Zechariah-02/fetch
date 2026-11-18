@@ -36,7 +36,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	signingFile := flags.String("signing-settings", "", "Accounts signing settings file")
 	protection := flags.String("local-security", "", "built-in protection: check tokens, roles, blocked accounts, rates and bodies here, with the trusted keys and blocked list in this folder and the security log written there")
 	gatewayKey := flags.String("gateway-key", "", "the gateway's public keys (JSON Web Key Set, from gateway jwks): answer only requests carrying the gateway's signed identity assertion")
-	measure := flags.Bool("measure", false, "measurement mode: receipts kept as counts with no cap, and the accounts load-0001 to load-1000 seeded")
+	measure := flags.Bool("measure", false, "measurement mode: receipts kept as counts with no cap, and the accounts load-0001 to load-10000 seeded")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}

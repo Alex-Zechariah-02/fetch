@@ -14,20 +14,31 @@
 // (comma-separated rates of a capacity ramp after the warm-up at the first
 // one) with STEP (each step's duration); GATEWAY (https origin), FETCH_IP,
 // CERT and KEY (the gateway's client certificate), TOKENS (demo tokens file),
-// CUSTOMERS (1 to 999), SEED.
+// CUSTOMERS (1 to 9,999; 999 gives the accounts of runs before 10,000 were
+// seeded), SEED.
 import http from 'k6/http';
 import exec from 'k6/execution';
+import { SharedArray } from 'k6/data';
 import { Counter, Rate } from 'k6/metrics';
 
 const env = (name, fallback) => __ENV[name] || fallback;
 const mix = JSON.parse(open(env('MIX', './mix.json')));
 const mode = env('MODE', 'gateway');
 const rate = Number(env('RATE', '500'));
-const customers = Number(env('CUSTOMERS', '999'));
+const customers = Number(env('CUSTOMERS', '9999'));
 const fetchIP = env('FETCH_IP', '127.0.0.3');
 const gateway = env('GATEWAY', 'https://localhost:9480');
 const seed = Number(env('SEED', '20261111'));
-const tokens = mode === 'direct' ? null : JSON.parse(open(env('TOKENS', './tokens.json')));
+// One copy of the token file for every virtual user (k6 SharedArray): parsed
+// per user, 10,000 tokens (about 7 MB) would cost gigabytes at high rates.
+const tokenFile = env('TOKENS', './tokens.json');
+const tokens = mode === 'direct' ? null : {
+  customers: new SharedArray('customers', () => JSON.parse(open(tokenFile)).customers),
+  ...new SharedArray('others', () => {
+    const file = JSON.parse(open(tokenFile));
+    return [{ merchants: file.merchants, limited: file.limited }];
+  })[0],
+};
 const ports = { inventory: 9501, orders: 9502 };
 const expected = new Rate('expected');
 const answers = new Counter('answers');
@@ -114,6 +125,11 @@ function stream(start) {
   };
 }
 
+// A token file with fewer customers (one minted before 10,000 were seeded)
+// would send requests without a token, read as refusals: stop instead.
+if (tokens && tokens.customers.length < customers) {
+  throw new Error(`token file holds ${tokens.customers.length} customers, CUSTOMERS is ${customers}`);
+}
 // The customers in a seeded shuffle (Fisher-Yates).
 const order = Array.from({ length: customers }, (_, i) => i);
 const shuffle = stream(seed);
@@ -147,7 +163,8 @@ function caller(as, n) {
   const merchant = Math.floor(n / cycle.length) % Math.max(1, merchantIDs.length);
   if (mode === 'direct') {
     switch (as) {
-      case 'customer': return { id: `load-${pad(customer + 1)}`, roles: 'CUSTOMER' };
+      // Customer i is load-(i+1), skipping load-1000 (the limited account), as in the token file.
+      case 'customer': return { id: `load-${pad(customer < 999 ? customer + 1 : customer + 2)}`, roles: 'CUSTOMER' };
       case 'merchant': return { id: `merchant-00${merchantIDs[merchant].slice(-1)}`, roles: 'MERCHANT', merchant: merchantIDs[merchant] };
       case 'limited': return { id: 'load-1000', roles: 'CUSTOMER' };
       default: return null;

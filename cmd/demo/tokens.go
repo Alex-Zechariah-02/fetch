@@ -23,9 +23,13 @@ import (
 	"github.com/Alex-Zechariah-02/fetch/internal/services"
 )
 
-// loadAccounts is how many load accounts measurement mode seeds; the last
-// one is the account a load run sends over its rate.
-const loadAccounts = 1000
+// loadAccounts is how many load accounts measurement mode seeds; limited
+// (load-1000) is the account a load run sends over its rate, the others are
+// its customers.
+const (
+	loadAccounts = 10000
+	limited      = 1000
+)
 
 // signer is one account a load run signs in as.
 type signer struct {
@@ -36,7 +40,8 @@ type signer struct {
 }
 
 // tokenFile is what demo tokens writes: the customers load-0001 to
-// load-0999, the merchants whose stock a mix reads, and load-1000.
+// load-10000 except load-1000, the merchants whose stock a mix reads, and
+// load-1000.
 type tokenFile struct {
 	Customers []signer  `json:"customers"`
 	Merchants []signer  `json:"merchants"`
@@ -52,19 +57,22 @@ func tokens(args []string) error {
 	address := set.String("accounts", "", "Fetch Accounts on this host, IP:port")
 	certs := set.String("certs", "", "the gateway's folder from demo certs (its client certificate and CA)")
 	out := set.String("out", "", "the token file to write")
+	// Accounts signs in one account at a time (about 0.1 s of Argon2id each), and
+	// tokens live 15 minutes: a run signs in only the customers it needs.
+	customers := set.Int("customers", loadAccounts-1, "how many customers to sign in, the first ones of load-0001 to load-10000 without load-1000")
 	if err := set.Parse(args); err != nil {
 		return err
 	}
 	target, err := netip.ParseAddrPort(*address)
-	if set.NArg() != 0 || err != nil || *out == "" {
-		return errors.New("use: demo tokens -accounts IP:PORT -certs DIR -out FILE")
+	if set.NArg() != 0 || err != nil || *out == "" || *customers < 1 || *customers > loadAccounts-1 {
+		return errors.New("use: demo tokens -accounts IP:PORT -certs DIR -out FILE [-customers 1-9999]")
 	}
 	client, err := tokenClient(*certs)
 	if err != nil {
 		return err
 	}
 	defer client.CloseIdleConnections()
-	file := measurementSigners()
+	file := measurementSigners(*customers)
 	everyone := []*signer{&file.Limited}
 	for i := range file.Customers {
 		everyone = append(everyone, &file.Customers[i])
@@ -83,13 +91,17 @@ func tokens(args []string) error {
 	return nil
 }
 
-// measurementSigners are the accounts of a token file, without tokens.
-func measurementSigners() tokenFile {
+// measurementSigners are the accounts of a token file, without tokens: the
+// first customers load accounts other than load-1000, and load-1000.
+func measurementSigners(customers int) tokenFile {
 	var file tokenFile
-	for n := 1; n < loadAccounts; n++ {
+	for n := 1; len(file.Customers) < customers; n++ {
+		if n == limited {
+			continue
+		}
 		file.Customers = append(file.Customers, signer{ID: fmt.Sprintf("load-%04d", n), email: fmt.Sprintf("load%04d@fetch.test", n)})
 	}
-	file.Limited = signer{ID: fmt.Sprintf("load-%04d", loadAccounts), email: fmt.Sprintf("load%04d@fetch.test", loadAccounts)}
+	file.Limited = signer{ID: fmt.Sprintf("load-%04d", limited), email: fmt.Sprintf("load%04d@fetch.test", limited)}
 	for _, user := range services.Users() {
 		// MER-005 and MER-006 count their stock; the mixes read only theirs.
 		if user.Merchant != nil && (*user.Merchant == "MER-005" || *user.Merchant == "MER-006") {

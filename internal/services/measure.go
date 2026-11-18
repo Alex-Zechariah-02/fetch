@@ -1,10 +1,11 @@
 // Bounded service data: Orders keeps the seed orders and the newest placed
 // ones, and Orders and Inventory forget their oldest checkout and
-// reservation identities, a checkout identity only after a day. Measurement
-// mode keeps little, so the work a request costs is the same at the end of a
-// long run as at its start; other modes keep more, below the 20,000 orders a
-// report reads. A forgotten identity can be used again, which a load
-// generator that makes a new one per request never does.
+// reservation identities; outside measurement mode a checkout identity only
+// after a day. Measurement mode keeps little and forgets by count alone, so
+// the work a request costs is the same at the end of a long run as at its
+// start; other modes keep more, below the 20,000 orders a report reads. A
+// forgotten identity can be used again, which a load generator that makes a
+// new one per request never does.
 
 package services
 
@@ -44,11 +45,13 @@ type arrival struct {
 	at  time.Time
 }
 
-// measured is the key memory of a service, bounded for its mode, keeping
-// each key at least life.
+// measured is the key memory of a service, bounded for its mode. Outside
+// measurement mode it keeps each key at least life; in measurement mode it
+// keeps the newest measureKeys at least and forgets older ones at any age,
+// so a long run is never refused for holding too many.
 func measured(measure bool, life time.Duration) arrivals {
 	if measure {
-		return arrivals{limit: measureKeys, life: life}
+		return arrivals{limit: measureKeys}
 	}
 	return arrivals{limit: keptKeys, life: life}
 }

@@ -73,7 +73,9 @@ func TestTokensSignEveryAccountOnce(t *testing.T) {
 	if err := json.Unmarshal(data, &file); err != nil {
 		t.Fatal(err)
 	}
-	if len(file.Customers) != loadAccounts-1 || file.Customers[0].ID != "load-0001" || file.Customers[0].Token != "t-load0001@fetch.test" {
+	// Customer 999 (index 998) is load-0999 and the next is load-1001: load-1000 is the limited account only.
+	if len(file.Customers) != loadAccounts-1 || file.Customers[0].ID != "load-0001" || file.Customers[0].Token != "t-load0001@fetch.test" ||
+		file.Customers[998].ID != "load-0999" || file.Customers[999].ID != "load-1001" || file.Customers[len(file.Customers)-1].ID != "load-10000" {
 		t.Fatalf("customers: %d, first %+v", len(file.Customers), file.Customers[0])
 	}
 	if file.Limited.ID != "load-1000" || file.Limited.Token != "t-load1000@fetch.test" || len(file.Merchants) != 2 || file.Merchants[0].Merchant != "MER-005" || file.Merchants[0].Token == "" {
@@ -86,6 +88,14 @@ func TestTokensSignEveryAccountOnce(t *testing.T) {
 	}
 	if file.Expires.IsZero() {
 		t.Fatal("no expiry")
+	}
+	// A run that needs fewer customers signs in only the first ones, still
+	// skipping load-1000.
+	if few := measurementSigners(1000); len(few.Customers) != 1000 || few.Customers[999].ID != "load-1001" || few.Limited.ID != "load-1000" {
+		t.Fatalf("1,000 customers: %d, last %s, limited %s", len(few.Customers), few.Customers[len(few.Customers)-1].ID, few.Limited.ID)
+	}
+	if err := tokens([]string{"-accounts", address, "-certs", filepath.Join(root, "gateway"), "-out", out, "-customers", "0"}); err == nil {
+		t.Fatal("zero customers accepted")
 	}
 
 	// A server whose certificate another CA issued is not Fetch's.
