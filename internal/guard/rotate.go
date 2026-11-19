@@ -29,9 +29,10 @@ func (l *securityLog) keepActive(err error) error {
 	return nil
 }
 
-// open appends to the active file, creating it private to this user.
+// open continues the active file at its logical end, creating it private to
+// this user; a zero tail a stopped process left is overwritten in place.
 func (l *securityLog) open() error {
-	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
@@ -39,7 +40,11 @@ func (l *securityLog) open() error {
 	if err != nil {
 		return errors.Join(err, file.Close())
 	}
-	l.file, l.size = file, info.Size()
+	end, err := logicalEnd(file)
+	if err != nil {
+		return errors.Join(err, file.Close())
+	}
+	l.file, l.size, l.filled = file, end, info.Size()
 	l.written.Store(l.size)
 	return nil
 }
@@ -47,7 +52,7 @@ func (l *securityLog) open() error {
 // rotate closes the full active file as <path>.1, shifting older files up
 // and deleting the oldest, so the log keeps at most logFiles files.
 func (l *securityLog) rotate() error {
-	if err := l.file.Close(); err != nil {
+	if err := errors.Join(l.trim(), l.file.Close()); err != nil {
 		return err
 	}
 	if err := os.Remove(fmt.Sprintf("%s.%d", l.path, logFiles-1)); err != nil && !errors.Is(err, fs.ErrNotExist) {

@@ -91,10 +91,12 @@ var (
 
 // securityLog owns its file: only run writes, rotates or closes it.
 type securityLog struct {
-	path  string
-	file  *os.File
-	size  int64 // bytes in the active file
-	limit int64 // rotation size, maxLogBytes
+	path string
+	file *os.File
+	size int64 // bytes of records in the active file: its logical end
+	// filled is the file's size on disk: past size it is a synced zero tail.
+	filled int64
+	limit  int64 // rotation size, maxLogBytes
 	// rotating is set while rotations fail, so the warning is printed once.
 	rotating bool
 	queue    chan entry
@@ -109,7 +111,7 @@ type securityLog struct {
 	done     chan struct{}
 }
 
-// openLog appends to path, creating it private to this user.
+// openLog writes to path from its logical end, creating it private to this user.
 func openLog(path string) (*securityLog, error) {
 	l := &securityLog{path: path, limit: maxLogBytes, queue: make(chan entry, queueSize), done: make(chan struct{})}
 	if err := l.open(); err != nil {
@@ -199,7 +201,9 @@ func (l *securityLog) run() {
 	if l.lost.Load() > 0 {
 		l.write(nil)
 	}
-	l.file.Close()
+	if err := errors.Join(l.trim(), l.file.Close()); err != nil {
+		fmt.Fprintf(os.Stderr, "security log close failed: %v\n", err)
+	}
 }
 
 // take adds e to batch unless its commit withdrew it.
@@ -210,8 +214,8 @@ func take(batch []entry, e entry) []entry {
 	return append(batch, e)
 }
 
-// write appends the pending loss count and batch, then syncs. A failure
-// disables admission for the rest of the process.
+// write adds the pending loss count and batch at the logical end, then
+// syncs. A failure disables admission for the rest of the process.
 func (l *securityLog) write(batch []entry) error {
 	if l.failed.Load() {
 		return errLogFailed
@@ -223,19 +227,15 @@ func (l *securityLog) write(batch []entry) error {
 	for _, e := range batch {
 		buffer = append(buffer, e.line...)
 	}
-	if _, err := l.file.Write(buffer); err != nil {
+	// Synced before the admission returns, so an acknowledged request is on disk.
+	if err := l.persist(buffer); err != nil {
 		return l.fail(err)
 	}
 	// A batch beyond a full queue's size is not kept, so idle memory stays bounded.
 	if cap(buffer) <= keptBuffer {
 		l.buffer = buffer
 	}
-	l.size += int64(len(buffer))
 	l.written.Store(l.size)
-	// Sync before the admission returns, so an acknowledged request is on disk.
-	if err := l.file.Sync(); err != nil {
-		return l.fail(err)
-	}
 	if l.size >= l.limit {
 		if err := l.rotate(); err != nil {
 			return l.keepActive(err)

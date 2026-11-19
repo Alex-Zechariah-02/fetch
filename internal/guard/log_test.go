@@ -41,6 +41,32 @@ func TestLogRotates(t *testing.T) {
 	}
 }
 
+// A log reopened over a zero tail, as a stopped process leaves its zero-filled
+// file, continues at its last record, and a closed log holds no zeros.
+func TestLogZeroTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "orders.log")
+	first := appendRecord(nil, &record{Seq: 1, Kind: "request.admitted", Path: "/orders"})
+	if err := os.WriteFile(path, append(first, make([]byte, 4096)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := openLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.commit(t.Context(), &record{Kind: "request.admitted", Path: "/orders"}); err != nil {
+		t.Fatal(err)
+	}
+	l.close()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if strings.ContainsRune(string(data), 0) || len(lines) != 2 || lines[0] != strings.TrimSuffix(string(first), "\n") {
+		t.Fatalf("log after reopen: %q", data)
+	}
+}
+
 // A failed rotation keeps the log writing to its active file and retries;
 // the log fails only at twice its bound, so no request runs unrecorded.
 func TestLogRotationFailure(t *testing.T) {
