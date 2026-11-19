@@ -56,7 +56,8 @@ func tokens(args []string) error {
 	set := flag.NewFlagSet("tokens", flag.ContinueOnError)
 	address := set.String("accounts", "", "Fetch Accounts on this host, IP:port")
 	certs := set.String("certs", "", "the gateway's folder from demo certs (its client certificate and CA)")
-	out := set.String("out", "", "the token file to write")
+	out := set.String("out", "", "the new token file to write (an existing file is never replaced)")
+	name := set.String("name", "", "the name or address Fetch's certificate holds (default: the -accounts address)")
 	// Accounts signs in one account at a time (about 0.1 s of Argon2id each), and
 	// tokens live 15 minutes: a run signs in only the customers it needs.
 	customers := set.Int("customers", loadAccounts-1, "how many customers to sign in, the first ones of load-0001 to load-10000 without load-1000")
@@ -65,9 +66,15 @@ func tokens(args []string) error {
 	}
 	target, err := netip.ParseAddrPort(*address)
 	if set.NArg() != 0 || err != nil || *out == "" || *customers < 1 || *customers > loadAccounts-1 {
-		return errors.New("use: demo tokens -accounts IP:PORT -certs DIR -out FILE [-customers 1-9999]")
+		return errors.New("use: demo tokens -accounts IP:PORT -certs DIR -out FILE [-name NAME] [-customers 1-9999]")
 	}
-	client, err := tokenClient(*certs)
+	if *name == "" {
+		*name = target.Addr().String()
+	}
+	if _, err := os.Lstat(*out); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%s already exists: name a new token file", *out)
+	}
+	client, err := tokenClient(*certs, *name)
 	if err != nil {
 		return err
 	}
@@ -83,8 +90,8 @@ func tokens(args []string) error {
 	if file.Expires, err = signAll(client, "https://"+target.String(), everyone); err != nil {
 		return err
 	}
-	// The file holds bearer tokens, so only its owner reads it.
-	if err := os.WriteFile(*out, indented(file), 0o600); err != nil {
+	// The file holds bearer tokens: written whole, new, and read by its owner only.
+	if err := writeNewFile(*out, indented(file)); err != nil {
 		return err
 	}
 	fmt.Printf("%d tokens in %s, the first expiring %s\n", len(everyone), *out, file.Expires.UTC().Format(time.RFC3339))
@@ -157,8 +164,9 @@ func signAll(client *http.Client, origin string, everyone []*signer) (time.Time,
 }
 
 // tokenClient connects from 127.0.0.1 with the gateway's client certificate
-// in folder and accepts only a server certificate the folder's CA issued.
-func tokenClient(folder string) (*http.Client, error) {
+// in folder and accepts only a server certificate the folder's CA issued for
+// name.
+func tokenClient(folder, name string) (*http.Client, error) {
 	certificate, err := tls.LoadX509KeyPair(filepath.Join(folder, clientCertFile), filepath.Join(folder, clientKeyFile))
 	if err != nil {
 		return nil, err
@@ -171,23 +179,7 @@ func tokenClient(folder string) (*http.Client, error) {
 	if !roots.AppendCertsFromPEM(authority) {
 		return nil, fmt.Errorf("%s holds no certificate", filepath.Join(folder, caFile))
 	}
-	config := &tls.Config{
-		Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12,
-		// Fetch's certificate names the address demo certs was given, while a
-		// measured host may serve it on another one: the chain is checked, the name is not.
-		InsecureSkipVerify: true,
-		VerifyConnection: func(state tls.ConnectionState) error {
-			if len(state.PeerCertificates) == 0 {
-				return errors.New("no server certificate")
-			}
-			intermediates := x509.NewCertPool()
-			for _, cert := range state.PeerCertificates[1:] {
-				intermediates.AddCert(cert)
-			}
-			_, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates})
-			return err
-		},
-	}
+	config := &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: name}
 	// From loopback, so the APIs trust the visitor address it names.
 	dialer := &net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)}, Timeout: 5 * time.Second}
 	transport := &http.Transport{Proxy: nil, DialContext: dialer.DialContext, TLSClientConfig: config, MaxIdleConnsPerHost: 8}

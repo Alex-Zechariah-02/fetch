@@ -1,5 +1,5 @@
-// The command line of one Fetch service or Accounts: its addresses, secret,
-// signing settings, internal call origins, the API's TLS files, the gateway's
+// The command line of one Fetch service or Accounts: its addresses, control
+// secret, internal call keys, signing settings, internal call origins, the API's TLS files, the gateway's
 // public keys and the folder of built-in protection.
 
 package services
@@ -30,7 +30,8 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	flags.StringVar(&ingress.Certificate, "tls-cert", "", "API certificate chain (PEM)")
 	flags.StringVar(&ingress.Key, "tls-key", "", "API private key (PEM)")
 	flags.StringVar(&ingress.ClientCA, "client-ca", "", "CA certificate (PEM) of the only client certificates the API admits: the gateway's")
-	secretFile := flags.String("secret-file", "", "service/control secret file")
+	secretFile := flags.String("control-secret", "", "control listener secret file (receipts, state and reset)")
+	keysFolder := flags.String("keys", "", "folder of the internal call key files: <service>.key for this service's own calls and for each service that calls it")
 	inventoryURL := flags.String("inventory", "", "Inventory internal HTTP origin")
 	ordersURL := flags.String("orders", "", "Orders internal HTTP origin")
 	signingFile := flags.String("signing-settings", "", "Accounts signing settings file")
@@ -73,19 +74,23 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 		}
 		*inventoryURL = "http://" + address
 	}
-	if name == "reports" && *ordersURL == "" {
+	if (name == "reports" || name == "support") && *ordersURL == "" {
 		address, err := ports.Offset("127.0.0.1:9502")
 		if err != nil {
 			return err
 		}
 		*ordersURL = "http://" + address
 	}
-	secret, err := readBoundedFile(*secretFile, nil)
+	secret, err := readBoundedFile(*secretFile, private)
 	if err != nil {
-		return fmt.Errorf("reading service secret: %w", err)
+		return fmt.Errorf("reading the control secret: %w", err)
 	}
 	secret = []byte(strings.TrimSpace(string(secret)))
-	service, err := New(Config{Name: name, Secret: secret, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection, GatewayKey: *gatewayKey, Measure: *measure})
+	keys, err := commandKeys(*keysFolder, name)
+	if err != nil {
+		return err
+	}
+	service, err := New(Config{Name: name, Keys: keys, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection, GatewayKey: *gatewayKey, Measure: *measure})
 	if err != nil {
 		return err
 	}
@@ -99,9 +104,27 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	if *gatewayKey != "" {
 		transport += ", gateway assertion required, key IDs " + strings.Join(service.gateway.keyIDs(), " ")
 	}
+	if *protection == "" && *gatewayKey == "" {
+		transport += ", standalone (unprotected): identity headers are trusted as sent"
+	}
 	if *measure {
 		transport += ", measurement mode"
 	}
 	fmt.Fprintf(output, "starting %s; api %s (%s); control %s\n", name, *listen, transport, *control)
 	return Run(ctx, service, *listen, *control, secret, ingress)
+}
+
+// commandKeys reads service name's internal call keys from folder, which a
+// service that makes and takes no internal calls (Accounts) must not name.
+func commandKeys(folder, name string) (map[string][]byte, error) {
+	if len(needs(name)) == 0 {
+		if folder != "" {
+			return nil, fmt.Errorf("%s makes and takes no internal calls: do not give -keys", name)
+		}
+		return nil, nil
+	}
+	if folder == "" {
+		return nil, fmt.Errorf("%s needs -keys, the folder of its internal call keys", name)
+	}
+	return ReadKeys(folder, name)
 }

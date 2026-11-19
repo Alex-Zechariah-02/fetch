@@ -7,6 +7,7 @@ package services
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Alex-Zechariah-02/fetch/internal/guard"
@@ -113,4 +114,46 @@ func operationsOf(api string) []guard.Operation {
 		}
 	}
 	return table
+}
+
+// routes is every API's operation table, by API, read once. A service
+// answers only what its table names (and the /internal/ calls between
+// services), so the table the guard and the gateway policy use is also the
+// one that decides what a handler is reached for.
+var routes = tablesOf(Operations())
+
+func tablesOf(operations []guard.Operation) map[string][]guard.Operation {
+	tables := map[string][]guard.Operation{}
+	for _, op := range operations {
+		tables[op.API] = append(tables[op.API], op)
+	}
+	return tables
+}
+
+// routed reports that api has an operation for method on path: a target
+// ending in "/*" covers any longer path below it.
+func routed(api, method, path string) bool {
+	for _, op := range routes[api] {
+		if op.Method != method {
+			continue
+		}
+		prefix, wildcard := strings.CutSuffix(op.Target, "*")
+		if path == op.Target || wildcard && len(path) > len(prefix) && strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// bodyLimit is the largest body any operation of api takes, and Inventory's
+// internal reservation (a checkout's lines); no read goes past it.
+func bodyLimit(api string) int64 {
+	largest := 0
+	if api == "inventory" {
+		largest = orderBody
+	}
+	for _, op := range routes[api] {
+		largest = max(largest, op.MaxBytes)
+	}
+	return int64(largest)
 }

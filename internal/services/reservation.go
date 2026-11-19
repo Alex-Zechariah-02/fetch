@@ -90,7 +90,7 @@ func (d *inventory) reserve(r *http.Request, body []byte) result {
 		}
 	}
 	d.reservations[key] = reservation{digest: digest, counts: counts, response: response}
-	for _, old := range d.recent.add(key, time.Now()) {
+	for _, old := range d.recent.add(key, reservationSize(len(request.Items)), time.Now()) {
 		d.forget(old)
 	}
 	return result{status: 200, body: response, effect: "reserved stock"}
@@ -133,7 +133,7 @@ func (d *inventory) release(key string) result {
 	// A tombstone for a reservation never made joins the same bounded memory
 	// as a reservation, so it is forgotten in turn and Inventory stays bounded.
 	if !found {
-		for _, old := range d.recent.add(key, time.Now()) {
+		for _, old := range d.recent.add(key, reservationSize(0), time.Now()) {
 			d.forget(old)
 		}
 	}
@@ -157,3 +157,7 @@ func (d *inventory) commit(key string) result {
 	}
 	return result{status: 200, body: map[string]any{"committed": true}}
 }
+
+// reservationSize estimates the memory of a reservation of lines: its key,
+// digest, merchant and flags, and per line a priced line and a count.
+func reservationSize(lines int) int { return 512 + 160*lines }

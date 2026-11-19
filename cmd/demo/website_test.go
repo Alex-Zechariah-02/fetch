@@ -64,7 +64,10 @@ func TestFetchWebsiteResponseHeaders(t *testing.T) {
 		"index.html":          {Data: []byte("test page")},
 		"assets/MER-001.webp": {Data: []byte("test image")},
 	}
-	handler := website(files)
+	handler, err := loadWebsite(files)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, target := range []string{"/", "/food", "/assets/MER-001.webp", "/assets/missing.js", "/orders/mine"} {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
@@ -75,8 +78,41 @@ func TestFetchWebsiteResponseHeaders(t *testing.T) {
 			continue
 		}
 		if w.Code != http.StatusOK || w.Header().Get("Content-Security-Policy") != sitePolicy || w.Header().Get("X-Content-Type-Options") != "nosniff" ||
-			w.Header().Get("X-Frame-Options") != "DENY" || w.Header().Get("Cache-Control") != "no-store" {
+			w.Header().Get("X-Frame-Options") != "DENY" || w.Header().Get("Cache-Control") != "no-cache" || w.Header().Get("ETag") == "" {
 			t.Errorf("%s: status %d headers %v", target, w.Code, w.Header())
 		}
+	}
+}
+
+// The shop is read once at start: a file changed or removed afterwards does
+// not change the answer; an unchanged file revalidates with 304, and HEAD
+// gets the length without the body.
+func TestFetchWebsiteServesLoadedBuild(t *testing.T) {
+	files := fstest.MapFS{"index.html": {Data: []byte("test page")}, "assets/app.js": {Data: []byte("let a = 1")}}
+	handler, err := loadWebsite(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(files, "assets/app.js")
+	files["index.html"] = &fstest.MapFile{Data: []byte("changed")}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "let a = 1" || w.Header().Get("Content-Length") != "9" {
+		t.Fatalf("loaded asset: %d %q %v", w.Code, w.Body.String(), w.Header())
+	}
+	again := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
+	again.Header.Set("If-None-Match", w.Header().Get("ETag"))
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, again)
+	if w.Code != http.StatusNotModified || w.Body.Len() != 0 {
+		t.Fatalf("revalidation: %d %q", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodHead, "/", nil))
+	if w.Code != http.StatusOK || w.Body.Len() != 0 || w.Header().Get("Content-Length") != "9" {
+		t.Fatalf("HEAD: %d %q %v", w.Code, w.Body.String(), w.Header())
+	}
+	if _, err := loadWebsite(fstest.MapFS{}); err == nil {
+		t.Fatal("a build without index.html was loaded")
 	}
 }

@@ -36,7 +36,7 @@ func accountService(t *testing.T) (*Service, *rsa.PrivateKey, string) {
 	if err = os.WriteFile(settings, document, 0600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(Config{Name: "accounts", Secret: testSecret, SigningSettingsFile: settings})
+	s, err := New(Config{Name: "accounts", Keys: testKeys("accounts"), SigningSettingsFile: settings})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +90,8 @@ func TestAccountsTokensAndProfiles(t *testing.T) {
 			}
 		}
 	}
-	state, _ := json.Marshal(s.state())
-	receipts, _ := json.Marshal(s.receipts)
+	state, _ := json.Marshal(mustState(t, s))
+	receipts, _ := json.Marshal(s.recent.receipts)
 	for _, secret := range []string{"FetchDemo2026!", "PRIVATE KEY", `"token":`, `"password":`} {
 		if strings.Contains(string(state), secret) || strings.Contains(string(receipts), secret) {
 			t.Fatalf("Accounts control data leaked %q", secret)

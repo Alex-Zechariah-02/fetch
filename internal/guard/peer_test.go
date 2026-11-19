@@ -1,4 +1,4 @@
-// The client a request counts for.
+// The client a request counts for, and its rate key.
 
 package guard
 
@@ -26,6 +26,22 @@ func TestClientOf(t *testing.T) {
 	for _, c := range cases {
 		if got := clientOf(netip.MustParseAddr(c.peer), c.header).String(); got != c.want {
 			t.Errorf("peer %s, header %v: %s, want %s", c.peer, c.header, got, c.want)
+		}
+	}
+}
+
+// An IPv6 client is counted by its /64, so rotating addresses inside it buys
+// no fresh quota; an IPv4 client by its own address.
+func TestRateKeyMasksIPv6(t *testing.T) {
+	cases := map[string]string{
+		"203.0.113.9":          "203.0.113.9",
+		"2001:db8:1:2:3:4:5:6": "2001:db8:1:2::/64",
+		"2001:db8:1:2:ffff::1": "2001:db8:1:2::/64",
+		"2001:db8:1:3::1":      "2001:db8:1:3::/64",
+	}
+	for address, want := range cases {
+		if got := rateKey(netip.MustParseAddr(address)); got != want {
+			t.Errorf("%s: %s, want %s", address, got, want)
 		}
 	}
 }

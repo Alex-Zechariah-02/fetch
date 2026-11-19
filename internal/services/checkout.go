@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"time"
@@ -38,13 +39,13 @@ func (d *orders) create(r *http.Request, body []byte) result {
 			if previous.digest != digest {
 				return failure(409, "idempotency_conflict", "This checkout key was used for a different order.", "")
 			}
-			return result{status: previous.status, body: previous.body}
+			return result{status: previous.status, encoded: previous.body}
 		}
 		placed, busy := d.placing[scope]
 		if !busy {
 			break
 		}
-		d.outside(func() {
+		d.outside(r.Context(), func() {
 			select {
 			case <-placed:
 			case <-r.Context().Done():
@@ -75,14 +76,19 @@ func (d *orders) create(r *http.Request, body []byte) result {
 	// A server failure is not kept, so a retry with the key tries again
 	// under a new reservation; the failed attempt's own is released.
 	if key != "" && res.status < 500 {
-		encoded, _ := json.Marshal(res.body)
-		// Answers are kept at least keyLife (recent), so a retry within it
-		// never places a second order.
+		// Encoded once: the stored bytes are also this answer's.
+		encoded, err := res.encode()
+		if err != nil {
+			return failure(500, "internal_error", "The service could not form its answer.", "")
+		}
+		// Answers are kept at least keyLife (recent) while this process
+		// runs, so a retry within it never places a second order; a restart
+		// or a reset forgets them.
 		d.idempotency[scope] = savedOrderResult{digest, res.status, encoded}
-		for _, old := range d.recent.add(scope, time.Now()) {
+		for _, old := range d.recent.add(scope, len(encoded)+len(scope), time.Now()) {
 			delete(d.idempotency, old)
 		}
-		res.body = json.RawMessage(encoded)
+		res.encoded = encoded
 	}
 	return res
 }
@@ -95,7 +101,7 @@ func (d *orders) release(ctx context.Context, key string) bool {
 	}
 	d.releasing[key] = true
 	epoch, released := d.epoch, false
-	d.outside(func() {
+	d.outside(ctx, func() {
 		// Two attempts bound the Inventory calls one failed checkout makes.
 		for range 2 {
 			status, _, err := d.inventory.call(cleanup, "DELETE", "/internal/reservations/"+key, nil, key)
@@ -114,13 +120,58 @@ func (d *orders) release(ctx context.Context, key string) bool {
 	delete(d.releasing, key)
 	if released {
 		delete(d.pendingRelease, key)
-	} else {
-		// No maximum: each entry is one reservation Inventory still holds,
-		// and dropping one would leave its stock reserved for good.
-		d.pendingRelease[key] = true
+		return true
 	}
-	return released
+	// No maximum: each entry is one reservation Inventory still holds,
+	// and dropping one would leave its stock reserved for good.
+	d.pendingRelease[key] = true
+	if !d.retrying {
+		d.retrying = true
+		go d.retry()
+	}
+	return false
 }
+
+// retry is the compensation worker: it retries the releases Inventory has
+// not confirmed, at most retryBatch per turn under the service lock, waiting
+// one second after a turn that settled everything it tried and twice as long
+// (up to half a minute) after one that did not. It ends when nothing is
+// pending or the service closes, so no request ever waits on another's
+// compensation.
+func (d *orders) retry() {
+	delay := time.Second
+	for {
+		select {
+		case <-d.stop:
+			return
+		case <-time.After(delay):
+		}
+		settled, pending := true, false
+		d.locked(func() {
+			keys := slices.Sorted(maps.Keys(d.pendingRelease))
+			for _, key := range keys[:min(len(keys), retryBatch)] {
+				if !d.releasing[key] && !d.release(context.Background(), key) {
+					settled = false
+				}
+			}
+			pending = len(d.pendingRelease) > 0
+			d.retrying = pending
+		})
+		if !pending {
+			return
+		}
+		if settled {
+			delay = time.Second
+		} else {
+			delay = min(2*delay, 30*time.Second)
+		}
+	}
+}
+
+// retryBatch bounds one turn of the compensation worker; each release makes
+// at most two Inventory calls of three seconds.
+const retryBatch = 32
+
 func (d *orders) place(r *http.Request, body []byte, key string) result {
 	var request orderRequest
 	if rejected := decodeBody(r, body, orderBody, &request); rejected != nil {
@@ -136,12 +187,14 @@ func (d *orders) place(r *http.Request, body []byte, key string) result {
 	// checkout key must still be able to reserve.
 	hash := sha256.Sum256([]byte(subject + ":" + key + ":" + randomID()))
 	reservationKey := hex.EncodeToString(hash[:])
-	data, _ := json.Marshal(purchase{request.Merchant, request.Items})
+	data, err := json.Marshal(purchase{request.Merchant, request.Items})
+	if err != nil {
+		return failure(500, "internal_error", "The service could not form its request.", "")
+	}
 	var status int
 	var reply []byte
-	var err error
 	epoch := d.epoch
-	d.outside(func() {
+	d.outside(r.Context(), func() {
 		status, reply, err = d.inventory.call(r.Context(), "POST", "/internal/reservations", data, reservationKey)
 	})
 	// Everything below reads the wallet, the orders and the next order
@@ -174,6 +227,10 @@ func (d *orders) place(r *http.Request, body []byte, key string) result {
 		d.wallets[subject] -= total
 	}
 	d.list = append(d.list, created)
+	d.index[created.ID] = len(d.list) - 1
+	if martOrder(created) {
+		d.martOrders[subject]++
+	}
 	d.next++
 	d.reservations[created.ID] = reservationKey
 	d.trim()

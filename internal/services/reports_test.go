@@ -7,21 +7,27 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
+
+// seedWindow is a report window that covers the whole seed and today.
+func seedWindow() string {
+	return "from=" + seedDay.AddDate(0, 0, -historyDays-1).Format(time.DateOnly) + "&to=" + seedDay.AddDate(0, 0, 1).Format(time.DateOnly)
+}
 
 func TestReportsContractAndLiveOrders(t *testing.T) {
 	_, orderService := newCommerce(t)
 	server := httptest.NewServer(orderService)
 	defer server.Close()
-	reportService, err := New(Config{Name: "reports", Secret: testSecret, OrdersURL: server.URL})
+	reportService, err := New(Config{Name: "reports", Keys: testKeys("reports"), OrdersURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ path, subject, roles string }{
-		{"/reports/merchant?from=2026-08-01&to=2026-10-31", "merchant-001", "MERCHANT"},
-		{"/reports/summary?from=2026-08-01&to=2026-10-31", "ops-01", "OPERATIONS"},
-		{"/reports/sales?from=2026-08-01&to=2026-10-31", "ops-01", "OPERATIONS"},
-		{"/reports/top-items?from=2026-08-01&to=2026-10-31&limit=3", "ops-01", "OPERATIONS"},
+		{"/reports/merchant?" + seedWindow(), "merchant-001", "MERCHANT"},
+		{"/reports/summary?" + seedWindow(), "ops-01", "OPERATIONS"},
+		{"/reports/sales?" + seedWindow(), "ops-01", "OPERATIONS"},
+		{"/reports/top-items?" + seedWindow() + "&limit=3", "ops-01", "OPERATIONS"},
 	} {
 		w := serviceRequest(reportService, "GET", tc.path, "", tc.subject, tc.roles, "")
 		if w.Code != 200 || w.Header().Get("X-Service") != "reports" {
@@ -40,7 +46,7 @@ func TestReportsContractAndLiveOrders(t *testing.T) {
 		}
 	}
 	read := func() (int, int64) {
-		w := serviceRequest(reportService, "GET", "/reports/summary?from=2026-08-01&to=2026-12-31", "", "ops-01", "OPERATIONS", "")
+		w := serviceRequest(reportService, "GET", "/reports/summary?"+seedWindow(), "", "ops-01", "OPERATIONS", "")
 		var result struct {
 			Orders  int
 			Revenue int64 `json:"revenue_sen"`
@@ -66,7 +72,7 @@ func TestReportsContractAndLiveOrders(t *testing.T) {
 func TestReportsRecordCallerCancellation(t *testing.T) {
 	_, orderService := newCommerce(t)
 	server := httptest.NewServer(orderService)
-	reportService, err := New(Config{Name: "reports", Secret: testSecret, OrdersURL: server.URL})
+	reportService, err := New(Config{Name: "reports", Keys: testKeys("reports"), OrdersURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +89,7 @@ func TestReportsRecordCallerCancellation(t *testing.T) {
 		t.Fatalf("Orders outage: %d %s", outage.Code, outage.Body)
 	}
 	statuses := []int{}
-	for _, receipt := range reportService.receipts {
+	for _, receipt := range reportService.recent.receipts {
 		statuses = append(statuses, receipt.Status)
 	}
 	if !slices.Equal(statuses, []int{499, 503}) {
@@ -95,7 +101,7 @@ func TestPlatformReportsHonorGatewayPermission(t *testing.T) {
 	_, orderService := newCommerce(t)
 	server := httptest.NewServer(orderService)
 	defer server.Close()
-	reportService, err := New(Config{Name: "reports", Secret: testSecret, OrdersURL: server.URL})
+	reportService, err := New(Config{Name: "reports", Keys: testKeys("reports"), OrdersURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

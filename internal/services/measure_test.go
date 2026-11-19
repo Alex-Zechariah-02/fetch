@@ -14,7 +14,7 @@ import (
 )
 
 func TestMeasureCountsReceiptsWithoutCap(t *testing.T) {
-	orders, err := New(Config{Name: "orders", Secret: testSecret, InventoryURL: "http://127.0.0.1:9", Measure: true})
+	orders, err := New(Config{Name: "orders", Keys: testKeys("orders"), InventoryURL: "http://127.0.0.1:9", Measure: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestMeasureCountsReceiptsWithoutCap(t *testing.T) {
 // it holds the newest ones in order, numbered from the reset, and reports how
 // many older ones it let go.
 func TestReceiptsKeepNewest(t *testing.T) {
-	support, err := New(Config{Name: "support", Secret: testSecret})
+	support, err := New(Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,14 +69,14 @@ func TestReceiptsKeepNewest(t *testing.T) {
 	}
 	support.Control(testSecret).ServeHTTP(httptest.NewRecorder(), controlRequest("POST", "/reset"))
 	serviceRequest(support, "GET", "/nowhere", "", "", "", "")
-	if len(support.receipts) != 1 || support.receipts[0].Seq != 1 || support.dropped != 0 {
-		t.Fatalf("after reset: %d receipts, first seq %d, dropped %d", len(support.receipts), support.receipts[0].Seq, support.dropped)
+	if len(support.recent.receipts) != 1 || support.recent.receipts[0].Seq != 1 || support.recent.dropped != 0 {
+		t.Fatalf("after reset: %d receipts, first seq %d, dropped %d", len(support.recent.receipts), support.recent.receipts[0].Seq, support.recent.dropped)
 	}
 }
 
 func TestLoadAccountsOnlyInMeasureMode(t *testing.T) {
 	plain, _, settings := accountService(t)
-	measured, err := New(Config{Name: "accounts", Secret: testSecret, SigningSettingsFile: settings, Measure: true})
+	measured, err := New(Config{Name: "accounts", Keys: testKeys("accounts"), SigningSettingsFile: settings, Measure: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,13 +131,13 @@ func TestMeasureBoundsData(t *testing.T) {
 		t.Fatalf("default mode holds %d orders", len(plain.list))
 	}
 
-	keys := arrivals{limit: 2}
+	keys := arrivals{limit: 2, maxBytes: keptBytes}
 	var forgotten []string
 	start := time.Now()
 	for _, key := range []string{"a", "b", "c", "d", "e"} {
-		forgotten = append(forgotten, keys.add(key, start)...)
+		forgotten = append(forgotten, keys.add(key, 1, start)...)
 	}
-	if strings.Join(forgotten, "") != "ab" || len(keys.keys) != 3 || keys.keys[0].key != "c" {
+	if strings.Join(forgotten, "") != "ab" || keys.held() != 3 || keys.keys[keys.head].key != "c" {
 		t.Fatalf("forgotten %v, kept %v", forgotten, keys.keys)
 	}
 	if kept := measured(false, 0); kept.limit != keptKeys {
@@ -162,27 +162,27 @@ func TestMeasureBoundsData(t *testing.T) {
 	run = &orders{measure: true}
 	run.reset()
 	for i := range 4*measureKeys + 1 {
-		run.recent.add(fmt.Sprint(i), start)
+		run.recent.add(fmt.Sprint(i), 1, start)
 		if run.recent.full() {
 			t.Fatalf("measurement memory full after %d young identities", i+1)
 		}
 	}
-	if held := len(run.recent.keys); held < measureKeys || held >= 2*measureKeys {
+	if held := run.recent.held(); held < measureKeys || held >= 2*measureKeys {
 		t.Fatalf("measurement memory holds %d identities, want the newest %d to %d", held, measureKeys, 2*measureKeys-1)
 	}
 
 	// With a life, a key is kept past the count until it is old enough, and
 	// a full memory refuses rather than forgets.
-	young := arrivals{limit: 2, life: time.Hour}
+	young := arrivals{limit: 2, life: time.Hour, maxBytes: keptBytes}
 	for i := range 7 {
-		if old := young.add(fmt.Sprint(i), start); old != nil {
+		if old := young.add(fmt.Sprint(i), 1, start); old != nil {
 			t.Fatalf("forgot %v before they were an hour old", old)
 		}
 	}
 	if young.full() {
 		t.Fatal("seven keys under a limit of two fill the memory")
 	}
-	young.add("7", start)
+	young.add("7", 1, start)
 	if !young.full() {
 		t.Fatal("eight young keys under a limit of two do not fill the memory")
 	}

@@ -175,7 +175,7 @@ func (a *adminClient) establishBaseline(state string) error {
 		return err
 	}
 
-	first, err := a.stage(denyAllDocument, `"r0"`)
+	first, err := a.stage(denyAllDocument, genesisRevision)
 	if err != nil {
 		return err
 	}
@@ -216,15 +216,19 @@ func (a *adminClient) establishBaseline(state string) error {
 	return err
 }
 
-// maxPolicy is the gateway's largest policy document (limits.policy_bytes
-// cannot exceed it); a policy file may be up to 16 times that with layout.
-const (
-	maxPolicy     = 64 << 10
-	maxPolicyFile = 16 * maxPolicy
-)
+// maxPolicyFile bounds the read of a policy file. The gateway decides the
+// policy's size by its own limits.policy_bytes and names both sizes when it
+// refuses one; 4 MiB is far above any limit it accepts.
+const maxPolicyFile = 4 << 20
+
+// genesisRevision is the ETag APIWard's Admin API gives a deployment before
+// its first policy ("r" and confirmed revision 0); staging the first
+// candidate against any other value is refused there, and the round-trip
+// test stages against it.
+const genesisRevision = `"r0"`
 
 // compactFile reads the policy file at path, at most maxPolicyFile bytes, and
-// returns it compacted, refusing a document the gateway would refuse by size.
+// returns it compacted.
 func compactFile(path string) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -241,9 +245,6 @@ func compactFile(path string) ([]byte, error) {
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, data); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if compact.Len() > maxPolicy {
-		return nil, fmt.Errorf("%s: the policy is %d bytes compacted; the gateway accepts at most %d", path, compact.Len(), maxPolicy)
 	}
 	return compact.Bytes(), nil
 }

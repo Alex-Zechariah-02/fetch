@@ -4,8 +4,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,11 +139,17 @@ func npm(dir string, args ...string) error {
 	return nil
 }
 
+// enrolmentLine starts the line of apiward install's output that holds the
+// first administrator's secret, as APIWard prints it
+// (internal/operator/commands.go there); TestEnrolmentSecret and the
+// gateway's own demo test fail if the wording changes.
+const enrolmentLine = "enrolment secret for " + upAdmin + ","
+
 // enrolmentSecret reads the first administrator's one-time enrolment secret
 // from the gateway's install output.
 func enrolmentSecret(install string) (string, error) {
 	for line := range strings.Lines(install) {
-		if strings.HasPrefix(line, "enrolment secret for "+upAdmin+",") {
+		if strings.HasPrefix(line, enrolmentLine) {
 			if _, secret, found := strings.Cut(strings.TrimSpace(line), ": "); found && secret != "" {
 				return secret, nil
 			}
@@ -187,6 +196,68 @@ func prepareGateway(state string, firstRun bool, secret, password string) error 
 	defer admin.signOut(os.Stderr)
 	fmt.Println("Establishing the baseline policy...")
 	return admin.establishBaseline(state)
+}
+
+// checkReused compares a deployment a later run reuses with what this run
+// would create. It refuses when the stored baseline sends the APIs to another
+// host or the settings name another certificate folder, since the gateway
+// would then reach the wrong Fetch or with old certificates; it notes when
+// only the baseline's content differs, as the confirmed policy stays as it is.
+func checkReused(state string, baseline map[string]any, ca string) error {
+	stored, err := os.ReadFile(filepath.Join(state, baselineFile))
+	if err != nil {
+		return err
+	}
+	want := indented(baseline)
+	if before, now := upstreamHost(stored), upstreamHost(want); before != now {
+		return fmt.Errorf("this deployment sends its APIs to %s, this run to %s: run with the earlier address, or start over with -fresh", before, now)
+	}
+	if ca != "" {
+		if named := settingsCA(state); named != ca {
+			return fmt.Errorf("this deployment's settings name the certificates in %s, this run %s: pass the earlier folder, or start over with -fresh", filepath.Dir(named), filepath.Dir(ca))
+		}
+	}
+	if !bytes.Equal(stored, want) {
+		fmt.Println("Note: this version's baseline policy differs from the one this deployment started with; its confirmed policy is unchanged (compare them in the Dashboard's Changes page, or start over with -fresh).")
+	}
+	return nil
+}
+
+// upstreamHost is the host of the first upstream in a baseline document, or "".
+func upstreamHost(document []byte) string {
+	var policy struct {
+		Upstreams []struct {
+			Dial string `json:"dial"`
+			URL  string `json:"url"`
+		} `json:"upstreams"`
+	}
+	if json.Unmarshal(document, &policy) != nil || len(policy.Upstreams) == 0 {
+		return ""
+	}
+	address := strings.TrimPrefix(policy.Upstreams[0].URL, "https://") + policy.Upstreams[0].Dial
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return address
+	}
+	return host
+}
+
+// settingsCA is the CA file the first upstream TLS profile of state's
+// settings names, or "".
+func settingsCA(state string) string {
+	data, err := os.ReadFile(filepath.Join(state, configFile))
+	if err != nil {
+		return ""
+	}
+	var settings struct {
+		Upstream struct {
+			Profiles []tlsProfile `json:"tls_profiles"`
+		} `json:"upstream"`
+	}
+	if json.Unmarshal(data, &settings) != nil || len(settings.Upstream.Profiles) == 0 {
+		return ""
+	}
+	return settings.Upstream.Profiles[0].CAFile
 }
 
 // printSignIns prints only the deliberately public fictional demo credentials.

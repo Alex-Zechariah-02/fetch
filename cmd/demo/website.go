@@ -6,8 +6,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
@@ -40,26 +44,65 @@ var (
 	sitePrefixes = []string{"/store/", "/item/", "/my-orders/", "/help/"}
 )
 
-// website serves the built shop in files.
-func website(files fs.FS) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name, contentType, ok := websiteFile(r)
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
+// page is one file of the shop, loaded at start.
+type page struct {
+	data        []byte
+	contentType string
+	tag         string // strong ETag: the content's SHA-256
+}
+
+// loadWebsite reads the built shop in files once, its page and every asset of
+// a served type, and serves them from memory: the build does not change while
+// a demonstration runs. Browsers revalidate each file by its ETag, so an
+// unchanged file costs a 304 and no body.
+func loadWebsite(files fs.FS) (http.Handler, error) {
+	pages := map[string]page{}
+	add := func(name, contentType string) error {
 		data, err := fs.ReadFile(files, name)
 		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(data)
+		pages[name] = page{data, contentType, `"` + hex.EncodeToString(sum[:16]) + `"`}
+		return nil
+	}
+	if err := add("index.html", "text/html; charset=utf-8"); err != nil {
+		return nil, fmt.Errorf("the shop's page: %w", err)
+	}
+	assets, err := fs.ReadDir(files, "assets")
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	for _, entry := range assets {
+		contentType := assetTypes[path.Ext(entry.Name())]
+		if entry.Type().IsRegular() && contentType != "" && isPlainName(entry.Name()) {
+			if err := add("assets/"+entry.Name(), contentType); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return website(pages), nil
+}
+
+// website serves pages, the loaded shop.
+func website(pages map[string]page) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name, _, ok := websiteFile(r)
+		file, found := pages[name]
+		if !ok || !found {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Type", file.contentType)
 		w.Header().Set("Content-Security-Policy", sitePolicy)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Write(data)
+		// Kept, but checked again on every use: a rebuilt shop shows at once.
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("ETag", file.tag)
+		// ServeContent answers If-None-Match with 304, sets Content-Length and sends no body to HEAD.
+		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(file.data))
 	})
 }
 
@@ -136,11 +179,11 @@ func demoServer(handler http.Handler, write time.Duration) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: write, IdleTimeout: 2 * time.Minute}
 }
 
-// serveWebsite serves files on listener until ctx ends, then stops within
+// serveWebsite serves site on listener until ctx ends, then stops within
 // the bound and reports why the server ended, nil for a requested stop. The
 // write deadline lets the largest shop asset reach a slow link.
-func serveWebsite(ctx context.Context, listener net.Listener, files fs.FS) error {
-	server := demoServer(website(files), shopWrite)
+func serveWebsite(ctx context.Context, listener net.Listener, site http.Handler) error {
+	server := demoServer(site, shopWrite)
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)

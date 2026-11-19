@@ -41,11 +41,22 @@ func newChildren(dir string, capacity int) *children {
 	return &children{dir: dir, exited: make(chan processExit, capacity)}
 }
 
+// logLimit bounds a child's log: a log this large at a start moves to
+// <name>.previous.log, replacing the one there, so a deployment keeps at most
+// two such logs per program plus the current run's output.
+const logLimit = 16 << 20
+
 // start runs binary with its output appended to <dir>/<name>.log and returns
 // the log's size before the start, where this run's output begins.
 func (c *children) start(name, binary string, args ...string) (int64, error) {
-	// 0600 append: only the running user reads a log, and earlier runs' output is kept.
-	logFile, err := os.OpenFile(filepath.Join(c.dir, name+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	path := filepath.Join(c.dir, name+".log")
+	if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Size() >= logLimit {
+		if err := os.Rename(path, filepath.Join(c.dir, name+".previous.log")); err != nil {
+			return 0, err
+		}
+	}
+	// 0600 append: only the running user reads a log, and earlier runs' output is kept up to logLimit.
+	logFile, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 0, err
 	}
@@ -116,13 +127,16 @@ type fetchHost struct {
 	measure bool   // the services and Accounts run in measurement mode
 }
 
-// startServices starts the four Fetch APIs and Accounts with the secret and
-// signing settings in dir, on this machine's loopback addresses or, with host,
+// startServices starts the four Fetch APIs and Accounts with the control
+// secret and signing settings in dir and new internal call keys written there, on this machine's loopback addresses or, with host,
 // on the Fetch host's address, and returns every address they listen on. The
 // calls between services stay on loopback either way. With protect, each
 // checks requests itself with the settings in dir (built-in protection).
 func (c *children) startServices(dir, serviceBinary, accountsBinary string, host *fetchHost, protect bool) ([]string, error) {
 	secret := filepath.Join(dir, secretFile)
+	if err := newKeys(dir); err != nil {
+		return nil, fmt.Errorf("writing the internal call keys: %w", err)
+	}
 	if host != nil {
 		c.keySet = host.keySet
 	}
@@ -130,7 +144,7 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 	for _, f := range fetchServices {
 		binary := serviceBinary
 		listen := f.listen
-		args := []string{"-control", f.control, "-secret-file", secret}
+		args := []string{"-control", f.control, "-control-secret", secret}
 		if host != nil {
 			listen = deployedAddress(f.listen, host.bind)
 			args = append(args, "-tls-cert", host.ingress.Certificate, "-tls-key", host.ingress.Key, "-client-ca", host.ingress.ClientCA)
@@ -153,11 +167,12 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 			args = append(args, "-signing-settings", filepath.Join(dir, signingFile))
 		case "orders":
 			// fetchServices lists inventory first and orders second, which is what these indexes mean.
-			args = append(args, "-service", f.name, "-inventory", "http://"+fetchServices[0].listen)
-		case "reports":
-			args = append(args, "-service", f.name, "-orders", "http://"+fetchServices[1].listen)
+			args = append(args, "-service", f.name, "-keys", dir, "-inventory", "http://"+fetchServices[0].listen)
+		case "reports", "support":
+			// Reports reads order history and Support checks a ticket's order at Orders.
+			args = append(args, "-service", f.name, "-keys", dir, "-orders", "http://"+fetchServices[1].listen)
 		default:
-			args = append(args, "-service", f.name)
+			args = append(args, "-service", f.name, "-keys", dir)
 		}
 		if _, err := c.start(f.name, binary, args...); err != nil {
 			return nil, err
@@ -165,6 +180,36 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 		addresses = append(addresses, listen, f.control)
 	}
 	return addresses, nil
+}
+
+// keyFiles name the internal call key file of each calling service.
+func keyFiles() []string {
+	var names []string
+	for _, name := range services.Callers() {
+		names = append(names, name+".key")
+	}
+	return names
+}
+
+// newKeys writes a new internal call key for each calling service into dir,
+// as <service>.key readable by its owner only, for this run alone: an old
+// file is removed first, so a link left in its place is never written through.
+func newKeys(dir string) error {
+	for _, name := range keyFiles() {
+		path := filepath.Join(dir, name)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		_, err = file.Write(newSecret())
+		if err := errors.Join(err, file.Close()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // awaitListening waits until every address accepts connections. It fails

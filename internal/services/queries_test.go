@@ -30,28 +30,28 @@ func TestContractsDeclareQueries(t *testing.T) {
 	inventory, orders := newCommerce(t)
 	server := httptest.NewServer(orders)
 	t.Cleanup(server.Close)
-	reports, err := New(Config{Name: "reports", Secret: testSecret, OrdersURL: server.URL})
+	reports, err := New(Config{Name: "reports", Keys: testKeys("reports"), OrdersURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
-	support, err := New(Config{Name: "support", Secret: testSecret})
+	support, err := New(Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders})
 	if err != nil {
 		t.Fatal(err)
 	}
 	services := map[string]*Service{"inventory": inventory, "orders": orders, "reports": reports, "support": support}
-	dates := url.Values{"from": {"2026-08-01"}, "to": {"2026-10-31"}}
+	dates, _ := url.ParseQuery(seedWindow())
 	for _, tc := range []queryCase{
 		{"inventory", "/inventory/merchants", "", "", url.Values{"section": {"food"}, "category": {"nasi-lemak"}, "limit": {"5"}, "after": {"MER-001"}}, nil},
 		{"inventory", "/inventory/search", "", "", url.Values{"q": {"nasi"}, "section": {"food"}}, []string{"q"}},
 		{"orders", "/orders", "support-01", "SUPPORT", url.Values{"status": {"delivered"}, "limit": {"5"}, "after": {"ORD-1001"}}, nil},
-		{"orders", "/orders/merchant", "merchant-001", "MERCHANT", url.Values{"status": {"delivered"}}, nil},
+		{"orders", "/orders/merchant", "merchant-001", "MERCHANT", url.Values{"status": {"delivered"}, "limit": {"5"}, "after": {"ORD-1001"}}, nil},
 		{"orders", "/orders/mine", "cust-001", "CUSTOMER", url.Values{"limit": {"5"}, "after": {"ORD-1001"}}, nil},
 		{"orders", "/orders/quote", "cust-001", "CUSTOMER", url.Values{"merchant": {"MER-001"}}, []string{"merchant"}},
 		{"reports", "/reports/merchant", "merchant-001", "MERCHANT", dates, nil},
 		{"reports", "/reports/sales", "ops-01", "OPERATIONS", dates, nil},
 		{"reports", "/reports/summary", "ops-01", "OPERATIONS", dates, nil},
-		{"reports", "/reports/top-items", "ops-01", "OPERATIONS", url.Values{"from": {"2026-08-01"}, "to": {"2026-10-31"}, "limit": {"5"}}, nil},
-		{"support", "/support/queue", "support-01", "SUPPORT", url.Values{"status": {"open"}}, nil},
+		{"reports", "/reports/top-items", "ops-01", "OPERATIONS", url.Values{"from": dates["from"], "to": dates["to"], "limit": {"5"}}, nil},
+		{"support", "/support/queue", "support-01", "SUPPORT", url.Values{"status": {"open"}, "limit": {"5"}, "after": {"TKT-1001"}}, nil},
 	} {
 		declared, required := contractQueries(t, tc.service, tc.path)
 		if !slices.Equal(declared, sortedKeys(tc.params)) || !slices.Equal(required, slices.Sorted(slices.Values(tc.required))) {
@@ -106,7 +106,7 @@ func TestStockContractDeclaresZero(t *testing.T) {
 	if !strings.Contains(line, "below the units reserved for orders (409 insufficient_stock)") {
 		t.Error("the stock.adjust contract does not say that a decrease below the reserved units is refused")
 	}
-	inventory, err := New(Config{Name: "inventory", Secret: testSecret})
+	inventory, err := New(Config{Name: "inventory", Keys: testKeys("inventory")})
 	if err != nil {
 		t.Fatal(err)
 	}

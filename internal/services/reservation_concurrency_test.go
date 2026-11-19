@@ -16,7 +16,8 @@ func receiptsOf(s *Service, path string) map[int]int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	by := map[int]int{}
-	for _, receipt := range s.kept() {
+	receipts, _ := s.kept()
+	for _, receipt := range receipts {
 		if receipt.Target == path {
 			by[receipt.Status]++
 		}
@@ -26,7 +27,7 @@ func receiptsOf(s *Service, path string) map[int]int {
 
 func reserveRequest(s *Service, method, path, body, key string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
-	r.Header.Set("X-Service-Key", string(testSecret))
+	r.Header.Set("X-Service-Key", string(testKeyset["orders"]))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Idempotency-Key", key)
 	w := httptest.NewRecorder()
@@ -35,7 +36,7 @@ func reserveRequest(s *Service, method, path, body, key string) *httptest.Respon
 }
 
 func TestReservationConcurrencyAndLatePrepare(t *testing.T) {
-	s := newService(t, Config{Name: "inventory", Secret: testSecret})
+	s := newService(t, Config{Name: "inventory", Keys: testKeys("inventory")})
 	body := `{"merchant":"MER-005","items":[{"item":"ITM-502","quantity":4},{"item":"ITM-502","quantity":4}]}`
 	statuses := make([]int, 2)
 	reserve := func(i int) func() {

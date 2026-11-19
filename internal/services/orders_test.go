@@ -7,13 +7,65 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
-// testSecret is this run's service key, made fresh so no key is committed.
+// testSecret is this run's control secret, made fresh so no key is committed.
 var testSecret = []byte(randomID() + randomID())
+
+// testKeyset holds this run's internal call key of each calling service.
+var testKeyset = map[string][]byte{"orders": []byte(randomID() + randomID()), "reports": []byte(randomID() + randomID()), "support": []byte(randomID() + randomID())}
+
+// testKeys are the internal call keys service name holds in a test.
+func testKeys(name string) map[string][]byte {
+	keys := map[string][]byte{}
+	for _, key := range needs(name) {
+		keys[key] = testKeyset[key]
+	}
+	return keys
+}
 
 // newService is New for a test: a failure stops the test, and the
 // service's log is discarded unless cfg names one.
+// unusedOrders is an Orders origin for a Support API that a test never
+// has check an order reference.
+const unusedOrders = "http://127.0.0.1:9"
+
+// awaitReleased waits up to ten seconds for the compensation worker to
+// release ITM-501's reservations at inventory and returns its stock answer.
+func awaitReleased(t *testing.T, inventory *Service) string {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		w := serviceRequest(inventory, "GET", "/inventory/stock/ITM-501", "", "ops-01", "OPERATIONS", "")
+		if strings.Contains(w.Body.String(), `"reserved":0`) || time.Now().After(deadline) {
+			return w.Body.String()
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// supportWith is a Support API that checks order references with orders.
+func supportWith(t *testing.T, orders *Service) *Service {
+	t.Helper()
+	server := httptest.NewServer(orders)
+	t.Cleanup(server.Close)
+	return newService(t, Config{Name: "support", Keys: testKeys("support"), OrdersURL: server.URL})
+}
+
+// mustState is the service's state, failing the test when it cannot be encoded.
+func mustState(t *testing.T, s *Service) State {
+	t.Helper()
+	state, err := s.state()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+// stateSum is the digest of the service's state.
+func stateSum(t *testing.T, s *Service) string { return mustState(t, s).SHA256 }
+
 func newService(t *testing.T, cfg Config) *Service {
 	t.Helper()
 	if cfg.Log == nil {
@@ -30,13 +82,13 @@ const checkoutBody = `{"merchant":"MER-005","items":[{"item":"ITM-501","quantity
 
 func newCommerce(t *testing.T) (*Service, *Service) {
 	t.Helper()
-	inventory, err := New(Config{Name: "inventory", Secret: testSecret})
+	inventory, err := New(Config{Name: "inventory", Keys: testKeys("inventory")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(inventory)
 	t.Cleanup(server.Close)
-	orders, err := New(Config{Name: "orders", Secret: testSecret, InventoryURL: server.URL})
+	orders, err := New(Config{Name: "orders", Keys: testKeys("orders"), InventoryURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

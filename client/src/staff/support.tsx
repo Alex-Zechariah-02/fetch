@@ -3,7 +3,7 @@ import { when, reference } from '../lib/format'
 import { describe } from '../lib/messages'
 import { useQuery } from '../lib/query'
 import { navigate, useLocation } from '../lib/router'
-import type { List, Order, Ticket } from '../lib/types'
+import type { List, Order, Ticket, TicketSummary } from '../lib/types'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { cx } from '../ui/cx'
@@ -22,7 +22,7 @@ export function SupportPage() {
   const filter = (['open', 'answered', 'resolved', 'all'].includes(params.get('status') ?? '') ? params.get('status') : 'open') as Filter
   const selected = params.get('ticket')
   // Every 10 s: new tickets reach the queue soon after a customer writes.
-  const queue = useQuery<List<Ticket>>(`/support/queue${filter === 'all' ? '' : `?status=${filter}`}`, { poll: 10_000 })
+  const queue = useQuery<List<TicketSummary>>(`/support/queue${filter === 'all' ? '' : `?status=${filter}`}`, { poll: 10_000, all: true })
   const problem = queue.answer && !queue.data ? describe(queue.answer) : null
   const go = (next: { status?: Filter; ticket?: string | null }) => {
     const q = new URLSearchParams()
@@ -52,7 +52,7 @@ export function SupportPage() {
                   <button type="button" onClick={() => go({ ticket: t.id })} aria-current={selected === t.id ? 'true' : undefined} className={cx('flex w-full items-center gap-3 rounded-2xl p-4 text-left transition-shadow', selected === t.id ? 'bg-brand-soft ring-2 ring-brand' : 'bg-surface shadow-card hover:shadow-raised')}>
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-2"><span className="font-bold">{t.subject}</span><Badge tone={ticketTone[t.status]}>{ticketStatus[t.status]}</Badge></span>
-                      <span className="mt-1 block truncate text-sm text-ink-2">{t.messages.at(-1)?.body}</span>
+                      <span className="mt-1 block truncate text-sm text-ink-2">{t.preview}</span>
                       <span className="mt-1 block text-xs text-ink-3">{reference(t.id)} · {t.customer_name} · {when(t.created_at)}</span>
                     </span>
                     <CaretRight size={16} className="text-ink-3" aria-hidden="true" />

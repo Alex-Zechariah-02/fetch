@@ -1,10 +1,13 @@
 // The Support API: customers open tickets and reply, support agents read
 // the queue, answer and resolve. Tickets live in memory, the newest
-// keptTickets of them, each with at most maxMessages messages.
+// keptTickets of them, each with at most maxMessages messages. A ticket's
+// order reference is checked with Orders once, at creation: it must be one
+// of the customer's own orders.
 
 package services
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"slices"
@@ -44,10 +47,16 @@ const (
 type support struct {
 	tickets []Ticket
 	next    int
+	orders  *serviceClient
+	// outside runs the call to Orders without the service lock.
+	outside func(context.Context, func())
 }
 
+func (d *support) close() { d.orders.close() }
+
 func (d *support) reset() {
-	at := time.Date(2026, 10, 27, 3, 0, 0, 0, time.UTC)
+	// The day before the process started, after the seed's recent orders.
+	at := seedDay.AddDate(0, 0, -1).Add(5 * time.Hour)
 	order := "ORD-1002"
 	d.tickets = []Ticket{{
 		ID: "TKT-1001", Customer: "cust-002", CustomerName: displayName("cust-002"), Order: &order, Subject: "Missing item", Status: "open",
@@ -95,6 +104,11 @@ func (d *support) handle(r *http.Request, body []byte) result {
 		if !length(request.Subject, 5, 120) || !length(request.Message, 1, 2000) || request.Order != nil && !length(*request.Order, 8, 8) || request.RequestRef != nil && !length(*request.RequestRef, 16, 64) {
 			return failure(400, "invalid_request", "Check the ticket subject, message and references.", "")
 		}
+		if request.Order != nil {
+			if refused := d.ownOrder(r.Context(), subject, *request.Order); refused != nil {
+				return *refused
+			}
+		}
 		now := time.Now().UTC()
 		ticket := Ticket{
 			ID: fmt.Sprintf("TKT-%04d", d.next), Customer: subject, CustomerName: displayName(subject), Order: request.Order, RequestRef: request.RequestRef,
@@ -108,32 +122,7 @@ func (d *support) handle(r *http.Request, body []byte) result {
 		return result{status: 201, body: map[string]any{"ticket": ticket}, effect: "created " + ticket.ID}
 	}
 	if (r.URL.Path == "/support/mine" || r.URL.Path == "/support/queue") && r.Method == "GET" {
-		q, ok := query(r, "status")
-		if !ok {
-			return invalidQuery()
-		}
-		if r.URL.Path == "/support/mine" {
-			if q.Has("status") {
-				return invalidQuery()
-			}
-			if !hasRole(r, "CUSTOMER") {
-				return notFound()
-			}
-		} else if !hasRole(r, "SUPPORT") {
-			return notFound()
-		}
-		if q.Get("status") != "" && !slices.Contains([]string{"open", "answered", "resolved"}, q.Get("status")) {
-			return invalidQuery()
-		}
-		items := []Ticket{}
-		for i := len(d.tickets) - 1; i >= 0; i-- {
-			ticket := d.tickets[i]
-			if r.URL.Path == "/support/mine" && ticket.Customer != subject || q.Get("status") != "" && ticket.Status != q.Get("status") {
-				continue
-			}
-			items = append(items, ticket)
-		}
-		return result{status: 200, body: map[string]any{"items": items}}
+		return d.list(r, subject)
 	}
 	if id, ok := oneID(r.URL.Path, "/support/ticket/"); ok && r.Method == "GET" {
 		if _, ok := query(r); !ok {

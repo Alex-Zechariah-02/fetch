@@ -17,12 +17,13 @@ import (
 // A list of maxBlocked IDs of the longest allowed length is taken as a
 // whole; one more ID is refused and the list in force stays.
 func TestBlockedListBounds(t *testing.T) {
-	log, err := openLog(filepath.Join(t.TempDir(), "orders-security.log"))
+	dir := t.TempDir()
+	log, err := openLog(filepath.Join(dir, "orders-security.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer log.close()
-	g := &Guard{api: "orders", log: log}
+	g := &Guard{api: "orders", log: log, blockedPath: filepath.Join(dir, BlockedFile)}
 	put := func(count int) int {
 		ids := make([]string, count)
 		for i := range ids {

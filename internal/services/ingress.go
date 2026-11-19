@@ -58,6 +58,12 @@ func Listen(address string, ingress Ingress) (net.Listener, error) {
 // config is the server TLS configuration of a complete Ingress. The gateway
 // speaks HTTP/1.1 to its upstreams, so no other protocol is offered.
 func (i Ingress) config() (*tls.Config, error) {
+	// The key must be the service user's alone, and the certificate and CA
+	// not rewritable by another account, which could let it impersonate the
+	// API or admit its own clients.
+	if err := errors.Join(checkFile(i.Key, private), checkFile(i.Certificate, trusted), checkFile(i.ClientCA, trusted)); err != nil {
+		return nil, err
+	}
 	certificate, err := tls.LoadX509KeyPair(i.Certificate, i.Key)
 	if err != nil {
 		return nil, fmt.Errorf("the API certificate: %w", err)

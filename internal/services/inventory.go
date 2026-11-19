@@ -9,8 +9,11 @@ import (
 )
 
 type inventory struct {
-	merchants    []Merchant
-	items        []stockItem
+	merchants []Merchant
+	items     []stockItem
+	// haystacks are each item's searchable text, lowercased once at reset:
+	// names and descriptions never change.
+	haystacks    []string
 	reservations map[string]reservation
 	measure      bool     // measurement mode: the oldest reservations are forgotten
 	recent       arrivals // reservation identities, oldest first
@@ -19,6 +22,11 @@ type inventory struct {
 func (d *inventory) reset() {
 	d.merchants = seedMerchants()
 	d.items = seedItems()
+	d.haystacks = make([]string, len(d.items))
+	for i, stock := range d.items {
+		merchant, _ := d.merchant(stock.Item.Merchant)
+		d.haystacks[i] = strings.ToLower(stock.Item.Name + " " + stock.Item.Description + " " + merchant.Name)
+	}
 	d.reservations = map[string]reservation{}
 	// Orders repeats a reservation only within one placement, so Inventory
 	// forgets by count alone.
@@ -95,7 +103,7 @@ func (d *inventory) handle(r *http.Request, body []byte) result {
 		if !ok {
 			return invalidQuery()
 		}
-		n, after, ok := pagination(q)
+		n, after, ok := pagination(q, defaultPage)
 		if !ok || !validSection(q.Get("section")) {
 			return invalidQuery()
 		}
@@ -125,12 +133,20 @@ func (d *inventory) handle(r *http.Request, body []byte) result {
 		if !ok || !length(q.Get("q"), 2, 40) || !validSection(q.Get("section")) {
 			return invalidQuery()
 		}
-		items := []map[string]any{}
+		// A hit encodes as {"item", "merchant"}, the order a map gave.
+		type hit struct {
+			Item     Item     `json:"item"`
+			Merchant Merchant `json:"merchant"`
+		}
+		items := []hit{}
 		search := strings.ToLower(q.Get("q"))
-		for _, stock := range d.items {
+		for i, stock := range d.items {
+			if !strings.Contains(d.haystacks[i], search) {
+				continue
+			}
 			merchant, _ := d.merchant(stock.Item.Merchant)
-			if (q.Get("section") == "" || merchant.Section == q.Get("section")) && strings.Contains(strings.ToLower(stock.Item.Name+" "+stock.Item.Description+" "+merchant.Name), search) {
-				items = append(items, map[string]any{"merchant": merchant, "item": publicItem(stock)})
+			if q.Get("section") == "" || merchant.Section == q.Get("section") {
+				items = append(items, hit{publicItem(stock), merchant})
 			}
 		}
 		return result{status: 200, body: map[string]any{"items": items}}

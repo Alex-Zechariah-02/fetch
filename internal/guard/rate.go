@@ -11,11 +11,13 @@ import (
 )
 
 const (
-	// maxCounters bounds the table; a full table of live counters refuses
-	// new keys instead of forgetting admitted requests.
-	maxCounters = 262144
-	// sweepEvery admissions, counters whose estimate is zero are removed.
-	// Sweeping every 1024 admissions keeps the table from filling with expired counters.
+	// maxCounters bounds the table as the gateway's default rate_counters
+	// does; a full table of live counters refuses new keys instead of
+	// forgetting admitted requests.
+	maxCounters = 32768
+	// sweepEvery admissions, up to sweepEvery counters whose estimate is zero
+	// are removed: often enough that expired counters never fill the table,
+	// and bounded so a burst that expired together never stalls one request.
 	sweepEvery = 1024
 )
 
@@ -50,6 +52,23 @@ func (c *counter) roll(now int64) {
 func (c *counter) usage(now int64) int64 {
 	elapsed := max(now-c.bucket*c.window, 0)
 	return c.current*c.window + c.previous*(c.window-elapsed)
+}
+
+// wait is how many milliseconds after now the next request on this counter
+// is admitted under a limit of count, with nothing else counted meanwhile
+// (the gateway's arithmetic). Admission needs usage <= (count-1)*window.
+func (c *counter) wait(now, count int64) int64 {
+	allowed := (count - 1) * c.window
+	start := c.bucket * c.window
+	if c.current*c.window <= allowed {
+		if c.previous == 0 {
+			return 0
+		}
+		offset := c.window - (allowed-c.current*c.window)/c.previous
+		return max(start+offset-now, 0)
+	}
+	offset := c.window - allowed/c.current
+	return start + c.window + offset - now
 }
 
 // expiry orders counters by removable time; it implements heap.Interface.
@@ -101,20 +120,22 @@ func (l *limiter) now() int64 {
 	return l.anchor.UnixMilli() + time.Since(l.anchor).Milliseconds()
 }
 
-// admit applies the rule: with C admitted in the current bucket, P in the
-// previous one and offset d into the current bucket, a request is admitted
-// when C + P*(W-d)/W + 1 <= N; only an admitted request is counted.
-func (l *limiter) admit(key counterKey, count int, window time.Duration) verdict {
+// admit applies the rule at now (Unix milliseconds): with C admitted in the
+// current bucket, P in the previous one and offset d into the current bucket,
+// a request is admitted when C + P*(W-d)/W + 1 <= N; only an admitted request
+// is counted. A refusal also returns the whole seconds, at least one, until
+// the key admits again (RFC 9110 section 10.2.3).
+func (l *limiter) admit(key counterKey, count int, window time.Duration, now int64) (verdict, int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now, w := l.now(), window.Milliseconds()
+	w := window.Milliseconds()
 	c := l.counters[key]
 	if c == nil {
 		if len(l.counters) >= maxCounters {
-			l.sweep(now)
+			l.sweep(now, sweepEvery)
 		}
 		if len(l.counters) >= maxCounters {
-			return full
+			return full, 1
 		}
 		c = &counter{window: w, bucket: now / w, key: key}
 		l.counters[key] = c
@@ -126,19 +147,27 @@ func (l *limiter) admit(key counterKey, count int, window time.Duration) verdict
 		heap.Fix(&l.queue, c.index)
 	}
 	if c.usage(now)+w > int64(count)*w {
-		return exceeded
+		return exceeded, max((c.wait(now, int64(count))+999)/1000, 1)
 	}
 	c.current++
 	l.admissions++
 	if l.admissions%sweepEvery == 0 {
-		l.sweep(now)
+		l.sweep(now, sweepEvery)
 	}
-	return admitted
+	return admitted, 0
 }
 
-// sweep removes the counters whose estimate is zero, visiting only those.
-func (l *limiter) sweep(now int64) {
-	for len(l.queue) > 0 && l.queue[0].removable() <= now {
+// size is the number of counters held.
+func (l *limiter) size() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.counters)
+}
+
+// sweep removes up to budget counters whose estimate is zero, visiting only
+// those; the heap is ordered by removable time, so stopping early is safe.
+func (l *limiter) sweep(now int64, budget int) {
+	for ; budget > 0 && len(l.queue) > 0 && l.queue[0].removable() <= now; budget-- {
 		c := heap.Pop(&l.queue).(*counter)
 		delete(l.counters, c.key)
 	}

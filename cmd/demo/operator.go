@@ -52,9 +52,15 @@ func loginWithClient(client *http.Client, origin, email, visitor string) (string
 		Token   string    `json:"token"`
 		Expires time.Time `json:"expires_at"`
 	}
+	if response.StatusCode != 200 {
+		return "", time.Time{}, fmt.Errorf("Accounts refused the sign-in (status %d)", response.StatusCode)
+	}
 	// At most 64 KiB of a sign-in reply is decoded; a cut-off answer fails the sign-in.
-	if response.StatusCode != 200 || json.NewDecoder(io.LimitReader(response.Body, 65536)).Decode(&reply) != nil || reply.Token == "" || reply.Expires.IsZero() {
-		return "", time.Time{}, fmt.Errorf("Accounts sign-in failed (status %d)", response.StatusCode)
+	if err := json.NewDecoder(io.LimitReader(response.Body, 65536)).Decode(&reply); err != nil {
+		return "", time.Time{}, fmt.Errorf("Accounts answered the sign-in with no readable reply: %w", err)
+	}
+	if reply.Token == "" || reply.Expires.IsZero() {
+		return "", time.Time{}, errors.New("Accounts answered the sign-in without a token or expires_at")
 	}
 	return reply.Token, reply.Expires, nil
 }

@@ -19,30 +19,41 @@ const (
 	// measurement run keeps at least.
 	measureOrders = 1000
 	// measureKeys is how many checkout or reservation identities a
-	// measurement run keeps at least.
+	// measurement run keeps at least, while their answers fit keptBytes.
 	measureKeys = 10000
 	// keptOrders and keptKeys are the same bounds outside measurement mode:
 	// at most twice keptOrders placed orders stay below the reports' bound.
 	keptOrders = 5000
 	keptKeys   = 50000
+	// keptBytes bounds the answers one service's key memory holds: an Orders
+	// answer is about 700 bytes, so a measurement run keeps tens of
+	// thousands, and the memory stays far below the gateway's own.
+	keptBytes = 32 << 20
 )
 
 // keyLife is how long a checkout identity is kept at least, so a client's
 // retry of one checkout replays its answer and never places a second order;
-// a day, as payment APIs keep idempotency keys.
+// a day, as payment APIs keep idempotency keys. The memory is the process's:
+// a restart or a reset forgets every key.
 const keyLife = 24 * time.Hour
 
 // arrivals remembers keys in the order they came, so that the oldest can be
-// forgotten once older than life. A limit of zero remembers nothing.
+// forgotten once older than life. A limit of zero remembers nothing. The
+// oldest held key is keys[head]; the slice is compacted once half of it is
+// forgotten, so forgetting costs no shift and the memory shrinks with it.
 type arrivals struct {
-	keys  []arrival
-	limit int
-	life  time.Duration
+	keys     []arrival
+	head     int
+	limit    int
+	life     time.Duration
+	bytes    int // the sizes of the held keys' answers
+	maxBytes int // zero sets no bound on bytes
 }
 
 type arrival struct {
-	key string
-	at  time.Time
+	key  string
+	at   time.Time
+	size int
 }
 
 // measured is the key memory of a service, bounded for its mode. Outside
@@ -51,38 +62,61 @@ type arrival struct {
 // so a long run is never refused for holding too many.
 func measured(measure bool, life time.Duration) arrivals {
 	if measure {
-		return arrivals{limit: measureKeys}
+		return arrivals{limit: measureKeys, maxBytes: keptBytes}
 	}
-	return arrivals{limit: keptKeys, life: life}
+	return arrivals{limit: keptKeys, life: life, maxBytes: keptBytes}
 }
 
-// add notes key, arrived at now, and returns the keys now to be forgotten.
-func (w *arrivals) add(key string, now time.Time) []string {
+// held is the number of keys remembered.
+func (w *arrivals) held() int { return len(w.keys) - w.head }
+
+// add notes key, whose answer takes size bytes, arrived at now, and returns
+// the keys now to be forgotten.
+func (w *arrivals) add(key string, size int, now time.Time) []string {
 	if w.limit == 0 {
 		return nil
 	}
-	w.keys = append(w.keys, arrival{key, now})
+	w.keys = append(w.keys, arrival{key, now, size})
+	w.bytes += size
 	return w.expire(now)
 }
 
-// expire returns the oldest limit keys, now to be forgotten, once twice the
-// limit are held and all of them are older than life.
+// expire returns the keys now to be forgotten: the oldest limit once twice
+// the limit are held, and then the oldest while the answers exceed maxBytes,
+// each only when older than life.
 func (w *arrivals) expire(now time.Time) []string {
-	if w.limit == 0 || len(w.keys) < 2*w.limit || now.Sub(w.keys[w.limit-1].at) < w.life {
+	if w.limit == 0 {
 		return nil
 	}
-	oldest := make([]string, w.limit)
-	for i, entry := range w.keys[:w.limit] {
-		oldest[i] = entry.key
+	var oldest []string
+	if w.held() >= 2*w.limit && now.Sub(w.keys[w.head+w.limit-1].at) >= w.life {
+		for range w.limit {
+			oldest = append(oldest, w.forget())
+		}
 	}
-	w.keys = slices.Delete(w.keys, 0, w.limit)
+	for w.maxBytes > 0 && w.held() > 0 && w.bytes > w.maxBytes && now.Sub(w.keys[w.head].at) >= w.life {
+		oldest = append(oldest, w.forget())
+	}
+	if w.head > 0 && w.head >= len(w.keys)/2 {
+		w.keys, w.head = slices.Clone(w.keys[w.head:]), 0
+	}
 	return oldest
 }
 
-// full reports that four times the limit are held, none old enough to
-// forget: a new key is refused rather than an unexpired one forgotten.
+// forget drops the oldest key and returns it.
+func (w *arrivals) forget() string {
+	entry := w.keys[w.head]
+	w.keys[w.head] = arrival{}
+	w.head++
+	w.bytes -= entry.size
+	return entry.key
+}
+
+// full reports that four times the limit are held, or answers of maxBytes,
+// none old enough to forget: a new key is refused rather than an unexpired
+// one forgotten.
 func (w *arrivals) full() bool {
-	return w.limit > 0 && len(w.keys) >= 4*w.limit
+	return w.limit > 0 && (w.held() >= 4*w.limit || w.maxBytes > 0 && w.bytes >= w.maxBytes)
 }
 
 // trim drops the oldest kept placed orders, with the reservations they
@@ -99,4 +133,5 @@ func (d *orders) trim() {
 		delete(d.reservations, order.ID)
 	}
 	d.list = slices.Delete(d.list, d.seeded, d.seeded+kept)
+	d.reindex()
 }

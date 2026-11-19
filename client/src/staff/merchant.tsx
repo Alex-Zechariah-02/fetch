@@ -45,7 +45,7 @@ export function MerchantPage() {
 
 function OrdersBoard() {
   // Every 5 s: a shop acts on new orders, so they must appear quickly.
-  const orders = useQuery<List<Order>>('/orders/merchant', { poll: 5_000 })
+  const orders = useQuery<List<Order>>('/orders/merchant?limit=100', { poll: 5_000, all: true })
   const action = useAction(orders.reload)
   const problem = orders.answer && !orders.data ? describe(orders.answer) : null
   if (problem) return <ProblemNotice problem={problem} action={<Button size="sm" variant="secondary" onClick={orders.reload}>Try again</Button>} />

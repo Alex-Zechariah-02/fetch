@@ -12,7 +12,7 @@ import (
 )
 
 func TestServiceCommandValidation(t *testing.T) {
-	for _, args := range [][]string{{}, {"-service", "unknown"}, {"-service", "inventory"}, {"-service", "inventory", "-secret-file", "missing.secret"}} {
+	for _, args := range [][]string{{}, {"-service", "unknown"}, {"-service", "inventory"}, {"-service", "inventory", "-control-secret", "missing.secret"}} {
 		if err := Command(context.Background(), "", args, io.Discard); err == nil {
 			t.Fatalf("invalid command accepted: %v", args)
 		}
@@ -36,9 +36,14 @@ func freeServiceAddress(t *testing.T) string {
 
 func TestServiceCommandLifecycle(t *testing.T) {
 	dir := t.TempDir()
-	secretFile := filepath.Join(dir, "service.secret")
+	secretFile := filepath.Join(dir, "control.secret")
 	if err := os.WriteFile(secretFile, testSecret, 0600); err != nil {
 		t.Fatal(err)
+	}
+	for name, key := range testKeyset {
+		if err := os.WriteFile(filepath.Join(dir, name+".key"), key, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	_, _, signingFile := accountService(t)
 	addresses := map[string]string{}
@@ -46,13 +51,13 @@ func TestServiceCommandLifecycle(t *testing.T) {
 	for _, name := range []string{"inventory", "orders", "reports", "support", "accounts"} {
 		api, control := freeServiceAddress(t), freeServiceAddress(t)
 		addresses[name] = api
-		args := []string{"-listen", api, "-control", control, "-secret-file", secretFile}
+		args := []string{"-listen", api, "-control", control, "-control-secret", secretFile}
 		fixed := ""
 		if name == "accounts" {
 			fixed = "accounts"
 			args = append(args, "-signing-settings", signingFile)
 		} else {
-			args = append(args, "-service", name)
+			args = append(args, "-service", name, "-keys", dir)
 		}
 		if name == "orders" {
 			args = append(args, "-inventory", "http://"+addresses["inventory"])

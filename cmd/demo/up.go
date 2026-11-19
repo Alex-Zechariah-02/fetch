@@ -30,7 +30,7 @@ type sources struct{ apiward, fetch string }
 // setup with -role.
 func up(args []string) error {
 	set := flag.NewFlagSet("up", flag.ContinueOnError)
-	home := set.String("home", defaultHome(), "folder for the built programs, websites and demonstration state")
+	home := set.String("home", "", "folder for the built programs, websites and demonstration state (default: EAT40005-demo in the user's data folder)")
 	fresh := set.Bool("fresh", false, "delete the earlier demonstration state, including its administrator and policy, and start over")
 	stdin := set.Bool("stdin", false, "also stop when standard input closes")
 	apiward := set.String("apiward", "", "APIWard checkout that builds the gateway and the Dashboard (default: ../apiward beside this repository)")
@@ -50,7 +50,7 @@ func up(args []string) error {
 	if set.NArg() != 0 {
 		return errors.New("up takes no arguments\n" + usage)
 	}
-	homeDir, err := filepath.Abs(*home)
+	homeDir, err := homeFolder(*home)
 	if err != nil {
 		return err
 	}
@@ -107,12 +107,47 @@ func onlyFlags(set *flag.FlagSet, names ...string) error {
 	return nil
 }
 
-func defaultHome() string {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "EAT40005-demo"
+// homeFolder is the absolute path of home or, when home is empty, of the
+// default: EAT40005-demo in the user's data folder. It names an earlier
+// default folder that still exists, so its state is not silently left behind.
+func homeFolder(home string) (string, error) {
+	if home != "" {
+		return filepath.Abs(home)
 	}
-	return filepath.Join(cache, "EAT40005-demo")
+	data, err := dataFolder()
+	if err != nil {
+		return "", fmt.Errorf("no folder for the demonstration's state (%w): pass -home", err)
+	}
+	home = filepath.Join(data, "EAT40005-demo")
+	if cache, err := os.UserCacheDir(); err == nil && filepath.Join(cache, "EAT40005-demo") != home {
+		if _, err := os.Stat(filepath.Join(cache, "EAT40005-demo")); err == nil {
+			fmt.Printf("An earlier demonstration is in %s; pass -home with that folder to use it.\n", filepath.Join(cache, "EAT40005-demo"))
+		}
+	}
+	return home, nil
+}
+
+// dataFolder is where the user's application data lives: %LocalAppData% on
+// Windows, ~/Library/Application Support on macOS, and $XDG_DATA_HOME or
+// ~/.local/share elsewhere (XDG Base Directory). Unlike a cache folder,
+// nothing purges it, and the state holds the policy database and audit log.
+func dataFolder() (string, error) {
+	switch runtime.GOOS {
+	case "windows":
+		// UserCacheDir is %LocalAppData% on Windows, which is local application data, never roamed.
+		return os.UserCacheDir()
+	case "darwin":
+		return os.UserConfigDir()
+	}
+	// The XDG specification ignores a relative value.
+	if data := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(data) {
+		return data, nil
+	}
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(user, ".local", "share"), nil
 }
 
 // findSources finds this Fetch repository from the working directory's module,

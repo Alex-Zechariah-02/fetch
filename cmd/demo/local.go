@@ -3,7 +3,7 @@
 // accounts, rates and bodies itself and keeping its own security log. The
 // demo process only routes each API path to its service, with the caller's
 // token and no identity of its own. demo block -local changes the blocked
-// list of every API of that run.
+// list of every API of that run; the next run starts with no blocked account.
 
 package main
 
@@ -46,6 +46,10 @@ func upLocal(home string, stdin bool) error {
 	if err := prepareFolder(dir, files); err != nil {
 		return err
 	}
+	site, err := loadWebsite(os.DirFS(shop))
+	if err != nil {
+		return err
+	}
 	listener, err := services.Listen(dataListen, services.Ingress{})
 	if err != nil {
 		return fmt.Errorf("the shop address: %w", err)
@@ -53,7 +57,7 @@ func upLocal(home string, stdin bool) error {
 	ctx, stop := stopContext(stdin)
 	defer stop()
 	banner := fmt.Sprintf("BUILT-IN PROTECTION: no gateway; each API checks every request itself.\nSecurity logs: %s\n\nShop: http://%s/\nPress Ctrl+C to stop.", dir, dataListen)
-	return serveFetch(ctx, dir, listener, apiRouter(os.DirFS(shop), nil), serviceBinary, accountsBinary, nil, true, banner)
+	return serveFetch(ctx, dir, listener, apiRouter(site, nil), serviceBinary, accountsBinary, nil, true, banner)
 }
 
 // localFiles are the files of one run: the services' secret and signing
@@ -74,7 +78,7 @@ func localFiles(dir string) (map[string][]byte, error) {
 func block(args []string) error {
 	set := flag.NewFlagSet("block", flag.ContinueOnError)
 	local := set.Bool("local", false, "the running built-in protection mode (the gateway blocks accounts in its Dashboard)")
-	home := set.String("home", defaultHome(), "the demo home of demo up -local")
+	home := set.String("home", "", "the demo home of demo up -local (default: as demo up)")
 	unblock := set.Bool("unblock", false, "remove the account from the list instead")
 	if err := set.Parse(args); err != nil {
 		return err
@@ -82,7 +86,11 @@ func block(args []string) error {
 	if !*local || set.NArg() != 1 || !validSubject(set.Arg(0)) {
 		return errors.New("use: demo block -local [-home H] [-unblock] ACCOUNT")
 	}
-	dir := filepath.Join(*home, localFolder)
+	homeDir, err := homeFolder(*home)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(homeDir, localFolder)
 	path := filepath.Join(dir, guard.BlockedFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -98,10 +106,10 @@ func block(args []string) error {
 		list = append(list, account)
 	}
 	slices.Sort(list)
-	fmt.Printf("blocked accounts: %v\n", list)
+	fmt.Printf("blocked accounts: %v (for this run only: the next demo up -local starts with none)\n", list)
 	content := indented(list)
-	// A new list file is 0600: it decides which accounts are refused, so nobody else edits it.
-	if err := os.WriteFile(path, content, 0o600); err != nil {
+	// Replaced whole: a torn list would stop an API from starting with it.
+	if err := replaceOperatorFile(path, content); err != nil {
 		return err
 	}
 	secret, err := os.ReadFile(filepath.Join(dir, secretFile))

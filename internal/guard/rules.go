@@ -133,16 +133,23 @@ func canonical(r *http.Request) bool {
 	if !strings.HasPrefix(path, "/") {
 		return false
 	}
-	for i := 0; i < len(path); i++ {
-		if c := path[i]; c < 0x21 || c > 0x7e || c == '\\' || c == '%' {
+	// One pass: the character ban, and each segment (between slashes) checked
+	// as it ends, with no allocation.
+	start := 1
+	for i := 1; i <= len(path); i++ {
+		if i < len(path) {
+			if c := path[i]; c < 0x21 || c > 0x7e || c == '\\' || c == '%' {
+				return false
+			}
+			if path[i] != '/' {
+				continue
+			}
+		}
+		segment := path[start:i]
+		if segment == "." || segment == ".." || segment == "" && i != len(path) {
 			return false
 		}
-	}
-	segments := strings.Split(path[1:], "/")
-	for i, segment := range segments {
-		if segment == "." || segment == ".." || segment == "" && i != len(segments)-1 {
-			return false
-		}
+		start = i + 1
 	}
 	return true
 }

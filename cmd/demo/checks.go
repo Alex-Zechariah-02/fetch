@@ -86,15 +86,17 @@ func publicHalf(path string) ([]byte, error) {
 }
 
 // hostBanner is what a Fetch host prints once it serves the APIs from first
-// to last and the shop at site.
+// to last and the shop at site. The shop is named only where a gateway
+// serves it: without one, its pages load but no path routes their API calls.
 func hostBanner(checks hostChecks, first, last, site, bind string) string {
-	addresses := fmt.Sprintf("  APIs and Accounts: https://%s to %s\n  shop:              https://%s/\n", first, last, site)
+	addresses := fmt.Sprintf("  APIs and Accounts: https://%s to %s\n", first, last)
 	switch checks {
 	case noChecks:
 		return standaloneWarning + "\nFetch admits only the gateway's client certificate; its APIs check nothing else:\n" + addresses + "Press Ctrl+C to stop."
 	case builtinChecks:
 		return "BUILT-IN PROTECTION: no gateway; Fetch admits only the gateway's client certificate, and each API checks every request itself:\n" + addresses + "Press Ctrl+C to stop."
 	}
+	addresses += fmt.Sprintf("  shop:              https://%s/ (for the gateway)\n", site)
 	return "Fetch admits only the gateway's client certificate, and its four APIs only requests the gateway signed:\n" + addresses +
 		"On the gateway host: go run ./cmd/demo up -role gateway -fetch " + bind + " -certs <gateway folder>\nPress Ctrl+C to stop."
 }

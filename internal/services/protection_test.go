@@ -53,11 +53,11 @@ func newProtectedStack(t *testing.T) protectedStack {
 			t.Fatal(err)
 		}
 	}
-	accounts, err := New(Config{Name: "accounts", Secret: testSecret, SigningSettingsFile: filepath.Join(dir, "accounts.json"), Protection: dir})
+	accounts, err := New(Config{Name: "accounts", Keys: testKeys("accounts"), SigningSettingsFile: filepath.Join(dir, "accounts.json"), Protection: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	orders, err := New(Config{Name: "orders", Secret: testSecret, InventoryURL: "http://127.0.0.1:1", Protection: dir})
+	orders, err := New(Config{Name: "orders", Keys: testKeys("orders"), InventoryURL: "http://127.0.0.1:1", Protection: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestProtectionRefusesBeforeHandler(t *testing.T) {
 	if w := call(p.orders, "GET", "/orders/wallet", "", valid); w.Code != 200 || w.Header().Get("X-Request-Id") == "" {
 		t.Fatalf("a valid token was refused: %d %s", w.Code, w.Body)
 	}
-	p.orders.receipts = nil
+	p.orders.recent = ring{}
 	checkout := `{"merchant":"MER-001","items":[{"item":"ITM-001","quantity":0}],"address":{"line1":"1 Jalan","postcode":"50000","city":"KL","state":"Selangor"},"payment":"cash"}`
 	for _, c := range []struct {
 		name, method, path, body, token string
@@ -140,7 +140,7 @@ func TestProtectionRefusesBeforeHandler(t *testing.T) {
 		{"identity headers only", "GET", "/orders/wallet", "", "", []string{"X-Gateway-Subject", "cust-001", "X-Gateway-Roles", "CUSTOMER"}, 401, "unauthenticated"},
 		{"another key", "GET", "/orders/wallet", "", sign(t, other, "fetch-test-a", claims(nil), nil), nil, 401, "unauthenticated"},
 		{"unknown key ID", "GET", "/orders/wallet", "", sign(t, p.key, "fetch-test-b", claims(nil), nil), nil, 401, "unauthenticated"},
-		{"expired at exp", "GET", "/orders/wallet", "", sign(t, p.key, "fetch-test-a", claims(map[string]any{"exp": now}), nil), nil, 401, "unauthenticated"},
+		{"expired past the 60 s leeway", "GET", "/orders/wallet", "", sign(t, p.key, "fetch-test-a", claims(map[string]any{"exp": now - 61}), nil), nil, 401, "unauthenticated"},
 		{"not yet valid", "GET", "/orders/wallet", "", sign(t, p.key, "fetch-test-a", claims(map[string]any{"nbf": now + 300}), nil), nil, 401, "unauthenticated"},
 		{"wrong audience", "GET", "/orders/wallet", "", sign(t, p.key, "fetch-test-a", claims(map[string]any{"aud": "orders"}), nil), nil, 401, "unauthenticated"},
 		{"wrong issuer", "GET", "/orders/wallet", "", sign(t, p.key, "fetch-test-a", claims(map[string]any{"iss": "elsewhere"}), nil), nil, 401, "unauthenticated"},
@@ -159,8 +159,8 @@ func TestProtectionRefusesBeforeHandler(t *testing.T) {
 			t.Errorf("%s: %d %q, want %d %q", c.name, w.Code, reply.Error, c.status, c.code)
 		}
 	}
-	if len(p.orders.receipts) != 0 {
-		t.Fatalf("refused requests reached the handler: %d receipts", len(p.orders.receipts))
+	if len(p.orders.recent.receipts) != 0 {
+		t.Fatalf("refused requests reached the handler: %d receipts", len(p.orders.recent.receipts))
 	}
 }
 

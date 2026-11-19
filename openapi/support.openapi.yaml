@@ -13,6 +13,22 @@ paths:
   /support/mine:
     get:
       operationId: mine
+      parameters:
+        - description: Most tickets on a page.
+          in: query
+          name: limit
+          required: false
+          schema:
+            default: 50
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: The last ticket ID of the previous page.
+          in: query
+          name: after
+          required: false
+          schema:
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow
@@ -31,6 +47,21 @@ paths:
               - open
               - answered
               - resolved
+            type: string
+        - description: Most tickets on a page.
+          in: query
+          name: limit
+          required: false
+          schema:
+            default: 50
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: The last ticket ID of the previous page.
+          in: query
+          name: after
+          required: false
+          schema:
             type: string
       security:
         - bearer: []

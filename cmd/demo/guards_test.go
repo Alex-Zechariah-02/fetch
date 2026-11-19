@@ -1,5 +1,5 @@
 // Demo tool guards: the Fetch host's bind address, the gateway's trusted-key
-// and policy size maxima, and reported sign-out and cleanup failures.
+// maximum, the policy file's read bound, and reported sign-out and cleanup failures.
 
 package main
 
@@ -68,13 +68,14 @@ func TestPolicyFileBounds(t *testing.T) {
 		}
 		return path
 	}
-	// A laid-out document within both bounds compacts to the gateway's size.
-	padded := `{"a":"` + strings.Repeat("x", maxPolicy-8) + `"}` + strings.Repeat(" ", maxPolicyFile-maxPolicy)
-	if document, err := compactFile(write("fits.json", []byte(padded))); err != nil || len(document) != maxPolicy-8+8 {
-		t.Fatalf("fitting policy: %d bytes, %v", len(document), err)
+	// The gateway decides a policy's size: a document above 64 KiB compacts and goes to it.
+	dense := `{"a":"` + strings.Repeat("x", 128<<10) + `"}`
+	if document, err := compactFile(write("dense.json", []byte(dense+"  "))); err != nil || len(document) != len(dense) {
+		t.Fatalf("large policy: %d bytes, %v", len(document), err)
 	}
-	if _, err := compactFile(write("dense.json", []byte(`{"a":"`+strings.Repeat("x", maxPolicy)+`"}`))); err == nil || !strings.Contains(err.Error(), "accepts at most") {
-		t.Fatalf("policy above the gateway's maximum: %v", err)
+	padded := dense + strings.Repeat(" ", maxPolicyFile-len(dense))
+	if _, err := compactFile(write("fits.json", []byte(padded))); err != nil {
+		t.Fatalf("file at the read bound: %v", err)
 	}
 	if _, err := compactFile(write("long.json", []byte(padded+" "))); err == nil || !strings.Contains(err.Error(), "larger than") {
 		t.Fatalf("file above the read bound: %v", err)

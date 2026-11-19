@@ -15,17 +15,18 @@ go run ./cmd/demo up -role gateway -fetch <fetch-ip> -certs <folder>/gateway    
 ### Certificates
 
 - `certs` writes two folders.
-- `fetch` holds a new private CA's certificate, Fetch's server certificate for `<fetch-ip>` and the private key Accounts signs with; `gateway` holds the CA certificate, the gateway's client certificate, its certificate for the shop's names, the Accounts public key, which is how the gateway learns which tokens to trust, and the private key the gateway signs its identity assertion with (`assertion-key.pem`; its public half is `assertion-keys.json` in `fetch`); for the APIWard container image it also holds the image's settings `apiward.json` and the `deny-all.json` and `baseline.json` policies.
-- The CA's key is never written, so nothing else can be issued from it; the certificates last 30 days.
+- `fetch` holds a new private CA's certificate, Fetch's server certificate for `<fetch-ip>` and the private key Accounts signs with; `gateway` holds the CA certificate, the gateway's client certificate, its certificate for the shop's names, the Accounts public key, which is how the gateway learns which tokens to trust, and the private key the gateway signs its identity assertion with (`assertion-key.pem`, Ed25519; its public half is `assertion-keys.json` in `fetch`); for the APIWard container image it also holds the image's settings `apiward.json` and the `deny-all.json` and `baseline.json` policies.
+- The CA's key is never written, so nothing else can be issued from it; the certificates last 30 days, and `certs` prints the date read from them.
+- `up -role` refuses a folder with a certificate that has expired or expires within a day.
 - `certs` refuses an existing `-out` folder: for new certificates, run it into a new folder (or delete the old one first), copy both new folders again and start the gateway with `-fresh`, or in containers install again after `docker compose down -v`, which deletes the gateway's database, administrator and policy.
 - Copy each folder to its host only.
 
 ### Running
 
 - On the Fetch host, the APIs and Accounts listen on `<fetch-ip>` ports 9501 to 9505 and the shop on 9506; the control listeners and the calls between services stay on `127.0.0.1`.
-- Every run starts from seed with a new service secret.
+- Every run starts from seed with a new control secret and new internal call keys.
 - On the gateway host, the shop and APIs are at `https://<gateway-name>:9480/` on every interface, while the Dashboard (`127.0.0.1:9440`) and metrics (`127.0.0.1:9450`) stay on loopback: reach the Dashboard through an SSH tunnel (`ssh -N -L 9440:127.0.0.1:9440 <user>@<gateway-host>`, then `http://127.0.0.1:9440/`).
-- The first gateway run asks for the administrator password and establishes the baseline, whose services are `https://<fetch-ip>:<port>` with the client certificate; later runs reuse it (`-fresh` starts over).
+- The first gateway run asks for the administrator password and establishes the baseline, whose services are `https://<fetch-ip>:<port>` with the client certificate; later runs reuse it (`-fresh` starts over), and refuse a different `-fetch` or `-certs` folder than the first run's.
 - `-tls-cert` and `-tls-key` on the first run serve a public certificate, such as certbot's files, instead of the private one.
 - With the private CA, browsers warn unless its `ca.pem` is trusted.
 - `EAT_PORT_OFFSET` applies on both hosts.

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -99,7 +100,7 @@ const usage = `usage:
   demo setup  -dir D -web W -gateway G [-admin NAME]
   demo run    -dir D -web W -gateway G -services S -accounts A [-stdin]
   demo token  -dir D -subject ID [-ttl 15m]
-  demo tokens -accounts IP:PORT -certs DIR -out F   (load accounts' tokens for a load run)
+  demo tokens -accounts IP:PORT -certs DIR -out F [-name NAME]   (load accounts' tokens for a load run)
   demo reset  -dir D
   demo attack -dir D -scenario flood-search|flood-login|flood-orders [-from 127.0.0.50] [-count N]
   demo attack -target https://HOST:PORT -scenario ... [-ca F] [-count N]
@@ -107,7 +108,8 @@ const usage = `usage:
   demo keys retire -dir D -kid K
   demo policy export -dir D -out F
   demo policy stage -dir D -file F
-  demo events -dir D [-request ID] [-last N]`
+  demo events -dir D [-request ID] [-last N]
+  demo rebind -dir D   (accept the directory's current settings after a change by hand)`
 
 func main() {
 	if portSetupError != nil {
@@ -134,16 +136,24 @@ func main() {
 		"keys":    keys,
 		"policy":  policy,
 		"block":   block,
+		"rebind":  rebind,
 	}
 	command, ok := commands[os.Args[1]]
 	if !ok {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
-	if err := command(os.Args[2:]); err != nil {
-		fmt.Fprintln(os.Stderr, "demo:", err)
-		os.Exit(1)
+	os.Exit(exitCode(command(os.Args[2:]), os.Stderr))
+}
+
+// exitCode reports err to stderr and returns the process status: 0 for
+// success and for -h, whose usage the flag set has already printed.
+func exitCode(err error, stderr io.Writer) int {
+	if err == nil || errors.Is(err, flag.ErrHelp) {
+		return 0
 	}
+	fmt.Fprintln(stderr, "demo:", err)
+	return 1
 }
 
 // parse reads a command's flags and requires -dir.

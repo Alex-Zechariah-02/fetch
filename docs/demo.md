@@ -14,7 +14,12 @@ go run ./cmd/demo up
 - It prints all fourteen fictional demo accounts; their shared public password is `FetchDemo2026!`.
 - The first run asks you to choose a separate password for the Dashboard administrator `root`, then establishes deny-all genesis and confirms the Fetch baseline through the Admin API.
 - Later runs keep the administrator and policy; service business data starts from its deterministic seed on restart.
-- Programs, builds and state are kept in `EAT40005-demo` in the user cache folder (`%LOCALAPPDATA%` on Windows); `-home <dir>` chooses another folder.
+- Programs, builds and state are kept in `EAT40005-demo` in the user's data folder: `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS, `$XDG_DATA_HOME` or `~/.local/share` elsewhere; `-home <dir>` chooses another folder.
+- Without a home folder `up` refuses to start; a demonstration in the earlier default (the user cache folder) is named at start, to use with `-home`.
+- A later run is refused when `EAT_PORT_OFFSET` differs from the one the deployment was made with.
+- When this version's baseline policy differs from the one the deployment started with, `up` says so; the confirmed policy stays as it is.
+- Each program's output goes to `<name>.log` in the state folder; a log of 16 MiB or more moves to `<name>.previous.log` at the next start.
+- While running, `up` and `run` print every later change of protected admission the gateway logs (for example after an audit log failure).
 - `-fresh` replaces identified earlier state and creates a fresh version 4 deployment; it never migrates a version 3 policy.
 - Press Ctrl+C to stop everything.
 - `-stdin` also stops when standard input closes, after any password prompts.
@@ -32,10 +37,11 @@ If an earlier native setup stopped before any administrator, candidate or policy
 ### Services
 
 - At the default offset, Inventory, Orders, Reports, Support and Accounts listen on `127.0.0.1:9501` through `9505`, with protected control listeners on `9601` through `9605`.
-- Orders reserves Inventory stock and Reports reads Orders history through fixed `/internal/` endpoints with `X-Service-Key` from `service.secret`.
+- Orders reserves Inventory stock, Reports reads Orders history and Support checks a ticket's order at Orders through fixed `/internal/` endpoints, each caller with its own `X-Service-Key`.
+- Each run writes new keys `orders.key`, `reports.key` and `support.key` into the state directory; a callee admits only its callers' keys, each at the endpoints that caller uses.
 - Those endpoints have no gateway routes.
 - Every service response carries `X-Service`; gateway refusals do not.
-- The controls expose `/state`, `/receipts` and `/reset` with a separate bearer secret.
+- The controls expose `/state`, `/receipts` and `/reset` with the bearer secret in `service.secret`, which serves no other purpose.
 - Keep the state directory and all service and control listeners private to the local demonstration.
 
 ## Demonstration commands
@@ -52,6 +58,7 @@ go run ./cmd/demo keys retire -dir <home>/state -kid <old-key-id>
 go run ./cmd/demo policy export -dir <home>/state -out <new-policy-file>
 go run ./cmd/demo policy stage -dir <home>/state -file <policy-file>
 go run ./cmd/demo events -dir <home>/state -last 20
+go run ./cmd/demo rebind -dir <home>/state
 ```
 
 ### Attacks
@@ -65,11 +72,16 @@ The order flood signs in as Customer 2 (`cust-002`), keeping Customer 1's (`cust
 - Key and policy commands prompt for the `root` Dashboard password and use its session, Origin and CSRF protections.
 - Rotation writes a new pair locally, adds public trust and reloads it before switching Accounts; the old key remains trusted until retirement.
 - The current Accounts key cannot be retired; rotation is refused once the gateway trusts 64 keys, its maximum.
+- Retiring a key that `keys rotate` made deletes its two files once the reload is confirmed; the key setup made stays on disk.
+- Two key commands on one state folder never run at once: the second is refused.
 - A failed sign-out at the end is reported; the session still ends at the gateway's idle timeout.
 - A failed or unconfirmed reload leaves Accounts signing unchanged and reports the uncertainty.
 - Policy export writes only to a new file.
-- Policy staging validates a complete candidate against the current confirmed revision and does not activate it; it reads at most 1 MiB and refuses a policy above the gateway's 64 KiB once compacted.
+- Policy staging validates a complete candidate against the current confirmed revision and does not activate it; it reads at most 4 MiB, and the gateway refuses a policy above its `limits.policy_bytes`.
 - No command automatically repeats a write without an answer.
+- `reset` tries every service, even after one fails, and names each that failed.
+- Commands refuse a state folder whose `gateway.json` or `service.secret` changed since setup or the last key change, naming the file; after changing `gateway.json` by hand, `demo rebind -dir <home>/state` accepts it and prints the old and new digests.
+- `-h` on any command prints its flags.
 
 ### Data
 

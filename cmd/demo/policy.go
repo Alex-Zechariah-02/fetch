@@ -69,8 +69,18 @@ func baselinePolicy() map[string]any {
 	for _, role := range services.Roles {
 		roles = append(roles, map[string]any{"id": role})
 	}
-	return map[string]any{"schema_version": 4, "profile": "core", "upstreams": upstreams, "apis": apis, "operations": operations, "roles": roles, "permits": permits}
+	return map[string]any{"schema_version": localSchema, "profile": "core", "upstreams": upstreams, "apis": apis, "operations": operations, "roles": roles, "permits": permits}
 }
+
+// Policy schema versions, mirrored from APIWard's policy document format
+// (docs/policy.md there): version 4 for upstreams dialled over plain HTTP,
+// version 5, the first with "url" and "tls" upstreams, for a gateway host.
+// The gateway refuses a version it does not know, so a change shows at the
+// first baseline stage, which the round-trip test also runs.
+const (
+	localSchema    = 4
+	deployedSchema = 5
+)
 
 // fetchProfile is the gateway's TLS profile for the Fetch host: the CA that
 // issued Fetch's certificate and the client certificate Fetch admits.
@@ -80,7 +90,7 @@ const fetchProfile = "fetch"
 // same port on the Fetch host at fetch, reached over TLS with fetchProfile.
 func deployedBaseline(fetch netip.Addr) map[string]any {
 	policy := baselinePolicy()
-	policy["schema_version"] = 5
+	policy["schema_version"] = deployedSchema
 	for _, upstream := range policy["upstreams"].([]map[string]any) {
 		address := deployedAddress(upstream["dial"].(string), fetch)
 		delete(upstream, "dial")

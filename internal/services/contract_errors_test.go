@@ -14,7 +14,7 @@ import (
 )
 
 func TestInternalKeyPrecedesUntrustedBody(t *testing.T) {
-	s := newService(t, Config{Name: "inventory", Secret: testSecret})
+	s := newService(t, Config{Name: "inventory", Keys: testKeys("inventory")})
 	request := httptest.NewRequest("POST", "/internal/reservations", strings.NewReader(strings.Repeat("x", 5000)))
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, request)
@@ -46,7 +46,7 @@ func TestOrderContractErrorsAndInventoryOutage(t *testing.T) {
 	closed := httptest.NewServer(nil)
 	origin := closed.URL
 	closed.Close()
-	service, err := New(Config{Name: "orders", Secret: testSecret, InventoryURL: origin})
+	service, err := New(Config{Name: "orders", Keys: testKeys("orders"), InventoryURL: origin})
 	if err != nil {
 		t.Fatal(err)
 	}

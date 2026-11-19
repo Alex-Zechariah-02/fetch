@@ -53,10 +53,12 @@ func readBody(r *http.Request, rule *rule) *refusal {
 	if !jsonMedia(r.Header.Values("Content-Type")) {
 		return &refusal{http.StatusUnsupportedMediaType, "unsupported_media_type", "media_type"}
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
-	if err != nil {
+	// A declared length sizes the buffer once; an undeclared one grows to the limit at most.
+	buffer := bytes.NewBuffer(make([]byte, 0, max(r.ContentLength, 512)))
+	if _, err := buffer.ReadFrom(io.LimitReader(r.Body, limit+1)); err != nil {
 		return &refusal{http.StatusBadRequest, "bad_request", "read_failed"}
 	}
+	body := buffer.Bytes()
 	if int64(len(body)) > limit {
 		return tooLarge
 	}
@@ -79,6 +81,10 @@ func readBody(r *http.Request, rule *rule) *refusal {
 func jsonMedia(fields []string) bool {
 	if len(fields) != 1 {
 		return false
+	}
+	// The two spellings every client sends are accepted without parsing.
+	if fields[0] == "application/json" || fields[0] == "application/json; charset=utf-8" {
+		return true
 	}
 	media, parameters, err := mime.ParseMediaType(fields[0])
 	if err != nil || media != "application/json" {

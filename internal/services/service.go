@@ -4,27 +4,26 @@
 package services
 
 import (
+	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"slices"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/Alex-Zechariah-02/fetch/internal/guard"
 )
 
 type Config struct {
-	Name                string
-	Secret              []byte
+	Name string
+	// Keys are the internal call keys by service name: this service's own
+	// when it calls another, and each caller's it accepts (see needs).
+	Keys                map[string][]byte
 	InventoryURL        string
 	OrdersURL           string
 	SigningSettingsFile string
@@ -45,7 +44,12 @@ type Config struct {
 type result struct {
 	status int
 	body   any
-	effect string
+	// encoded, when set, is the answer already encoded (a stored checkout
+	// answer), written as it is.
+	encoded []byte
+	effect  string
+	// retryAfter, when above zero, is the seconds a 503 asks the client to wait.
+	retryAfter int
 }
 type apiError struct {
 	Error   string `json:"error"`
@@ -57,6 +61,14 @@ func failure(status int, code, message, field string) result {
 	return result{status: status, body: apiError{code, message, field}}
 }
 func notFound() result { return failure(404, "not_found", "That resource was not found.", "") }
+
+// encode returns the answer as JSON.
+func (res result) encode() ([]byte, error) {
+	if res.encoded != nil {
+		return res.encoded, nil
+	}
+	return json.Marshal(res.body)
+}
 
 type resource interface {
 	handle(*http.Request, []byte) result
@@ -74,48 +86,63 @@ type counts struct {
 func newCounts() *counts { return &counts{Mode: "count", ByStatus: map[int]int{}} }
 
 type Service struct {
-	// mu guards everything below: the data lives in memory only, and one
-	// request at a time changes it.
-	mu             sync.Mutex
+	// mu guards data, which lives in memory only: GET and HEAD read it under
+	// the read lock, together; every other request changes it alone.
+	mu             sync.RWMutex
 	name, instance string
-	secret         []byte
+	callers        map[string][]byte // keys of the services that may call this one, by name
 	data           resource
-	receipts       []Receipt    // the newest maxReceipts, a ring once full
-	dropped        int          // older receipts the ring has overwritten
-	counts         *counts      // nil outside measurement mode
-	guard          *guard.Guard // nil without built-in protection
-	gateway        *assertions  // nil when the gateway's assertion is not required
-	log            *slog.Logger
+	// records guards the receipts and counts, which every request writes.
+	records sync.Mutex
+	recent  ring         // receipts of API requests
+	calls   ring         // receipts of internal calls, kept apart so a report's page reads never push out API receipts
+	seq     int          // receipts numbered since the last reset
+	counts  *counts      // nil outside measurement mode
+	guard   *guard.Guard // nil without built-in protection
+	gateway *assertions  // nil when the gateway's assertion is not required
+	log     *slog.Logger
+	// bodyCap is the largest request body any of this service's operations
+	// takes; a read never goes past it.
+	bodyCap int64
 }
 
 func New(cfg Config) (*Service, error) {
-	if len(cfg.Secret) < 32 || len(cfg.Secret) > 4096 {
-		return nil, errors.New("service secret must contain 32 to 4096 bytes")
+	if err := checkKeys(cfg.Name, cfg.Keys); err != nil {
+		return nil, err
 	}
 	log := cfg.Log
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
-	s := &Service{name: cfg.Name, secret: slices.Clone(cfg.Secret), instance: randomID(), log: log.With("service", cfg.Name)}
+	s := &Service{name: cfg.Name, callers: map[string][]byte{}, instance: randomID(), log: log.With("service", cfg.Name), bodyCap: bodyLimit(cfg.Name)}
+	for caller, key := range cfg.Keys {
+		if caller != cfg.Name {
+			s.callers[caller] = slices.Clone(key)
+		}
+	}
 	switch cfg.Name {
 	case "inventory":
 		s.data = &inventory{measure: cfg.Measure}
 	case "orders":
-		client, err := newServiceClient(cfg.InventoryURL, cfg.Secret)
+		client, err := newServiceClient(cfg.InventoryURL, cfg.Keys[cfg.Name])
 		if err != nil {
 			return nil, err
 		}
-		s.data = &orders{inventory: client, measure: cfg.Measure, outside: s.outside}
+		s.data = &orders{inventory: client, measure: cfg.Measure, outside: s.outside, locked: s.locked, stop: make(chan struct{})}
 	case "support":
-		s.data = &support{}
-	case "reports":
-		client, err := newServiceClient(cfg.OrdersURL, cfg.Secret)
+		client, err := newServiceClient(cfg.OrdersURL, cfg.Keys[cfg.Name])
 		if err != nil {
 			return nil, err
 		}
-		s.data = &reports{orders: client, outside: s.outside}
+		s.data = &support{orders: client, outside: s.outside}
+	case "reports":
+		client, err := newServiceClient(cfg.OrdersURL, cfg.Keys[cfg.Name])
+		if err != nil {
+			return nil, err
+		}
+		s.data = &reports{orders: client, outside: s.outside, log: s.log}
 	case "accounts":
-		accounts, err := newAccounts(cfg.SigningSettingsFile, cfg.Measure, s.log)
+		accounts, err := newAccounts(cfg.SigningSettingsFile, cfg.Measure, s.log, s.outside)
 		if err != nil {
 			return nil, err
 		}
@@ -157,13 +184,29 @@ func (s *Service) api() http.Handler {
 	return s.guard.Wrap(s)
 }
 
-// outside runs call without the service lock, which the caller holds before
-// and after. A call to another service waits on the network; under the lock
-// that wait would hold up every other request to this service. What the
-// caller read before may have changed when outside returns: it checks again.
-func (s *Service) outside(call func()) {
-	s.mu.Unlock()
-	defer s.mu.Lock()
+// sharedLock marks a request context whose handler holds the read lock.
+type sharedLock struct{}
+
+// outside runs call without the service lock, which the caller holds (read
+// or write, as ctx says) before and after. A call to another service waits on
+// the network, and a password hash on the CPU; under the lock that wait would
+// hold up every other request to this service. What the caller read before
+// may have changed when outside returns: it checks again.
+func (s *Service) outside(ctx context.Context, call func()) {
+	if shared, _ := ctx.Value(sharedLock{}).(bool); shared {
+		s.mu.RUnlock()
+		defer s.mu.RLock()
+	} else {
+		s.mu.Unlock()
+		defer s.mu.Lock()
+	}
+	call()
+}
+
+// locked runs call holding the write lock, for work that is no request's.
+func (s *Service) locked(call func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	call()
 }
 
@@ -171,85 +214,4 @@ func randomID() string {
 	var value [16]byte
 	rand.Read(value[:])
 	return hex.EncodeToString(value[:])
-}
-
-func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("X-Service", s.name)
-	internal := strings.HasPrefix(r.URL.Path, "/internal/")
-	keyRequired := internal && !s.serviceKey(r)
-	// Calls between services carry the service key, not an assertion. The
-	// signature is checked before the service lock is taken.
-	// Signing in needs no assertion: the demo commands sign in at Accounts
-	// directly, and the account comes from the password, not the gateway.
-	login := s.name == "accounts" && r.URL.Path == "/accounts/login"
-	unasserted := s.gateway != nil && !internal && !login && !s.gateway.check(r, time.Now())
-	var body []byte
-	var err error
-	if keyRequired || unasserted {
-		if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
-			w.Header().Set("Connection", "close")
-		}
-	} else {
-		body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-	}
-	res := notFound()
-	var encoded []byte
-	func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		var tooLarge *http.MaxBytesError
-		switch {
-		case keyRequired:
-			res = failure(401, "service_key_required", "A service key is required.", "")
-		case unasserted:
-			res = failure(401, "gateway_assertion_required", "A valid gateway assertion is required.", "")
-		case errors.As(err, &tooLarge):
-			res = failure(413, "payload_too_large", "The request body is too large.", "")
-		case err != nil:
-			res = failure(400, "invalid_request", "The request body could not be read.", "")
-		case len(body) > 0 && r.Method != "POST" && r.Method != "PATCH" && r.Method != "PUT":
-			res = failure(400, "invalid_request", "This operation accepts no request body.", "")
-		case r.Method != "GET" && r.Method != "HEAD" && r.URL.RawQuery != "":
-			res = invalidQuery()
-		default:
-			res = s.data.handle(r, body)
-		}
-		switch {
-		case s.counts != nil:
-			s.counts.Total++
-			s.counts.ByStatus[res.status]++
-		default:
-			// Each value is cut to these lengths, so no request can grow one receipt.
-			s.keep(Receipt{Time: time.Now().UTC(), RequestID: bounded(r.Header.Get("X-Request-Id"), 128), Generation: bounded(r.Header.Get("X-Gateway-Generation"), 256), Method: r.Method, Target: bounded(r.URL.EscapedPath(), 512), Status: res.status, Effect: res.effect, Authorization: r.Header.Get("Authorization") != "", Subject: bounded(r.Header.Get("X-Gateway-Subject"), 128), Roles: bounded(r.Header.Get("X-Gateway-Roles"), 4096), BodyBytes: len(body)})
-		}
-		// Encoded under the lock, because the body may share memory with the
-		// service's data; written after it, so a slow reader holds up nobody.
-		encoded, _ = json.Marshal(res.body)
-	}()
-	write(w, res.status, encoded)
-}
-
-// bounded cuts a header copied into a receipt, so no caller grows the receipts.
-func bounded(value string, n int) string {
-	if len(value) > n {
-		return value[:n]
-	}
-	return value
-}
-func (s *Service) serviceKey(r *http.Request) bool {
-	values := r.Header.Values("X-Service-Key")
-	return len(values) == 1 && subtle.ConstantTimeCompare([]byte(values[0]), s.secret) == 1
-}
-func writeJSON(w http.ResponseWriter, res result) {
-	encoded, _ := json.Marshal(res.body)
-	write(w, res.status, encoded)
-}
-
-// write sends an answer that is already encoded as JSON.
-func write(w http.ResponseWriter, status int, encoded []byte) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	w.Write(append(encoded, '\n'))
 }

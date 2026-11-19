@@ -72,6 +72,21 @@ export interface Ticket {
   created_at: string
 }
 
+// TicketSummary is a ticket in a list: no messages, a preview of the last one.
+export interface TicketSummary {
+  id: string
+  customer: string
+  customer_name: string
+  order: string | null
+  request_ref: string | null
+  subject: string
+  status: Ticket['status']
+  message_count: number
+  preview: string
+  updated_at: string
+  created_at: string
+}
+
 export interface User {
   id: string
   name: string

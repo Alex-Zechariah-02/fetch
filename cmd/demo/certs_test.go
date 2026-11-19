@@ -8,6 +8,7 @@ package main
 
 import (
 	"crypto"
+	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -82,7 +83,7 @@ func TestCertsAdmitOnlyGateway(t *testing.T) {
 
 	// An API started with the Fetch folder's key set answers a request the
 	// gateway folder's assertion key signed, and no request without one.
-	support, err := services.New(services.Config{Name: "support", Secret: newSecret(), GatewayKey: filepath.Join(fetch, assertionSetFile)})
+	support, err := services.New(services.Config{Name: "support", Keys: map[string][]byte{"support": newSecret()}, OrdersURL: "http://" + fetchServices[1].listen, GatewayKey: filepath.Join(fetch, assertionSetFile)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,16 +163,21 @@ func signedAssertion(t *testing.T, path string) string {
 	if block == nil {
 		t.Fatalf("%s holds no PEM block", path)
 	}
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// demo certs and setup make the identity key Ed25519, which the gateway signs EdDSA with.
+	key, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		t.Fatalf("%s holds a %T, not an Ed25519 key", path, parsed)
 	}
 	// The gateway names its key by the RFC 7638 thumbprint.
 	thumbprint, err := (&jose.JSONWebKey{Key: key}).Thumbprint(crypto.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: key},
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: key},
 		(&jose.SignerOptions{}).WithHeader("kid", base64.RawURLEncoding.EncodeToString(thumbprint)))
 	if err != nil {
 		t.Fatal(err)

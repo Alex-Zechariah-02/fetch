@@ -245,6 +245,21 @@ paths:
               - delivered
               - cancelled
             type: string
+        - description: Most orders on a page.
+          in: query
+          name: limit
+          required: false
+          schema:
+            default: 50
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: The last order ID of the previous page.
+          in: query
+          name: after
+          required: false
+          schema:
+            type: string
       security:
         - bearer: []
       x-fetch-access: allow

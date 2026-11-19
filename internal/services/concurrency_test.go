@@ -15,12 +15,12 @@ import (
 )
 
 func TestReservationTimeoutCompensation(t *testing.T) {
-	inventory := newService(t, Config{Name: "inventory", Secret: testSecret})
+	inventory := newService(t, Config{Name: "inventory", Keys: testKeys("inventory")})
 	var refuseRelease, prompt atomic.Bool
 	refuseRelease.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Service-Key") != string(testSecret) || r.Header.Get("Authorization") != "" {
-			t.Error("internal identity was not the service key")
+		if r.Header.Get("X-Service-Key") != string(testKeyset["orders"]) || r.Header.Get("Authorization") != "" {
+			t.Error("internal identity was not the Orders key")
 		}
 		if r.Method == "DELETE" && refuseRelease.Load() {
 			w.WriteHeader(503)
@@ -41,7 +41,7 @@ func TestReservationTimeoutCompensation(t *testing.T) {
 		inventory.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	orderService, err := New(Config{Name: "orders", Secret: testSecret, InventoryURL: server.URL})
+	orderService, err := New(Config{Name: "orders", Keys: testKeys("orders"), InventoryURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,10 +54,8 @@ func TestReservationTimeoutCompensation(t *testing.T) {
 		t.Fatal("uncertain reservation created or charged an order")
 	}
 	refuseRelease.Store(false)
-	serviceRequest(orderService, "GET", "/orders/wallet", "", "cust-003", "CUSTOMER", "")
-	w = serviceRequest(inventory, "GET", "/inventory/stock/ITM-501", "", "ops-01", "OPERATIONS", "")
-	if !strings.Contains(w.Body.String(), `"reserved":0`) {
-		t.Fatalf("orphan reservation survived recovery: %s", w.Body)
+	if body := awaitReleased(t, inventory); !strings.Contains(body, `"reserved":0`) {
+		t.Fatalf("orphan reservation survived recovery: %s", body)
 	}
 	w = serviceRequest(orderService, "POST", "/orders", checkoutBody, "cust-003", "CUSTOMER", "checkout-timeout-01")
 	if w.Code != 503 {
@@ -91,7 +89,7 @@ func together(calls ...func()) {
 // have arrived, so n checkouts all reserve before any reads the wallet.
 func overlapped(t *testing.T, n int) (*Service, *Service) {
 	t.Helper()
-	inventory := newService(t, Config{Name: "inventory", Secret: testSecret})
+	inventory := newService(t, Config{Name: "inventory", Keys: testKeys("inventory")})
 	var arrived atomic.Int32
 	all := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +106,7 @@ func overlapped(t *testing.T, n int) (*Service, *Service) {
 		inventory.ServeHTTP(w, r)
 	}))
 	t.Cleanup(server.Close)
-	return inventory, newService(t, Config{Name: "orders", Secret: testSecret, InventoryURL: server.URL})
+	return inventory, newService(t, Config{Name: "orders", Keys: testKeys("orders"), InventoryURL: server.URL})
 }
 
 func TestConcurrentWalletAndRiderClaims(t *testing.T) {

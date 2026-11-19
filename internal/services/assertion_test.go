@@ -45,7 +45,7 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 		t.Fatal(err)
 	}
 	var refusals bytes.Buffer
-	s := newService(t, Config{Name: "support", Secret: testSecret, GatewayKey: keyFile, Log: slog.New(slog.NewTextHandler(&refusals, nil))})
+	s := newService(t, Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders, GatewayKey: keyFile, Log: slog.New(slog.NewTextHandler(&refusals, nil))})
 
 	now := time.Now()
 	issuer := "apiward"
@@ -127,7 +127,7 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, "accounts.json"), settings, 0o600) != nil {
 		t.Fatal("writing the signing settings")
 	}
-	accounts, err := New(Config{Name: "accounts", Secret: testSecret, SigningSettingsFile: filepath.Join(dir, "accounts.json"), GatewayKey: keyFile})
+	accounts, err := New(Config{Name: "accounts", Keys: testKeys("accounts"), SigningSettingsFile: filepath.Join(dir, "accounts.json"), GatewayKey: keyFile})
 	if err != nil {
 		t.Fatal(err)
 	}

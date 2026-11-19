@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +17,28 @@ func TestMeasurementArgumentRefusals(t *testing.T) {
 		var output bytes.Buffer
 		if run(args, &output) == nil || output.Len() != 0 {
 			t.Errorf("invalid measurement emitted a result: %v", args)
+		}
+	}
+}
+
+// The built-in stack runs at another offset than the gateway's stack.
+func TestBuiltinOffsetMustDiffer(t *testing.T) {
+	t.Setenv("EAT_PORT_OFFSET", "7")
+	var output bytes.Buffer
+	if err := run([]string{"-builtin-offset", "7"}, &output); err == nil || !strings.Contains(err.Error(), "another offset") {
+		t.Fatalf("same offset: %v", err)
+	}
+}
+
+// The addresses measure reaches are the demo's, as cmd/demo/main.go lists them.
+func TestDemoAddressesMatch(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "demo", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"` + dataBase + `"`, `{"orders", "` + ordersBase + `"`, `{"accounts", "127.0.0.1:` + strconv.Itoa(accountsPort) + `"`, `"127.0.0.1:` + strconv.Itoa(ordersPort) + `"`} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("cmd/demo/main.go has no %s", want)
 		}
 	}
 }

@@ -71,6 +71,7 @@ Run while the stack is up. `<state>` is `<home>/state`.
 | `demo keys rotate -dir <state>` | Switch Accounts to a new signing key |
 | `demo policy export -dir <state> -out <file>` | Save the policy in force |
 | `demo policy stage -dir <state> -file <file>` | Save a policy as a draft change |
+| `demo rebind -dir <state>` | Accept `gateway.json` after changing it by hand |
 
 Details: [docs/demo.md](docs/demo.md).
 

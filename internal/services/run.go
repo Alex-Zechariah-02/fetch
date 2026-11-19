@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"slices"
 	"strings"
 	"time"
 )
@@ -19,7 +18,7 @@ import (
 var InternalHost = netip.AddrFrom4([4]byte{127, 0, 0, 1})
 
 // internal serves only the /internal/ endpoints, each still requiring the
-// service key; every other path is not found.
+// caller's key; every other path is not found.
 func (s *Service) internal() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/internal/") {
@@ -31,9 +30,17 @@ func (s *Service) internal() http.Handler {
 	})
 }
 
-// internalCallees are the services another one calls under /internal/ (Orders
-// calls Inventory, Reports calls Orders), always over loopback.
-var internalCallees = []string{"inventory", "orders"}
+// external serves next except the /internal/ paths, which are not found.
+func (s *Service) external(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/internal/") {
+			w.Header().Set("X-Service", s.name)
+			writeJSON(w, notFound())
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // Run serves the API on listen (see Listen for ingress) and the control
 // endpoints on the loopback address control until ctx ends. When the API takes
@@ -63,15 +70,21 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 			l.Close()
 		}
 	}()
-	api, err := Listen(listen, ingress)
+	listener, err := Listen(listen, ingress)
 	if err != nil {
 		return err
 	}
-	listeners = append(listeners, api)
-	handlers := []http.Handler{s.api(), s.Control(secret)}
+	listeners = append(listeners, listener)
+	api := s.api()
+	if ingress != (Ingress{}) {
+		// The gateway-facing TLS listener serves no /internal/ path: those
+		// calls arrive only on the loopback listener below.
+		api = s.external(api)
+	}
+	handlers := []http.Handler{api, s.Control(secret)}
 	addresses := []string{control}
-	if ingress != (Ingress{}) && slices.Contains(internalCallees, s.name) {
-		port := api.Addr().(*net.TCPAddr).Port
+	if ingress != (Ingress{}) && called(s.name) {
+		port := listener.Addr().(*net.TCPAddr).Port
 		handlers = append(handlers, s.internal())
 		addresses = append(addresses, netip.AddrPortFrom(InternalHost, uint16(port)).String()) // #nosec G115 -- a TCP port fits 16 bits
 	}
@@ -87,10 +100,13 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 	// connections after the 10 s ReadTimeout.
 	const idleTimeout = 2 * time.Minute
 	// 10 s reads a maxBody body on a slow link and outlasts the slowest
-	// answer, a report that waits at most 4 s for Orders.
+	// answer, a report that waits at most 4 s for Orders; every list is paged,
+	// so no answer is large. 64 KiB of headers holds a token and the
+	// gateway's assertion many times over, where Go's default is 1 MiB.
+	const maxHeaderBytes = 64 << 10
 	var servers []*http.Server
 	for _, handler := range handlers {
-		servers = append(servers, &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: idleTimeout})
+		servers = append(servers, &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: idleTimeout, MaxHeaderBytes: maxHeaderBytes})
 	}
 	errs := make(chan error, len(servers))
 	for i, server := range servers {

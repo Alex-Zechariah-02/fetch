@@ -5,7 +5,9 @@
 package guard
 
 import (
+	"crypto"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -99,7 +101,8 @@ func compact(token string) bool {
 // token is trusted before the signature verifies; the header is read first
 // only to refuse it.
 func verify(keys map[string]*rsa.PublicKey, token string, now time.Time) (identity, string) {
-	header, _, _ := strings.Cut(token, ".")
+	header, rest, _ := strings.Cut(token, ".")
+	body, sealed, found := strings.Cut(rest, ".")
 	kid, reason := checkHeader(header)
 	if reason != "" {
 		return identity{}, reason
@@ -108,12 +111,22 @@ func verify(keys map[string]*rsa.PublicKey, token string, now time.Time) (identi
 	if key == nil {
 		return identity{}, "unknown_kid"
 	}
-	signed, err := jose.ParseSignedCompact(token, []jose.SignatureAlgorithm{jose.RS256})
+	if !found || strings.Contains(sealed, ".") {
+		return identity{}, "malformed_credential"
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(body)
 	if err != nil {
 		return identity{}, "malformed_credential"
 	}
-	payload, err := signed.Verify(key)
+	signature, err := base64.RawURLEncoding.DecodeString(sealed)
 	if err != nil {
+		return identity{}, "malformed_credential"
+	}
+	// RS256 is RSASSA-PKCS1-v1_5 with SHA-256 over the encoded header, a dot
+	// and the encoded payload (RFC 7515 section 5.2, RFC 7518 section 3.3);
+	// checkHeader admitted exactly that algorithm.
+	digest := sha256.Sum256([]byte(token[:len(header)+1+len(body)]))
+	if rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], signature) != nil {
 		return identity{}, "invalid_signature"
 	}
 	return checkClaims(payload, now)
@@ -147,6 +160,9 @@ func checkHeader(segment string) (string, string) {
 
 // checkClaims applies the claim profile to a verified payload: the token is
 // valid before "exp" and from "nbf" onwards (RFC 7519), with no leeway.
+// clockLeeway is the gateway's default gateway.jwt.leeway.
+const clockLeeway = 60 * time.Second
+
 func checkClaims(payload []byte, now time.Time) (identity, string) {
 	var claims map[string]any
 	if josejson.Unmarshal(payload, &claims) != nil || claims == nil {
@@ -169,10 +185,12 @@ func checkClaims(payload []byte, now time.Time) (identity, string) {
 	if reason := checkAudience(claims["aud"]); reason != "" {
 		return identity{}, reason
 	}
-	if !now.Before(expires) {
+	// The gateway's default leeway for clock difference with the issuer, on
+	// both times, so setups B and C accept the same tokens.
+	if !now.Before(expires.Add(clockLeeway)) {
 		return identity{}, "expired"
 	}
-	if now.Before(notBefore) {
+	if now.Before(notBefore.Add(-clockLeeway)) {
 		return identity{}, "not_yet_valid"
 	}
 	return identity{subject: subject, roles: roles}, ""

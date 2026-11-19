@@ -6,9 +6,7 @@ package guard
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/rsa"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -37,6 +36,10 @@ const (
 	// maxBlockedBytes fits maxBlocked IDs of maxSubject bytes, each quoted
 	// and followed by a comma, inside the brackets.
 	maxBlockedBytes = maxBlocked*(maxSubject+3) + 2
+	// maxInFlight is the gateway's default data.max_in_flight: past it a
+	// request is refused 503 before its token is checked, so excess load
+	// costs as little as possible.
+	maxInFlight = 1024
 )
 
 // LogFile is the security log of api in the settings folder.
@@ -59,7 +62,21 @@ type Guard struct {
 	roles   []string
 	limiter *limiter
 	blocked atomic.Pointer[map[string]bool]
-	log     *securityLog
+	// blockedPath is the settings folder's list, rewritten by each
+	// replacement under replacing.
+	blockedPath string
+	replacing   sync.Mutex
+	log         *securityLog
+	ids         identifiers
+	// refusals counts the refusals no control decides; summarising writes
+	// them once a minute until stop closes.
+	refusals summary
+	stop     chan struct{}
+	stopped  chan struct{}
+	inFlight atomic.Int64
+	// overloads and capacity count refusals past maxInFlight and past a
+	// full rate table, for the control listener.
+	overloads, capacity atomic.Uint64
 }
 
 // New reads the settings folder and opens the API's security log. Every
@@ -69,7 +86,8 @@ func New(cfg Config) (*Guard, error) {
 	if err != nil {
 		return nil, err
 	}
-	g := &Guard{api: cfg.API, table: t, roles: slices.Clone(cfg.Roles), limiter: newLimiter(), keys: map[string]*rsa.PublicKey{}}
+	g := &Guard{api: cfg.API, table: t, roles: slices.Clone(cfg.Roles), limiter: newLimiter(), keys: map[string]*rsa.PublicKey{}, blockedPath: filepath.Join(cfg.Dir, BlockedFile)}
+	g.ids.prefix = newIdentifiers().prefix
 	var keys []Key
 	// One key at least, so tokens can verify; 64 bounds the key files read at startup.
 	if err := readJSON(filepath.Join(cfg.Dir, KeysFile), &keys); err != nil || len(keys) == 0 || len(keys) > 64 {
@@ -84,17 +102,24 @@ func New(cfg Config) (*Guard, error) {
 			return nil, fmt.Errorf("key %s: %w", key.Kid, err)
 		}
 	}
-	if err := g.loadBlocked(filepath.Join(cfg.Dir, BlockedFile)); err != nil {
+	if err := g.loadBlocked(g.blockedPath); err != nil {
 		return nil, fmt.Errorf("%s: %w", BlockedFile, err)
 	}
 	if g.log, err = openLog(filepath.Join(cfg.Dir, LogFile(cfg.API))); err != nil {
 		return nil, err
 	}
+	g.stop, g.stopped = make(chan struct{}), make(chan struct{})
+	go g.summarise(g.stop, g.stopped)
 	return g, nil
 }
 
-// Close writes every queued record and closes the log.
-func (g *Guard) Close() { g.log.close() }
+// Close writes the last refusal summary and every queued record, then
+// closes the log.
+func (g *Guard) Close() {
+	close(g.stop)
+	<-g.stopped
+	g.log.close()
+}
 
 // readFile reads at most limit bytes of path, refusing a longer file.
 func readFile(path string, limit int64) ([]byte, error) {
@@ -125,9 +150,16 @@ func readJSON(path string, value any) error {
 }
 
 // Wrap returns next behind every check. /internal/ calls between services
-// pass straight through: the service key is their control, as in every mode.
+// pass straight through: the caller's key is their control, as in every mode.
+// Identity headers are discarded on every path first: only the guard sets
+// them, and an internal call carries none.
 func (g *Guard) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for name := range r.Header {
+			if strings.HasPrefix(name, "X-Gateway-") {
+				r.Header.Del(name)
+			}
+		}
 		if strings.HasPrefix(r.URL.Path, "/internal/") {
 			next.ServeHTTP(w, r)
 			return
@@ -141,6 +173,7 @@ type check struct {
 	w       http.ResponseWriter
 	log     *securityLog
 	started time.Time
+	client  netip.Addr // invalid when the peer address did not parse
 	record  record
 }
 
@@ -149,31 +182,43 @@ func (c *check) refuse(stage string, status int, code, reason string) {
 	c.record.Kind, c.record.Stage, c.record.Decision = "request.rejected", stage, "reject"
 	c.record.Status, c.record.Error, c.record.Reason = status, code, reason
 	c.record.DurationMS = float64(time.Since(c.started)) / float64(time.Millisecond)
-	c.log.note(c.record)
+	c.log.note(&c.record)
+	answer(c.w, status, code)
+}
+
+// summarised answers a refusal no control decides and counts it in the
+// minute's summary instead of a record of its own.
+func (g *Guard) summarised(c *check, status int, code, reason string) {
+	g.refusals.count(reason, c.record.Client)
 	answer(c.w, status, code)
 }
 
 func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler) {
-	c := &check{w: w, log: g.log, started: time.Now(), record: record{RequestID: requestID(), API: g.api, Method: r.Method, Path: r.URL.Path}}
+	c := &check{w: w, log: g.log, started: time.Now(), record: record{RequestID: g.ids.issue(), API: g.api, Method: r.Method, Path: r.URL.Path}}
 	if peer, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
-		c.record.Client = clientOf(peer.Addr().Unmap(), r.Header).String()
+		c.client = clientOf(peer.Addr().Unmap(), r.Header)
+		c.record.Client = c.client.String()
 	}
 	w.Header().Set("X-Request-Id", c.record.RequestID)
-	// Identity comes only from the verified token: client copies of the
-	// headers the handler reads it from are discarded before anything else.
+	// The request ID is the guard's: a client's copy is discarded (Wrap
+	// already discarded the identity headers).
+	r.Header.Del("X-Request-Id")
 	credentials := r.Header.Values("Authorization")
-	for name := range r.Header {
-		if strings.HasPrefix(name, "X-Gateway-") || name == "X-Request-Id" {
-			r.Header.Del(name)
-		}
+	if g.inFlight.Add(1) > maxInFlight {
+		g.inFlight.Add(-1)
+		g.overloads.Add(1)
+		w.Header().Set("Retry-After", "1")
+		g.summarised(c, http.StatusServiceUnavailable, "overloaded", "overloaded")
+		return
 	}
+	defer g.inFlight.Add(-1)
 	// A proxy and the API must read the same target: origin-form only, no CONNECT or Upgrade.
 	if !strings.HasPrefix(r.RequestURI, "/") || r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" {
-		c.refuse("ingress", http.StatusBadRequest, "bad_request", "ingress")
+		g.summarised(c, http.StatusBadRequest, "bad_request", "ingress")
 		return
 	}
 	if !canonical(r) {
-		c.refuse("canonical", http.StatusBadRequest, "bad_request", "path_not_canonical")
+		g.summarised(c, http.StatusBadRequest, "bad_request", "path_not_canonical")
 		return
 	}
 	rule, allow, status := g.table.match(r.URL.Path, r.Method)
@@ -183,7 +228,7 @@ func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler)
 			w.Header().Set("Allow", allow)
 			code = "method_not_allowed"
 		}
-		c.refuse("route", status, code, code)
+		g.summarised(c, status, code, code)
 		return
 	}
 	c.record.Operation = rule.ID
@@ -202,9 +247,15 @@ func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler)
 		return
 	}
 	c.record.Kind, c.record.Stage, c.record.Decision = "request.admitted", "log", "admit"
-	// The request waits for its record to be synced, so it never runs unlogged.
-	if c.log.commit(r.Context(), c.record) != nil {
-		c.refuse("log", http.StatusServiceUnavailable, "gateway_unavailable", "log_unavailable")
+	// The request waits for its record to be synced, so it never runs
+	// unlogged. A timed-out admission was withdrawn, or is written and
+	// superseded by this refusal of the same request.
+	if err := c.log.commit(r.Context(), &c.record); err != nil {
+		reason := "log_unavailable"
+		if errors.Is(err, errLogTimedOut) {
+			reason = "log_timeout"
+		}
+		c.refuse("log", http.StatusServiceUnavailable, "gateway_unavailable", reason)
 		return
 	}
 	r.Header.Set("X-Request-Id", c.record.RequestID)
@@ -213,81 +264,19 @@ func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler)
 		r.Header.Set("X-Gateway-Roles", strings.Join(c.record.Roles, ","))
 	}
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	next.ServeHTTP(recorder, r)
-	c.record.Kind, c.record.Stage, c.record.Decision, c.record.Status = "request.handled", "handler", "handled", recorder.status
-	c.record.DurationMS = float64(time.Since(c.started)) / float64(time.Millisecond)
-	c.log.note(c.record)
-}
-
-// authorise verifies the token, then refuses a blocked account, then keeps
-// only defined roles and refuses when none is permitted on the operation.
-func (g *Guard) authorise(c *check, credentials []string, rule *rule) bool {
-	token, reason := bearer(credentials)
-	var verified identity
-	if reason == "" {
-		verified, reason = verify(g.keys, token, time.Now())
-	}
-	if reason != "" {
-		c.w.Header().Set("WWW-Authenticate", "Bearer")
-		c.refuse("jwt", http.StatusUnauthorized, "unauthenticated", reason)
-		return false
-	}
-	c.record.Subject = verified.subject
-	permitted := false
-	for _, role := range verified.roles {
-		if !slices.Contains(g.roles, role) {
-			c.record.IgnoredRoles = append(c.record.IgnoredRoles, role)
-			continue
+	// A handler that panics still gets its outcome: decision failed, 500
+	// unless a status was already sent. The panic goes on to net/http.
+	handled := false
+	defer func() {
+		if !handled {
+			status := http.StatusInternalServerError
+			if recorder.wrote {
+				status = recorder.status
+			}
+			c.outcome("failed", status)
 		}
-		c.record.Roles = append(c.record.Roles, role)
-		permitted = permitted || slices.Contains(rule.Roles, role)
-	}
-	switch {
-	case (*g.blocked.Load())[verified.subject]:
-		c.refuse("rbac", http.StatusForbidden, "account_blocked", "account_blocked")
-	case !permitted:
-		c.refuse("rbac", http.StatusForbidden, "forbidden", "no_permit")
-	default:
-		return true
-	}
-	return false
-}
-
-// limit counts the request on the operation's counter for the account, or
-// for the direct peer address on a public operation.
-func (g *Guard) limit(c *check, rule *rule) bool {
-	key := c.record.Subject
-	if rule.Public() {
-		key = c.record.Client
-	}
-	if key == "" {
-		c.refuse("rate", http.StatusBadRequest, "bad_request", "invalid_peer_address")
-		return false
-	}
-	switch g.limiter.admit(counterKey{rule.ID, key}, rule.Count, rule.Window) {
-	case exceeded:
-		c.refuse("rate", http.StatusTooManyRequests, "rate_limited", "quota_exceeded")
-		return false
-	case full:
-		c.refuse("rate", http.StatusServiceUnavailable, "gateway_unavailable", "rate_capacity")
-		return false
-	}
-	return true
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (s *statusRecorder) WriteHeader(status int) {
-	s.status = status
-	s.ResponseWriter.WriteHeader(status)
-}
-
-func requestID() string {
-	// 12 random bytes keep request identifiers apart in the security log.
-	var value [12]byte
-	rand.Read(value[:])
-	return hex.EncodeToString(value[:])
+	}()
+	next.ServeHTTP(recorder, r)
+	handled = true
+	c.outcome("handled", recorder.status)
 }

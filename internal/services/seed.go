@@ -1,3 +1,6 @@
+// The seed of every service: the demo accounts, the load accounts of
+// measurement mode, and the categories, merchants and items.
+
 package services
 
 import "fmt"
@@ -49,13 +52,21 @@ func loadUsers() []User {
 	return users
 }
 
-func userByID(id string) (User, bool) {
-	for _, user := range Users() {
-		if user.ID == id {
-			return user, true
-		}
+// seedUsers indexes the demo accounts by ID, built once: they never change.
+var seedUsers = indexUsers(Users())
+
+func indexUsers(users []User) map[string]User {
+	index := make(map[string]User, len(users))
+	for _, user := range users {
+		index[user.ID] = user
 	}
-	return User{}, false
+	return index
+}
+
+// userByID is a demo account; callers read it and never change it.
+func userByID(id string) (User, bool) {
+	user, found := seedUsers[id]
+	return user, found
 }
 
 type Category struct {

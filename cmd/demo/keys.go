@@ -13,8 +13,10 @@ import (
 	"time"
 )
 
-// maxTrusted is the gateway's own limit on gateway.jwt.keys; a 65th key would
-// make the reload and the next start refuse the settings.
+// maxTrusted mirrors the gateway's limit on gateway.jwt.keys (APIWard's
+// pipeline.MaxKeys, internal/pipeline/keys.go there); a 65th key written to the settings
+// would make the reload and every later start refuse them, so the demo
+// refuses first.
 const maxTrusted = 64
 
 func keys(args []string) error {
@@ -48,7 +50,18 @@ func keys(args []string) error {
 	return err
 }
 
+// changeKeys rotates or retires an Accounts key under dir's operator lock.
+// A retired key's files that rotate made are deleted once the gateway's
+// reload is confirmed.
 func changeKeys(dir string, admin *adminClient, action, kid string) (string, error) {
+	if err := checkFiles(dir); err != nil {
+		return "", err
+	}
+	lock, err := lockDemo(dir)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
 	if err := checkDemo(dir); err != nil {
 		return "", err
 	}
@@ -83,7 +96,7 @@ func changeKeys(dir string, admin *adminClient, action, kid string) (string, err
 	if !ok {
 		return "", errors.New("missing trusted keys")
 	}
-	newPrivate := ""
+	newPrivate, retired := "", ""
 	switch action {
 	case "rotate":
 		if len(trusted) >= maxTrusted {
@@ -116,6 +129,7 @@ func changeKeys(dir string, admin *adminClient, action, kid string) (string, err
 			}
 			if entry["kid"] == kid {
 				found = true
+				retired, _ = entry["public_key_file"].(string)
 			} else {
 				kept = append(kept, value)
 			}
@@ -132,7 +146,7 @@ func changeKeys(dir string, admin *adminClient, action, kid string) (string, err
 		return "", err
 	}
 	if err := identifyDemo(dir); err != nil {
-		return "", err
+		return "", fmt.Errorf("settings written but not bound; check them and run demo rebind -dir %s: %w", dir, err)
 	}
 	if _, _, err := admin.send("POST", "/admin/keys/reload", nil, mutationHeaders(""), 200); err != nil {
 		return "", fmt.Errorf("settings written; key reload was not confirmed, Accounts signing is unchanged; inspect /admin/keys before continuing: %w", err)
@@ -141,8 +155,27 @@ func changeKeys(dir string, admin *adminClient, action, kid string) (string, err
 		if err := replaceOperatorFile(filepath.Join(dir, signingFile), signingSettings(kid, newPrivate)); err != nil {
 			return "", fmt.Errorf("gateway trusts new key but Accounts did not switch: %w", err)
 		}
+		return kid, nil
 	}
+	removeRetired(dir, kid, retired)
 	return kid, nil
+}
+
+// removeRetired deletes the key pair rotate wrote for kid, which the
+// settings named at public. The pair setup made, and any file outside dir,
+// stays and is named instead: it may serve another purpose.
+func removeRetired(dir, kid, public string) {
+	if public != filepath.Join(dir, kid+".pem") {
+		fmt.Printf("retired key %s; its files were not made by keys rotate and stay: %s\n", kid, public)
+		return
+	}
+	for _, path := range []string{filepath.Join(dir, kid+"-key.pem"), public} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "warning: retired key file %s was not deleted: %v\n", path, err)
+			continue
+		}
+		fmt.Println("deleted", path)
+	}
 }
 
 // recentKeyUse is how recently a key must have verified a token for retiring

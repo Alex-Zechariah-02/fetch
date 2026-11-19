@@ -21,7 +21,7 @@ func TestLogRotates(t *testing.T) {
 	}
 	l.limit = 512
 	for range 4 * logFiles {
-		if err := l.commit(t.Context(), record{Kind: "request.admitted", Method: strings.Repeat("M", 4096), Path: "/orders"}); err != nil {
+		if err := l.commit(t.Context(), &record{Kind: "request.admitted", Method: strings.Repeat("M", 4096), Path: "/orders"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -61,7 +61,7 @@ func TestLogRotationFailure(t *testing.T) {
 		}
 	}
 	commit := func() error {
-		return l.commit(t.Context(), record{Kind: "request.admitted", Method: "GET", Path: "/orders"})
+		return l.commit(t.Context(), &record{Kind: "request.admitted", Method: "GET", Path: "/orders"})
 	}
 	hold()
 	// commit returns after the writer's send, so l.size is read in order.

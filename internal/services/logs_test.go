@@ -16,7 +16,7 @@ func TestServiceLogsResetAndSigningFailure(t *testing.T) {
 	t.Parallel()
 	var record bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&record, nil))
-	s := newService(t, Config{Name: "support", Secret: testSecret, Log: log})
+	s := newService(t, Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders, Log: log})
 	serviceRequest(s, "GET", "/support/mine", "", "cust-002", "CUSTOMER", "")
 	reset := httptest.NewRequest("POST", "/reset", nil)
 	reset.Header.Set("Authorization", "Bearer "+string(testSecret))
@@ -27,7 +27,7 @@ func TestServiceLogsResetAndSigningFailure(t *testing.T) {
 	}
 
 	_, _, settings := accountService(t)
-	accounts := newService(t, Config{Name: "accounts", Secret: testSecret, SigningSettingsFile: settings, Log: log})
+	accounts := newService(t, Config{Name: "accounts", Keys: testKeys("accounts"), SigningSettingsFile: settings, Log: log})
 	if err := os.Remove(settings); err != nil {
 		t.Fatal(err)
 	}

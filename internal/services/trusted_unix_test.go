@@ -22,7 +22,7 @@ func TestGatewayKeySetMustBeTrusted(t *testing.T) {
 		if err := os.Chmod(file, mode); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := New(Config{Name: "support", Secret: testSecret, GatewayKey: file}); err == nil || !strings.Contains(err.Error(), "writable by the group or others") {
+		if _, err := New(Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders, GatewayKey: file}); err == nil || !strings.Contains(err.Error(), "writable by the group or others") {
 			t.Errorf("key set with mode %o: %v", mode, err)
 		}
 	}
@@ -30,7 +30,7 @@ func TestGatewayKeySetMustBeTrusted(t *testing.T) {
 	if err := os.Chmod(file, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(Config{Name: "support", Secret: testSecret, GatewayKey: file}); err == nil || strings.Contains(err.Error(), "writable") {
+	if _, err := New(Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders, GatewayKey: file}); err == nil || strings.Contains(err.Error(), "writable") {
 		t.Errorf("a trusted key set without keys: %v", err)
 	}
 }

@@ -89,6 +89,18 @@ func TestTokensSignEveryAccountOnce(t *testing.T) {
 	if file.Expires.IsZero() {
 		t.Fatal("no expiry")
 	}
+	// The token file is new: an existing one is never replaced.
+	if err := tokens([]string{"-accounts", address, "-certs", filepath.Join(root, "gateway"), "-out", out, "-customers", "1"}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("existing token file: %v", err)
+	}
+	if after, err := os.ReadFile(out); err != nil || string(after) != string(data) {
+		t.Fatal("a refused run changed the token file")
+	}
+	// Fetch's certificate must name the address (or -name): another name is refused.
+	err = tokens([]string{"-accounts", address, "-certs", filepath.Join(root, "gateway"), "-out", filepath.Join(t.TempDir(), "n.json"), "-customers", "1", "-name", "127.0.0.9"})
+	if err == nil || !strings.Contains(err.Error(), "127.0.0.9") {
+		t.Fatalf("certificate for another name: %v", err)
+	}
 	// A run that needs fewer customers signs in only the first ones, still
 	// skipping load-1000.
 	if few := measurementSigners(1000); len(few.Customers) != 1000 || few.Customers[999].ID != "load-1001" || few.Limited.ID != "load-1000" {

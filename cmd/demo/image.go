@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/netip"
 	"path"
 	"time"
@@ -101,15 +102,33 @@ func awaitAdmin(admin *adminClient) (string, error) {
 }
 
 // health succeeds once every Fetch service's control listener on this host
-// accepts connections: the Fetch image's health check.
+// answers HTTP as that service: the Fetch image's health check. A request
+// without the control secret is refused (401) by the service's own handler,
+// so a listener that accepts connections but serves nothing fails it.
 func health(args []string) error {
 	if len(args) != 0 {
 		return errors.New("health takes no arguments\n" + usage)
 	}
+	// Two seconds an answer: the image's probe allows five for all five services.
+	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: refuseRedirect}
 	for _, service := range fetchServices {
-		if !dialable(service.control) {
-			return fmt.Errorf("%s does not answer on %s", service.name, service.control)
+		if err := answers(client, service); err != nil {
+			return fmt.Errorf("%s does not answer on %s: %w", service.name, service.control, err)
 		}
+	}
+	return nil
+}
+
+// answers checks that service's control listener answers an unauthenticated
+// request with the service's own refusal.
+func answers(client *http.Client, service demoService) error {
+	response, err := client.Get("http://" + service.control + "/state")
+	if err != nil {
+		return err
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized || response.Header.Get("X-Service") != service.name {
+		return fmt.Errorf("status %d from %q", response.StatusCode, response.Header.Get("X-Service"))
 	}
 	return nil
 }

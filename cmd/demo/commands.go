@@ -26,6 +26,7 @@ import (
 func token(args []string) error {
 	set := flag.NewFlagSet("token", flag.ContinueOnError)
 	subject := set.String("subject", "", "seeded demo account ID")
+	// Only the default is accepted: Accounts' lifetime is fixed, and the flag lets a script state it.
 	ttl := set.Duration("ttl", maxTokenTTL, "fixed 15-minute Accounts lifetime")
 	dir, err := parse(set, args)
 	if err != nil {
@@ -83,25 +84,45 @@ func reset(args []string) error {
 	// A wedged control listener must not hang the reset: 10s ends the request, its outcome unknown.
 	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: refuseRedirect}
 	defer client.CloseIdleConnections()
-	for _, service := range fetchServices {
-		request, _ := http.NewRequest("POST", "http://"+service.control+"/reset", http.NoBody)
-		request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(secret)))
-		response, err := client.Do(request)
+	return resetAll(client, fetchServices, strings.TrimSpace(string(secret)))
+}
+
+// resetAll resets every one of services, trying each even after a failure,
+// and names every service that failed.
+func resetAll(client *http.Client, services []demoService, secret string) error {
+	var failed error
+	for _, service := range services {
+		digest, err := resetService(client, service, secret)
 		if err != nil {
-			return fmt.Errorf("resetting %s: no answer; its reset outcome is unknown: %w", service.name, err)
+			failed = errors.Join(failed, fmt.Errorf("resetting %s: %w", service.name, err))
+			continue
 		}
-		var state services.State
-		// A reset answer is a small state object, so 1 MiB bounds the read from a broken listener.
-		decodeErr := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&state)
-		response.Body.Close()
-		hash, hashErr := hex.DecodeString(state.SHA256)
-		// The seed hash must be a full SHA-256, 32 bytes, so a truncated digest is refused.
-		if response.StatusCode != 200 || decodeErr != nil || state.Service != service.name || hashErr != nil || len(hash) != 32 {
-			return fmt.Errorf("resetting %s: invalid reset answer, status %d", service.name, response.StatusCode)
-		}
-		fmt.Printf("%-9s %s seed restored\n", service.name, state.SHA256)
+		fmt.Printf("%-9s %s seed restored\n", service.name, digest)
 	}
-	return nil
+	return failed
+}
+
+// resetService restores one service's seed and returns the seed's digest.
+func resetService(client *http.Client, service demoService, secret string) (string, error) {
+	request, err := http.NewRequest("POST", "http://"+service.control+"/reset", http.NoBody)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Authorization", "Bearer "+secret)
+	response, err := client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("no answer; its reset outcome is unknown: %w", err)
+	}
+	var state services.State
+	// A reset answer is a small state object, so 1 MiB bounds the read from a broken listener.
+	decodeErr := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&state)
+	response.Body.Close()
+	hash, hashErr := hex.DecodeString(state.SHA256)
+	// The seed hash must be a full SHA-256, 32 bytes, so a truncated digest is refused.
+	if response.StatusCode != 200 || decodeErr != nil || state.Service != service.name || hashErr != nil || len(hash) != 32 {
+		return "", fmt.Errorf("invalid reset answer, status %d", response.StatusCode)
+	}
+	return state.SHA256, nil
 }
 
 // auditLines splits the audit file into lines. On Linux the gateway fills its
@@ -122,8 +143,47 @@ func auditLines(data []byte, atEOF bool) (int, []byte, error) {
 }
 
 // maxLast bounds the events demo events keeps in memory: about a day of
-// demo traffic, at most a few MiB of decoded records.
+// demo traffic, each kept as its eleven printed fields (well under 1 KiB).
 const maxLast = 10000
+
+// eventFields are the record fields demo events prints, in order.
+var eventFields = []string{"time", "kind", "stage", "decision", "status", "error", "reason", "subject", "operation", "generation", "request_id"}
+
+// event is the part of an audit record demo events reads; each field keeps
+// its JSON text, so a number prints as the gateway wrote it.
+type event struct {
+	Time       json.RawMessage `json:"time"`
+	Kind       string          `json:"kind"`
+	Stage      json.RawMessage `json:"stage"`
+	Decision   json.RawMessage `json:"decision"`
+	Status     json.RawMessage `json:"status"`
+	Error      json.RawMessage `json:"error"`
+	Reason     json.RawMessage `json:"reason"`
+	Subject    json.RawMessage `json:"subject"`
+	Operation  json.RawMessage `json:"operation"`
+	Generation json.RawMessage `json:"generation"`
+	RequestID  string          `json:"request_id"`
+}
+
+// line is the event as name=value pairs, leaving out absent and empty fields.
+func (e event) line() string {
+	kind, _ := json.Marshal(e.Kind)
+	request, _ := json.Marshal(e.RequestID)
+	values := []json.RawMessage{e.Time, kind, e.Stage, e.Decision, e.Status, e.Error, e.Reason, e.Subject, e.Operation, e.Generation, request}
+	var fields []string
+	for i, raw := range values {
+		value := string(raw)
+		var text string
+		if json.Unmarshal(raw, &text) == nil {
+			value = text
+		}
+		if len(raw) == 0 || value == "" {
+			continue
+		}
+		fields = append(fields, eventFields[i]+"="+value)
+	}
+	return strings.Join(fields, " ")
+}
 
 // events prints the gateway's request events from the audit file, oldest
 // first: every event of one request, or the last N.
@@ -145,43 +205,35 @@ func events(args []string) error {
 	}
 	defer file.Close()
 
-	// Without -request only the last N matching events are kept, so the memory
-	// used does not grow with the audit file.
-	var matched []map[string]any
-	malformed := 0
+	// Without -request only the last N matching events are kept, in a ring,
+	// so the memory used does not grow with the audit file.
+	var matched []event
+	next, malformed := 0, 0
 	scanner := bufio.NewScanner(file)
 	// Audit records are small; the 1 MiB maximum bounds one record and a longer line ends the scan.
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	scanner.Split(auditLines)
 	for scanner.Scan() {
-		var event map[string]any
-		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+		var record event
+		if json.Unmarshal(scanner.Bytes(), &record) != nil {
 			malformed++
 			continue // a malformed record or an incomplete tail
 		}
-		kind, _ := event["kind"].(string)
-		if !strings.HasPrefix(kind, "request.") {
+		if !strings.HasPrefix(record.Kind, "request.") || *requestID != "" && record.RequestID != *requestID {
 			continue
 		}
-		if *requestID != "" && event["request_id"] != *requestID {
+		if *requestID != "" || len(matched) < *last {
+			matched = append(matched, record)
 			continue
 		}
-		matched = append(matched, event)
-		if *requestID == "" && len(matched) > *last {
-			matched = matched[1:]
-		}
+		matched[next] = record
+		next = (next + 1) % *last
 	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
-	for _, event := range matched {
-		var fields []string
-		for _, name := range []string{"time", "kind", "stage", "decision", "status", "error", "reason", "subject", "operation", "generation", "request_id"} {
-			if value, ok := event[name]; ok && value != "" {
-				fields = append(fields, fmt.Sprintf("%s=%v", name, value))
-			}
-		}
-		fmt.Println(strings.Join(fields, " "))
+	for i := range matched {
+		fmt.Println(matched[(next+i)%len(matched)].line())
 	}
 	fmt.Fprintln(os.Stderr, "events: searched only the active audit file; retained rotated files were not searched")
 	if malformed > 0 {

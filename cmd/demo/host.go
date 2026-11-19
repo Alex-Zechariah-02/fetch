@@ -20,10 +20,12 @@ import (
 // gatewayHost is a host demo up runs the gateway on: the whole one-machine
 // demonstration, or the gateway host of a two-host setup.
 type gatewayHost struct {
-	state     string   // the deployment's directory
-	addresses []string // every address it listens on, free before it starts
-	shopURL   string   // where browsers open the shop
-	reused    string   // printed when a later run reuses the state
+	state     string         // the deployment's directory
+	addresses []string       // every address it listens on, free before it starts
+	shopURL   string         // where browsers open the shop
+	reused    string         // printed when a later run reuses the state
+	baseline  map[string]any // the baseline policy this run would establish
+	ca        string         // the CA file its settings must name; "" on one machine
 	build     func(source sources) (builtPrograms, error)
 	create    func(programs builtPrograms, out io.Writer) error
 	run       func(ctx context.Context, programs builtPrograms, ready func()) error
@@ -36,6 +38,7 @@ func localHost(home string) gatewayHost {
 		state:     state,
 		addresses: localAddresses(),
 		shopURL:   "http://" + dataListen + "/",
+		baseline:  baselinePolicy(),
 		build: func(source sources) (builtPrograms, error) {
 			programs, err := buildPrograms(source, filepath.Join(home, "bin"))
 			if err != nil {
@@ -52,6 +55,38 @@ func localHost(home string) gatewayHost {
 	}
 }
 
+// inspect reports whether the next start creates the deployment, and whether
+// an unfinished earlier setup is in its place; a reused deployment must
+// match this run.
+func (h gatewayHost) inspect() (firstRun, earlierSetup bool, err error) {
+	if _, err := os.Stat(h.state); errors.Is(err, os.ErrNotExist) {
+		return true, false, nil
+	} else if err != nil {
+		return false, false, err
+	}
+	if err := checkDemo(h.state); err != nil {
+		lock, earlierErr := lockUnfinishedEarlierDemo(h.state)
+		if earlierErr != nil {
+			return false, false, errors.Join(err, earlierErr)
+		}
+		lock.Close()
+		return true, true, nil
+	}
+	if err := checkReused(h.state, h.baseline, h.ca); err != nil {
+		return false, false, err
+	}
+	if h.reused != "" {
+		fmt.Println(h.reused)
+	}
+	return false, false, nil
+}
+
+// choose asks for the new administrator's password; nothing is created yet.
+func (h gatewayHost) choose() (string, error) {
+	fmt.Println("First run: choose the password for the Dashboard administrator", upAdmin+".")
+	return choosePassword()
+}
+
 // up builds the host's programs and websites from the current sources,
 // creates the deployment the first time and then establishes its baseline
 // policy through the Admin API, prints the public demo accounts and runs
@@ -66,45 +101,37 @@ func (h gatewayHost) up(apiward string, fresh, stdin bool) error {
 	if err != nil {
 		return err
 	}
-	if fresh {
-		if err := removeState(h.state); err != nil {
+	// Without -fresh, a reused deployment is checked and a first run's
+	// password chosen before the build, so a refusal or a cancelled prompt
+	// costs no build and changes nothing.
+	firstRun, earlierSetup := true, false
+	if !fresh {
+		if firstRun, earlierSetup, err = h.inspect(); err != nil {
 			return err
 		}
 	}
-	_, err = os.Stat(h.state)
-	firstRun := errors.Is(err, os.ErrNotExist)
-	if err != nil && !firstRun {
-		return err
-	}
-	earlierSetup := false
-	if !firstRun {
-		if err := checkDemo(h.state); err != nil {
-			lock, earlierErr := lockUnfinishedEarlierDemo(h.state)
-			if earlierErr != nil {
-				return errors.Join(err, earlierErr)
-			}
-			lock.Close()
-			firstRun, earlierSetup = true, true
-		}
-	}
-	if !firstRun && h.reused != "" {
-		fmt.Println(h.reused)
-	}
-
-	// The password is chosen before anything is created, so stopping here
-	// leaves nothing half set up.
 	password := ""
-	if firstRun {
-		fmt.Println("First run: choose the password for the Dashboard administrator", upAdmin+".")
-		if password, err = choosePassword(); err != nil {
+	if firstRun && !fresh {
+		if password, err = h.choose(); err != nil {
 			return err
 		}
 	}
-
+	// Built before -fresh removes anything, so a failed build leaves the
+	// previous deployment's database and security log in place.
 	programs, err := h.build(source)
 	if err != nil {
 		return err
 	}
+	if fresh {
+		// The password is chosen before the earlier state goes, so stopping here deletes nothing.
+		if password, err = h.choose(); err != nil {
+			return err
+		}
+		if err := removeState(h.state); err != nil {
+			return err
+		}
+	}
+
 	secret := ""
 	if firstRun {
 		if earlierSetup {

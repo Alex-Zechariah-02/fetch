@@ -1,14 +1,14 @@
 // The Orders API: its records, its data and the routing of its requests.
+// Orders are held in placement order with an index by ID, so a read finds an
+// order, a page or a customer's mart history without scanning the list.
 
 package services
 
 import (
+	"context"
 	"encoding/json"
-	"maps"
 	"net/http"
 	"net/url"
-	"slices"
-	"strings"
 	"time"
 )
 
@@ -53,16 +53,25 @@ type savedOrderResult struct {
 	body   json.RawMessage
 }
 type orders struct {
-	inventory      *serviceClient
-	list           []Order
+	inventory *serviceClient
+	list      []Order        // in placement order, oldest first
+	index     map[string]int // position in list by order ID
+	// martOrders counts each customer's orders at mart merchants that are not
+	// cancelled: the first one has free delivery.
+	martOrders     map[string]int
 	seeded         int // orders in the seed, which a measurement run keeps
 	wallets        map[string]int64
 	next           int
 	idempotency    map[string]savedOrderResult
 	reservations   map[string]string
 	pendingRelease map[string]bool
-	// outside runs a call to Inventory without the service lock.
-	outside func(func())
+	// outside runs a call to Inventory without the service lock; locked runs
+	// the compensation worker's turns under it.
+	outside func(context.Context, func())
+	locked  func(func())
+	// retrying is set while the compensation worker runs; stop ends it.
+	retrying bool
+	stop     chan struct{}
 	// epoch counts resets: a request that waited outside the lock while the
 	// data was replaced must not write its result into the new data.
 	epoch int
@@ -80,6 +89,7 @@ var states = []string{"Johor", "Kedah", "Kelantan", "Melaka", "Negeri Sembilan",
 func (d *orders) reset() {
 	d.list = seedOrders()
 	d.seeded = len(d.list)
+	d.reindex()
 	d.recent = measured(d.measure, keyLife)
 	d.wallets = map[string]int64{"cust-001": walletSeed, "cust-002": walletSeed, "cust-003": walletSeed}
 	if d.measure {
@@ -87,7 +97,7 @@ func (d *orders) reset() {
 			d.wallets[user.ID] = walletSeed
 		}
 	}
-	d.next = 1005
+	d.next = nextNumber(d.list)
 	d.idempotency = map[string]savedOrderResult{}
 	d.reservations = map[string]string{}
 	d.pendingRelease = map[string]bool{}
@@ -95,7 +105,28 @@ func (d *orders) reset() {
 	d.placing = map[string]chan struct{}{}
 	d.epoch++
 }
-func (d *orders) close() { d.inventory.close() }
+
+// reindex rebuilds the index and the mart counts from the list.
+func (d *orders) reindex() {
+	d.index = make(map[string]int, len(d.list))
+	d.martOrders = map[string]int{}
+	for i, order := range d.list {
+		d.index[order.ID] = i
+		if martOrder(order) {
+			d.martOrders[order.Customer]++
+		}
+	}
+}
+
+// martOrder reports an order at a mart merchant that is not cancelled.
+func martOrder(order Order) bool {
+	return order.Status != "cancelled" && (order.Merchant == "MER-005" || order.Merchant == "MER-006")
+}
+
+func (d *orders) close() {
+	close(d.stop)
+	d.inventory.close()
+}
 func (d *orders) snapshot() any {
 	return struct {
 		Orders  []Order          `json:"orders"`
@@ -105,34 +136,20 @@ func (d *orders) snapshot() any {
 	}{d.list, d.wallets, d.next, len(d.pendingRelease)}
 }
 func (d *orders) find(id string) *Order {
-	for i := range d.list {
-		if d.list[i].ID == id {
-			return &d.list[i]
-		}
+	i, found := d.index[id]
+	if !found {
+		return nil
 	}
-	return nil
+	return &d.list[i]
 }
 func (d *orders) fee(subject string, merchant Merchant) (int64, *string) {
-	if merchant.Section == "mart" {
-		for _, order := range d.list {
-			if order.Customer == subject && order.Status != "cancelled" && (order.Merchant == "MER-005" || order.Merchant == "MER-006") {
-				return merchant.DeliveryFee, nil
-			}
-		}
+	if merchant.Section == "mart" && d.martOrders[subject] == 0 {
 		reason := "first_mart_order"
 		return 0, &reason
 	}
 	return merchant.DeliveryFee, nil
 }
 func (d *orders) handle(r *http.Request, body []byte) result {
-	// Retry one outstanding compensation per arrival, never the checkout.
-	// Every attempt has its own bound and reuses the reservation identity.
-	for _, key := range slices.Sorted(maps.Keys(d.pendingRelease)) {
-		if !d.releasing[key] {
-			d.release(r.Context(), key)
-			break
-		}
-	}
 	if r.Method == "POST" && r.URL.Path == "/orders" {
 		return d.create(r, body)
 	}
@@ -162,35 +179,7 @@ func (d *orders) handle(r *http.Request, body []byte) result {
 		return result{status: 200, body: map[string]any{"balance_sen": balance}}
 	}
 	if path == "/orders/quote" {
-		q, ok := query(r, "merchant")
-		if !ok || q.Get("merchant") == "" {
-			return invalidQuery()
-		}
-		if _, found := d.wallets[subject]; !found || !hasRole(r, "CUSTOMER") {
-			return notFound()
-		}
-		var status int
-		var body []byte
-		var err error
-		epoch := d.epoch
-		d.outside(func() {
-			status, body, err = d.inventory.call(r.Context(), "GET", "/internal/merchants/"+url.PathEscape(q.Get("merchant")), nil, "")
-		})
-		// The fee below is read from the orders as they are now.
-		if err != nil || status >= 500 || d.epoch != epoch {
-			return inventoryUnavailable()
-		}
-		if status != 200 {
-			return notFound()
-		}
-		var response struct {
-			Merchant Merchant `json:"merchant"`
-		}
-		if json.Unmarshal(body, &response) != nil || response.Merchant.ID == "" {
-			return inventoryUnavailable()
-		}
-		fee, reason := d.fee(subject, response.Merchant)
-		return result{status: 200, body: map[string]any{"merchant": response.Merchant.ID, "delivery_fee_sen": fee, "free_delivery": reason != nil, "reason": reason}}
+		return d.quote(r, subject)
 	}
 	if id, ok := oneID(path, "/orders/detail/"); ok {
 		if _, ok := query(r); !ok {
@@ -201,6 +190,14 @@ func (d *orders) handle(r *http.Request, body []byte) result {
 			return notFound()
 		}
 		return result{status: 200, body: map[string]any{"order": *order}}
+	}
+	if id, ok := oneID(path, "/internal/orders/"); ok {
+		// Support checks a ticket's order reference: the order and its customer only.
+		order := d.find(id)
+		if order == nil {
+			return notFound()
+		}
+		return result{status: 200, body: map[string]any{"order": map[string]string{"id": order.ID, "customer": order.Customer}}}
 	}
 	if path == "/orders/jobs" {
 		if _, ok := query(r); !ok {
@@ -221,80 +218,40 @@ func (d *orders) handle(r *http.Request, body []byte) result {
 		return result{status: 200, body: map[string]any{"available": available, "mine": mine}}
 	}
 	if path == "/orders" || path == "/orders/mine" || path == "/orders/merchant" || path == "/internal/orders" {
-		q, ok := query(r, "status", "limit", "after")
-		if !ok {
-			return invalidQuery()
-		}
-		if q.Get("status") != "" && !slices.Contains(orderStatuses, q.Get("status")) {
-			return invalidQuery()
-		}
-		n, after, ok := pagination(q)
-		if !ok {
-			return invalidQuery()
-		}
-		if path == "/orders/mine" && !hasRole(r, "CUSTOMER") {
-			return notFound()
-		}
-		if path == "/orders" && !hasRole(r, "SUPPORT") && !hasRole(r, "OPERATIONS") {
-			return notFound()
-		}
-		var ownMerchant string
-		if path == "/orders/merchant" {
-			user, found := userByID(subject)
-			if !found || !hasRole(r, "MERCHANT") || user.Merchant == nil {
-				return notFound()
-			}
-			ownMerchant = *user.Merchant
-			if q.Has("limit") || q.Has("after") {
-				return invalidQuery()
-			}
-			// A merchant's screen shows its orders at once; trim bounds the list.
-			n = len(d.list)
-		}
-		if path == "/orders/mine" && q.Has("status") {
-			return invalidQuery()
-		}
-		status := q.Get("status")
-		listed := func(order Order) bool {
-			return (path != "/orders/mine" || order.Customer == subject) && (ownMerchant == "" || order.Merchant == ownMerchant) && (status == "" || order.Status == status)
-		}
-		// Only the caller's orders and the cursor's are sorted (sorting the
-		// whole list on every read was most of Orders' work); a sorted subset
-		// keeps its relative order, so pages and the cursor check are unchanged.
-		var ordered []Order
-		for _, order := range d.list {
-			if order.ID == after || listed(order) {
-				ordered = append(ordered, order)
-			}
-		}
-		slices.SortFunc(ordered, func(a, b Order) int {
-			if compared := b.CreatedAt.Compare(a.CreatedAt); compared != 0 {
-				return compared
-			}
-			return strings.Compare(b.ID, a.ID)
-		})
-		items := []Order{}
-		seen := after == ""
-		for _, order := range ordered {
-			if !seen {
-				if order.ID == after {
-					seen = true
-				}
-				continue
-			}
-			if !listed(order) {
-				continue
-			}
-			items = append(items, order)
-		}
-		if !seen {
-			return invalidQuery()
-		}
-		response := map[string]any{"items": items[:min(n, len(items))]}
-		if len(items) > n {
-			response["next"] = items[n-1].ID
-		}
-		return result{status: 200, body: response}
+		return d.page(r, path, subject)
 	}
 	return notFound()
+}
+
+// quote is a customer's delivery fee at a merchant, read from Inventory.
+func (d *orders) quote(r *http.Request, subject string) result {
+	q, ok := query(r, "merchant")
+	if !ok || q.Get("merchant") == "" {
+		return invalidQuery()
+	}
+	if _, found := d.wallets[subject]; !found || !hasRole(r, "CUSTOMER") {
+		return notFound()
+	}
+	var status int
+	var body []byte
+	var err error
+	epoch := d.epoch
+	d.outside(r.Context(), func() {
+		status, body, err = d.inventory.call(r.Context(), "GET", "/internal/merchants/"+url.PathEscape(q.Get("merchant")), nil, "")
+	})
+	// The fee below is read from the orders as they are now.
+	if err != nil || status >= 500 || d.epoch != epoch {
+		return inventoryUnavailable()
+	}
+	if status != 200 {
+		return notFound()
+	}
+	var response struct {
+		Merchant Merchant `json:"merchant"`
+	}
+	if json.Unmarshal(body, &response) != nil || response.Merchant.ID == "" {
+		return inventoryUnavailable()
+	}
+	fee, reason := d.fee(subject, response.Merchant)
+	return result{status: 200, body: map[string]any{"merchant": response.Merchant.ID, "delivery_fee_sen": fee, "free_delivery": reason != nil, "reason": reason}}
 }

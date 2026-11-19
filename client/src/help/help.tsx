@@ -6,7 +6,7 @@ import { describe, type Problem } from '../lib/messages'
 import { useQuery } from '../lib/query'
 import { Link, navigate, useLocation } from '../lib/router'
 import { call } from '../lib/session'
-import type { List, Order, Ticket } from '../lib/types'
+import type { List, Order, Ticket, TicketSummary } from '../lib/types'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { SelectField, TextArea, TextField } from '../ui/field'
@@ -17,7 +17,7 @@ export const ticketStatus = { open: 'Waiting for Fetch', answered: 'Fetch replie
 
 export function HelpPage() {
   // Every 20 s: a reply shows soon, with few reads for a list a person only glances at.
-  const tickets = useQuery<List<Ticket>>('/support/mine', { poll: 20_000 })
+  const tickets = useQuery<List<TicketSummary>>('/support/mine', { poll: 20_000, all: true })
   const problem = tickets.answer && !tickets.data ? describe(tickets.answer) : null
   return (
     <div className="mt-8 grid grid-cols-1 items-start gap-8 lg:grid-cols-[1fr_440px]">
@@ -38,8 +38,8 @@ export function HelpPage() {
                 <Link to={`/help/${ticket.id}`} className="flex items-center gap-4 rounded-2xl bg-surface p-4 shadow-card transition-shadow hover:shadow-raised">
                   <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-center gap-2"><span className="font-bold">{ticket.subject}</span><Badge tone={ticketTone[ticket.status]}>{ticketStatus[ticket.status]}</Badge></span>
-                    <span className="mt-1 block truncate text-sm text-ink-2">{ticket.messages.at(-1)?.body}</span>
-                    <span className="mt-1 block text-xs text-ink-3">{reference(ticket.id)}{ticket.order ? ` · Order ${reference(ticket.order)}` : ''} · {when(ticket.messages.at(-1)?.at ?? ticket.created_at)}</span>
+                    <span className="mt-1 block truncate text-sm text-ink-2">{ticket.preview}</span>
+                    <span className="mt-1 block text-xs text-ink-3">{reference(ticket.id)}{ticket.order ? ` · Order ${reference(ticket.order)}` : ''} · {when(ticket.updated_at)}</span>
                   </span>
                   <CaretRight size={18} className="text-ink-3" aria-hidden="true" />
                 </Link>

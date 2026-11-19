@@ -8,11 +8,7 @@ package main
 
 import (
 	"context"
-	"crypto"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +47,9 @@ func upFetch(home, bindIP, certs, programs string, checks hostChecks, measure, s
 	if err != nil {
 		return err
 	}
+	if err := checkIssued(folder, serverCertFile, x509.ExtKeyUsageServerAuth, bind.String()); err != nil {
+		return err
+	}
 	host := &fetchHost{bind: bind, ingress: services.Ingress{
 		Certificate: filepath.Join(folder, serverCertFile),
 		Key:         filepath.Join(folder, serverKeyFile),
@@ -85,6 +84,10 @@ func upFetch(home, bindIP, certs, programs string, checks hostChecks, measure, s
 	if err := prepareFolder(dir, files); err != nil {
 		return err
 	}
+	shopSite, err := loadWebsite(os.DirFS(shop))
+	if err != nil {
+		return err
+	}
 	listener, err := services.Listen(site, host.ingress)
 	if err != nil {
 		return fmt.Errorf("the shop address: %w", err)
@@ -93,7 +96,7 @@ func upFetch(home, bindIP, certs, programs string, checks hostChecks, measure, s
 	defer stop()
 	first, last := deployedAddress(fetchServices[0].listen, bind), deployedAddress(fetchServices[len(fetchServices)-1].listen, bind)
 	banner := hostBanner(checks, first, last, site, bind.String())
-	return serveFetch(ctx, dir, listener, website(os.DirFS(shop)), serviceBinary, accountsBinary, host, checks == builtinChecks, banner)
+	return serveFetch(ctx, dir, listener, shopSite, serviceBinary, accountsBinary, host, checks == builtinChecks, banner)
 }
 
 // gatewayRole is demo up -role gateway: the gateway alone, with its state in
@@ -116,6 +119,9 @@ func gatewayRole(home, fetchIP, certs, tlsCert, tlsKey string) (gatewayHost, err
 	if err != nil {
 		return gatewayHost{}, err
 	}
+	if err := checkIssued(folder, clientCertFile, x509.ExtKeyUsageClientAuth, ""); err != nil {
+		return gatewayHost{}, err
+	}
 	if tlsCert == "" {
 		tlsCert, tlsKey = filepath.Join(folder, dataCertFile), filepath.Join(folder, dataKeyFile)
 	}
@@ -134,7 +140,9 @@ func gatewayRole(home, fetchIP, certs, tlsCert, tlsKey string) (gatewayHost, err
 		state:     state,
 		addresses: []string{adminListen, dataListen, metricsListen},
 		shopURL:   shopURL,
-		reused:    "Reusing the gateway host set up earlier in " + state + ": its Fetch address and certificate files stay as first set (-fresh starts over).",
+		reused:    "Reusing the gateway host set up earlier in " + state + ".",
+		baseline:  deployedBaseline(fetch),
+		ca:        filepath.Join(folder, caFile),
 		build: func(source sources) (builtPrograms, error) {
 			gateway, err := buildProgram("apiward", source.apiward, filepath.Join(home, "bin"))
 			if err != nil {
@@ -196,95 +204,4 @@ func runGatewayHost(ctx context.Context, dir, gateway, shopURL string, ready fun
 	running := newChildren(dir, 1)
 	defer func() { runErr = errors.Join(runErr, running.stop()) }()
 	return running.runGateway(ctx, gateway, nil, nil, shopURL, ready)
-}
-
-// certFolder is the absolute path of dir, a host's folder from demo certs,
-// once it holds every one of files.
-func certFolder(dir string, files ...string) (string, error) {
-	if dir == "" {
-		return "", errors.New("-certs is required: this host's folder from demo certs")
-	}
-	folder, err := filepath.Abs(dir)
-	if err != nil {
-		return "", err
-	}
-	for _, name := range files {
-		if info, err := os.Stat(filepath.Join(folder, name)); err != nil || !info.Mode().IsRegular() {
-			return "", fmt.Errorf("%s has no file %s: pass this host's folder from demo certs", folder, name)
-		}
-	}
-	return folder, nil
-}
-
-// signingKeyID names the Accounts signing key in the PEM file at path, its
-// private (PKCS #8) or public (PKIX) half, after its public key, so each host
-// derives the same ID from its own file.
-func signingKeyID(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	kid, err := keyID(data)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", path, err)
-	}
-	return kid, nil
-}
-
-// keyID is signingKeyID for the PEM key in data.
-func keyID(data []byte) (string, error) {
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return "", errors.New("no PEM key")
-	}
-	var public any
-	switch block.Type {
-	case "PRIVATE KEY":
-		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		signer, ok := key.(crypto.Signer)
-		if err != nil || !ok {
-			return "", errors.New("not a private signing key")
-		}
-		public = signer.Public()
-	case "PUBLIC KEY":
-		var err error
-		if public, err = x509.ParsePKIXPublicKey(block.Bytes); err != nil {
-			return "", err
-		}
-	default:
-		return "", fmt.Errorf("a %s, not a key", block.Type)
-	}
-	der, err := x509.MarshalPKIXPublicKey(public)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(der)
-	// Eight bytes, 64 bits, keep the ID short and still tell different keys apart.
-	return "fetch-" + hex.EncodeToString(sum[:8]), nil
-}
-
-// certificateURL is the shop's address on the gateway host: the first name in
-// the certificate chain at path, on the data listener's port.
-func certificateURL(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return "", fmt.Errorf("%s holds no certificate", path)
-	}
-	leaf, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", path, err)
-	}
-	host := "<this host>"
-	switch {
-	case len(leaf.DNSNames) > 0:
-		host = leaf.DNSNames[0]
-	case len(leaf.IPAddresses) > 0:
-		host = leaf.IPAddresses[0].String()
-	}
-	port := strconv.Itoa(int(netip.MustParseAddrPort(dataListen).Port()))
-	return "https://" + net.JoinHostPort(host, port) + "/", nil
 }

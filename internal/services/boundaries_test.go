@@ -11,7 +11,7 @@ import (
 )
 
 func TestServiceJSONBoundaries(t *testing.T) {
-	s := newService(t, Config{Name: "support", Secret: testSecret})
+	s := newService(t, Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders})
 	for _, body := range []string{`null`, `{"subject":"A valid title","message":"\ud800"}`, `{"subject":"A valid title","message":"\udc00"}`, "{\"subject\":\"A valid title\",\"message\":\"" + string([]byte{255}) + "\"}", `{"Subject":"A valid title","message":"text"}`, `{"subject":"A valid title","message":"text","message":"again"}`} {
 		w := serviceRequest(s, "POST", "/support/tickets", body, "cust-001", "CUSTOMER", "")
 		if w.Code != 400 {
@@ -25,7 +25,7 @@ func TestServiceJSONBoundaries(t *testing.T) {
 }
 
 func TestServiceRequestFieldsAreNotNullable(t *testing.T) {
-	s := newService(t, Config{Name: "support", Secret: testSecret})
+	s := newService(t, Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders})
 	for _, member := range []string{`"order":null`, `"request_ref":null`} {
 		body := `{"subject":"Delivery question","message":"Please help",` + member + `}`
 		w := serviceRequest(s, "POST", "/support/tickets", body, "cust-001", "CUSTOMER", "")
@@ -36,7 +36,7 @@ func TestServiceRequestFieldsAreNotNullable(t *testing.T) {
 }
 
 func TestServiceWriteQueryAndMediaBoundaries(t *testing.T) {
-	s := newService(t, Config{Name: "support", Secret: testSecret})
+	s := newService(t, Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders})
 	body := `{"subject":"Delivery question","message":"Where is my order?"}`
 	if w := serviceRequest(s, "POST", "/support/tickets?unknown=x", body, "cust-001", "CUSTOMER", ""); w.Code != 400 {
 		t.Errorf("write query accepted: %d", w.Code)
@@ -58,7 +58,7 @@ func TestServiceWriteQueryAndMediaBoundaries(t *testing.T) {
 
 func TestServiceBodyLimitsAndResetIsolation(t *testing.T) {
 	inventory, orders := newCommerce(t)
-	support := newService(t, Config{Name: "support", Secret: testSecret})
+	support := supportWith(t, orders)
 	for _, tc := range []struct {
 		s                    *Service
 		path, subject, roles string
@@ -88,20 +88,21 @@ func TestServiceBodyLimitsAndResetIsolation(t *testing.T) {
 	if w := serviceRequest(support, "POST", "/support/reply/TKT-1001", `{"message":"`+wide(2000)+`"}`, "cust-002", "CUSTOMER", ""); w.Code != 200 {
 		t.Errorf("widest reply: %d %s", w.Code, w.Body)
 	}
-	before := orders.state().SHA256
+	before := stateSum(t, orders)
 	serviceRequest(inventory, "PATCH", "/inventory/stock/ITM-501", `{"delta":1}`, "ops-01", "OPERATIONS", "")
 	reset := httptest.NewRequest("POST", "/reset", nil)
 	reset.Header.Set("Authorization", "Bearer "+string(testSecret))
 	inventory.Control(testSecret).ServeHTTP(httptest.NewRecorder(), reset)
-	if orders.state().SHA256 != before {
+	if stateSum(t, orders) != before {
 		t.Fatal("Inventory reset changed Orders")
 	}
 }
 
 // An unconfirmed stock release does not undo or deny the cancel: the order
-// is cancelled and refunded, the answer says so, and the release is retried.
+// is cancelled and refunded, the answer says so, and the compensation worker
+// retries the release without any request arriving.
 func TestCancellationReportsUnconfirmedStockRelease(t *testing.T) {
-	inventory := newService(t, Config{Name: "inventory", Secret: testSecret})
+	inventory := newService(t, Config{Name: "inventory", Keys: testKeys("inventory")})
 	var fail atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if fail.Load() && r.Method == "DELETE" {
@@ -111,7 +112,7 @@ func TestCancellationReportsUnconfirmedStockRelease(t *testing.T) {
 		inventory.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	service, err := New(Config{Name: "orders", Secret: testSecret, InventoryURL: server.URL})
+	service, err := New(Config{Name: "orders", Keys: testKeys("orders"), InventoryURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,18 +129,17 @@ func TestCancellationReportsUnconfirmedStockRelease(t *testing.T) {
 		t.Fatal("cancelled order/refund did not remain authoritative during cleanup")
 	}
 	fail.Store(false)
-	serviceRequest(service, "GET", "/orders/wallet", "", "cust-003", "CUSTOMER", "")
-	w = serviceRequest(inventory, "GET", "/inventory/stock/ITM-501", "", "ops-01", "OPERATIONS", "")
+	body := awaitReleased(t, inventory)
 	var stock struct {
 		Reserved int `json:"reserved"`
 	}
-	if json.Unmarshal(w.Body.Bytes(), &stock) != nil || stock.Reserved != 0 {
-		t.Fatalf("pending release not settled: %s", w.Body)
+	if json.Unmarshal([]byte(body), &stock) != nil || stock.Reserved != 0 {
+		t.Fatalf("pending release not settled: %s", body)
 	}
 }
 
 func TestServiceControlKeyBound(t *testing.T) {
-	s := newService(t, Config{Name: "inventory", Secret: testSecret})
+	s := newService(t, Config{Name: "inventory", Keys: testKeys("inventory")})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", nil, Ingress{}); err == nil {
@@ -151,31 +151,31 @@ func TestEveryServiceResetReproducesSeed(t *testing.T) {
 	stockService, orderService := newCommerce(t)
 	orderServer := httptest.NewServer(orderService)
 	t.Cleanup(orderServer.Close)
-	reportService, err := New(Config{Name: "reports", Secret: testSecret, OrdersURL: orderServer.URL})
+	reportService, err := New(Config{Name: "reports", Keys: testKeys("reports"), OrdersURL: orderServer.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reportService.data.(*reports).close()
-	supportService := newService(t, Config{Name: "support", Secret: testSecret})
+	supportService := newService(t, Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders})
 	accountsService, _, _ := accountService(t)
 	services := []*Service{stockService, orderService, reportService, supportService, accountsService}
 	before := make([]string, len(services))
 	for i, service := range services {
-		before[i] = service.state().SHA256
+		before[i] = stateSum(t, service)
 	}
 	serviceRequest(orderService, "POST", "/orders", checkoutBody, "cust-003", "CUSTOMER", "reset-checkout-identity")
 	serviceRequest(supportService, "POST", "/support/tickets", `{"subject":"Delivery question","message":"Please help"}`, "cust-001", "CUSTOMER", "")
 	serviceRequest(reportService, "GET", "/reports/summary", "", "ops-01", "OPERATIONS", "")
 	serviceRequest(accountsService, "GET", "/accounts/me", "", "cust-001", "CUSTOMER", "")
 	for i, service := range services {
-		if len(service.receipts) == 0 {
+		if len(service.recent.receipts)+len(service.calls.receipts) == 0 {
 			t.Fatalf("%s arrival was not recorded", service.name)
 		}
 		request := httptest.NewRequest("POST", "/reset", nil)
 		request.Header.Set("Authorization", "Bearer "+string(testSecret))
 		response := httptest.NewRecorder()
 		service.Control(testSecret).ServeHTTP(response, request)
-		if response.Code != 200 || service.state().SHA256 != before[i] || len(service.receipts) != 0 {
+		if response.Code != 200 || stateSum(t, service) != before[i] || len(service.recent.receipts)+len(service.calls.receipts) != 0 {
 			t.Fatalf("%s did not reproduce its seed and clear receipts", service.name)
 		}
 	}

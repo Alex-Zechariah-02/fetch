@@ -1,9 +1,16 @@
+// The Reports API: summaries, sales by month, top items and a merchant's
+// days, each computed from the current Orders API. A report reads every order
+// a page at a time and keeps only the orders in its window, and refuses pages
+// from two states of Orders (a reset between pages).
+
 package services
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/url"
@@ -15,7 +22,8 @@ import (
 type reports struct {
 	orders *serviceClient
 	// outside runs the reads from Orders without the service lock.
-	outside func(func())
+	outside func(context.Context, func())
+	log     *slog.Logger
 }
 
 // Reports own no order data. Reset clears the service's receipts; every report
@@ -24,15 +32,24 @@ func (d *reports) reset()        {}
 func (d *reports) snapshot() any { return map[string]any{"source": "orders"} }
 func (d *reports) close()        { d.orders.close() }
 
-// load reads every order from Orders. 4 s bounds the wait of one report;
-// 20,000 orders, read in pages of 100 (the most Orders gives), bound its memory.
-func (d *reports) load(ctx context.Context) ([]Order, error) {
+// errOrdersFailed is an Orders answer that is not a page: a defect, not an
+// outage, answered 502.
+var errOrdersFailed = errors.New("orders answered without a valid page")
+
+// maxReportOrders bounds the orders one report reads.
+const maxReportOrders = 20000
+
+// load reads every order from Orders and keeps those keep accepts. 4 s
+// bounds the wait of one report; maxReportOrders, read in pages of 100 (the
+// most Orders gives), bound its work.
+func (d *reports) load(ctx context.Context, keep func(Order) bool) ([]Order, error) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	orders := []Order{}
+	kept := []Order{}
 	after := ""
 	seen := map[string]bool{}
-	for len(orders) < 20000 {
+	epoch := -1
+	for read := 0; read < maxReportOrders; {
 		path := "/internal/orders?limit=100"
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
@@ -41,22 +58,35 @@ func (d *reports) load(ctx context.Context) ([]Order, error) {
 		if err != nil {
 			return nil, err
 		}
+		if status >= 500 {
+			return nil, fmt.Errorf("orders answered %d", status)
+		}
 		if status != 200 {
-			return nil, errors.New("orders unavailable")
+			return nil, fmt.Errorf("%w: status %d: %.200s", errOrdersFailed, status, body)
 		}
 		var page struct {
 			Items []Order `json:"items"`
 			Next  string  `json:"next"`
+			Epoch *int    `json:"epoch"`
 		}
-		if json.Unmarshal(body, &page) != nil || page.Items == nil {
-			return nil, errors.New("invalid orders response")
+		if json.Unmarshal(body, &page) != nil || page.Items == nil || page.Epoch == nil {
+			return nil, fmt.Errorf("%w: invalid page", errOrdersFailed)
 		}
-		orders = append(orders, page.Items...)
+		if epoch >= 0 && *page.Epoch != epoch {
+			return nil, errors.New("orders were reset while the report read them")
+		}
+		epoch = *page.Epoch
+		read += len(page.Items)
+		for _, order := range page.Items {
+			if keep(order) {
+				kept = append(kept, order)
+			}
+		}
 		if page.Next == "" {
-			return orders, nil
+			return kept, nil
 		}
 		if seen[page.Next] || len(page.Items) == 0 {
-			return nil, errors.New("invalid orders cursor")
+			return nil, fmt.Errorf("%w: cursor repeated", errOrdersFailed)
 		}
 		seen[page.Next] = true
 		after = page.Next
@@ -69,11 +99,13 @@ type reportCount struct {
 	Revenue int64 `json:"revenue_sen"`
 }
 
+var reportPaths = []string{"/reports/merchant", "/reports/summary", "/reports/sales", "/reports/top-items"}
+
 func (d *reports) handle(r *http.Request, body []byte) result {
 	if r.Method != "GET" {
 		return notFound()
 	}
-	if !slices.Contains([]string{"/reports/merchant", "/reports/summary", "/reports/sales", "/reports/top-items"}, r.URL.Path) {
+	if !slices.Contains(reportPaths, r.URL.Path) {
 		return notFound()
 	}
 	if r.Header.Get("X-Gateway-Subject") == "" {
@@ -102,7 +134,7 @@ func (d *reports) handle(r *http.Request, body []byte) result {
 	if from.After(to) {
 		return invalidQuery()
 	}
-	limit, _, ok := pagination(q)
+	limit, _, ok := pagination(q, defaultPage)
 	if !ok {
 		return invalidQuery()
 	}
@@ -114,20 +146,21 @@ func (d *reports) handle(r *http.Request, body []byte) result {
 		}
 		merchantID = *user.Merchant
 	}
-	var orders []Order
-	d.outside(func() { orders, err = d.load(r.Context()) })
+	keep := func(order Order) bool {
+		return order.Status != "cancelled" && !order.CreatedAt.Before(from) && order.CreatedAt.Before(to.AddDate(0, 0, 1)) && (merchantID == "" || order.Merchant == merchantID)
+	}
+	var selected []Order
+	d.outside(r.Context(), func() { selected, err = d.load(r.Context(), keep) })
 	if err != nil {
 		// A caller that went away is not an Orders outage; the receipt says which.
 		if r.Context().Err() != nil {
 			return failure(499, "request_cancelled", "The caller cancelled the request before the report was ready.", "")
 		}
-		return failure(503, "orders_unavailable", "Orders could not supply a complete report. Try again later.", "")
-	}
-	selected := []Order{}
-	for _, order := range orders {
-		if order.Status != "cancelled" && !order.CreatedAt.Before(from) && order.CreatedAt.Before(to.AddDate(0, 0, 1)) && (merchantID == "" || order.Merchant == merchantID) {
-			selected = append(selected, order)
+		d.log.Error("report not computed", "path", r.URL.Path, "error", err)
+		if errors.Is(err, errOrdersFailed) {
+			return failure(502, "orders_failed", "Orders answered the report wrongly. Try again later.", "")
 		}
+		return failure(503, "orders_unavailable", "Orders could not supply a complete report. Try again later.", "")
 	}
 	summary := reportCount{}
 	customers, merchants := map[string]bool{}, map[string]bool{}

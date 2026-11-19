@@ -26,6 +26,15 @@ import (
 	"github.com/Alex-Zechariah-02/fetch/internal/services"
 )
 
+// The demo's addresses before EAT_PORT_OFFSET, as cmd/demo/main.go lists
+// them (dataListen and fetchServices); TestDemoAddressesMatch fails when they part.
+const (
+	dataBase     = "127.0.0.2:9480"
+	ordersBase   = "127.0.0.1:9502"
+	ordersPort   = 9502
+	accountsPort = 9505
+)
+
 // warmupRounds are measured but not kept, one per condition order.
 const warmupRounds = 3
 
@@ -88,13 +97,17 @@ func run(args []string, output io.Writer) error {
 	if email == "" {
 		return errors.New("choose cust-001, cust-002 or cust-003")
 	}
-	data, err := ports.Offset("127.0.0.2:9480")
+	data, err := ports.Offset(dataBase)
 	if err != nil {
 		return err
 	}
-	orders, err := ports.Offset("127.0.0.1:9502")
+	orders, err := ports.Offset(ordersBase)
 	if err != nil {
 		return err
+	}
+	// The built-in stack runs beside the gateway's: at the same offset it would be the same ports.
+	if *builtin >= 0 && at(ordersPort, *builtin) == orders {
+		return errors.New("-builtin-offset is EAT_PORT_OFFSET: the built-in stack must run at another offset than the gateway's")
 	}
 	// A stack that stalls on dial or headers fails the run at 2 s instead of hanging it.
 	// Rounds run in turn over at most three origins, so one idle connection each, closed after 10 s.
@@ -110,11 +123,11 @@ func run(args []string, output io.Writer) error {
 	if *builtin >= 0 {
 		// The built-in stack is called directly, as its APIs are, with a
 		// token from its own Accounts: its keys differ from the gateway's.
-		local, err := login(client, "http://"+at(9505, *builtin), email)
+		local, err := login(client, "http://"+at(accountsPort, *builtin), email)
 		if err != nil {
 			return err
 		}
-		conditions = append(conditions, condition{"builtin", "http://" + at(9502, *builtin), local})
+		conditions = append(conditions, condition{"builtin", "http://" + at(ordersPort, *builtin), local})
 	}
 	conditions = append(conditions, condition{"gateway", "http://" + data, token})
 	result, err := measure(client, conditions, *account, *samples)

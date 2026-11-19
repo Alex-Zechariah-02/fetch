@@ -107,10 +107,12 @@ on('POST', /^\/support\/tickets$/, 'support.create', ['CUSTOMER'], 'support', ({
   seed.tickets.push(ticket)
   return [201, { ticket }]
 })
-on('GET', /^\/support\/mine$/, 'support.mine', ['CUSTOMER'], 'support', ({ user }) => [200, { items: seed.tickets.filter((t) => t.customer === user!.id).toReversed() }])
+// summary is a ticket as the lists give it: no messages, a preview of the last.
+const summary = ({ messages, ...ticket }: Ticket) => ({ ...ticket, message_count: messages.length, preview: messages.at(-1)?.body.slice(0, 120) ?? '', updated_at: messages.at(-1)?.at ?? ticket.created_at })
+on('GET', /^\/support\/mine$/, 'support.mine', ['CUSTOMER'], 'support', ({ user }) => [200, { items: seed.tickets.filter((t) => t.customer === user!.id).toReversed().map(summary) }])
 on('GET', /^\/support\/queue$/, 'support.queue', ['SUPPORT'], 'support', ({ query }) => {
   const status = query.get('status')
-  return [200, { items: seed.tickets.filter((t) => !status || t.status === status).toReversed() }]
+  return [200, { items: seed.tickets.filter((t) => !status || t.status === status).toReversed().map(summary) }]
 })
 on('GET', /^\/support\/ticket\/([^/]+)$/, 'support.ticket', ['CUSTOMER', 'SUPPORT'], 'support', ({ user }, [, id]) => {
   const ticket = seed.tickets.find((t) => t.id === id)

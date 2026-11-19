@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -48,5 +49,33 @@ func TestFreshReplacesOnlyIdentifiedEarlierNativeState(t *testing.T) {
 		if !valid && (err == nil || statErr != nil) {
 			t.Error("fresh removed a mismatched directory")
 		}
+	}
+}
+
+// -fresh removes nothing when the build fails: the previous deployment's
+// database and security log stay.
+func TestFreshKeepsStateWhenBuildFails(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, configFile), []byte(`{"version":1}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	identity := map[string]string{"format": "gateway-demo-1", "directory": dir, "config_sha256": digestOf(t, filepath.Join(dir, configFile))}
+	if err := os.WriteFile(filepath.Join(dir, identityFile), indented(identity), 0600); err != nil {
+		t.Fatal(err)
+	}
+	apiward := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(apiward, "cmd", "apiward"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	failed := errors.New("build failed")
+	h := gatewayHost{state: dir, build: func(sources) (builtPrograms, error) { return builtPrograms{}, failed }}
+	if err := h.up(apiward, true, false); !errors.Is(err, failed) {
+		t.Fatalf("up: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, configFile)); err != nil {
+		t.Fatalf("a failed build removed the earlier state: %v", err)
 	}
 }

@@ -83,7 +83,11 @@ func certs(args []string) error {
 	fmt.Printf("  Fetch host:   go run ./cmd/demo up -role fetch -bind %s -certs <fetch folder>\n", fetch)
 	fmt.Printf("  gateway host: go run ./cmd/demo up -role gateway -fetch %s -certs <gateway folder>\n", fetch)
 	fmt.Printf("or run the container images with these folders (docs/hosts.md, \"Containers\").\n")
-	fmt.Printf("The certificates expire on %s.\n", time.Now().Add(certLifetime).UTC().Format(time.DateOnly))
+	expiry, err := readCertificate(filepath.Join(*out, "fetch", caFile))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("The certificates expire on %s.\n", expiry.NotAfter.UTC().Format(time.DateOnly))
 	return nil
 }
 

@@ -1,7 +1,10 @@
 // The API's security log: JSON Lines files, rotated at a size bound and
-// written by one goroutine in batches, each batch synced to disk. An admission waits for its batch's
-// sync before the handler runs; refusals and outcomes are queued without
-// waiting and, when they cannot be, counted and written as a loss record.
+// written by one goroutine in batches, each batch synced to disk. Each
+// request encodes its own line, and the writer takes everything queued into
+// one batch, so its work per record is a copy and it keeps up while many
+// requests share the CPU. An admission waits for its batch's sync before the
+// handler runs; refusals and outcomes are queued without waiting and, when
+// they cannot be, counted and written as a loss record.
 
 package guard
 
@@ -10,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -18,12 +20,11 @@ import (
 )
 
 const (
-	// queueSize holds a second of refusals at the demo's rates; past it
-	// refusals are counted in a loss record, never waited for.
-	queueSize = 1024
-	// batchSize records share one sync, bounding an admission's wait under
-	// load.
-	batchSize = 128
+	// queueSize is the gateway's audit queue at its default in-flight limit
+	// (4 × 1,024); past it refusals are counted in a loss record, never
+	// waited for. The writer drains up to the whole queue per sync, so one
+	// slow turn of the writer is caught up in the next batch.
+	queueSize = 4096
 	// commitWait bounds an admission's wait for its sync (the gateway's
 	// default audit wait).
 	commitWait = 2 * time.Second
@@ -37,6 +38,10 @@ const (
 	// protected setups keep the same history.
 	maxLogBytes = 64 << 20
 	logFiles    = 8
+	// keptBuffer is the batch memory the writer keeps between batches: a
+	// drained queue of queueSize lines of about 320 bytes fits, so a busy log
+	// reuses one buffer instead of allocating one per batch.
+	keptBuffer = queueSize * 512
 )
 
 // record is one security log line. Tokens, bodies and queries are never
@@ -62,14 +67,27 @@ type record struct {
 	DurationMS   float64   `json:"duration_ms,omitempty"`
 	Lost         uint64    `json:"lost,omitempty"`
 	Accounts     int       `json:"accounts,omitempty"` // blocked list size after a replacement
+	// First, Counts and Addresses are a refusal summary's interval start,
+	// counts by reason and busiest client addresses.
+	First     time.Time         `json:"first,omitzero"`
+	Counts    map[string]uint64 `json:"counts,omitempty"`
+	Addresses []addressCount    `json:"addresses,omitempty"`
 }
 
 type entry struct {
-	record record
-	done   chan error // nil when nobody waits
+	line []byte     // the record as one JSON line, encoded by its request
+	done chan error // nil when nobody waits
+	// state settles an admission once: the writer takes it (1), or a commit
+	// whose wait ended withdraws it first (2), so it is never written.
+	state *atomic.Int32
 }
 
-var errLogFailed = errors.New("security log unavailable")
+var (
+	errLogFailed = errors.New("security log unavailable")
+	// errLogTimedOut is commit's error when its wait ended first; the
+	// admission was withdrawn, or is written and superseded by the refusal.
+	errLogTimedOut = fmt.Errorf("%w: wait timed out", errLogFailed)
+)
 
 // securityLog owns its file: only run writes, rotates or closes it.
 type securityLog struct {
@@ -80,8 +98,11 @@ type securityLog struct {
 	// rotating is set while rotations fail, so the warning is printed once.
 	rotating bool
 	queue    chan entry
+	buffer   []byte // the last batch's memory, reused; only run uses it
 	seq      atomic.Uint64
-	lost     atomic.Uint64
+	lost     atomic.Uint64 // not yet written in a loss record
+	dropped  atomic.Uint64 // every record lost since start, for the control listener
+	written  atomic.Int64  // bytes in the active file after the last batch
 	failed   atomic.Bool
 	mu       sync.RWMutex // orders queueing against close
 	closed   bool
@@ -100,9 +121,9 @@ func openLog(path string) (*securityLog, error) {
 
 // commit queues r and waits until it is synced; a failed or full log, or a
 // wait longer than commitWait, refuses it.
-func (l *securityLog) commit(ctx context.Context, r record) error {
-	done := make(chan error, 1)
-	if l.failed.Load() || !l.enqueue(r, done) {
+func (l *securityLog) commit(ctx context.Context, r *record) error {
+	done, state := make(chan error, 1), new(atomic.Int32)
+	if l.failed.Load() || !l.enqueue(r, done, state) {
 		return errLogFailed
 	}
 	ctx, cancel := context.WithTimeout(ctx, commitWait)
@@ -111,20 +132,22 @@ func (l *securityLog) commit(ctx context.Context, r record) error {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		return errLogFailed
+		state.CompareAndSwap(0, 2)
+		return errLogTimedOut
 	}
 }
 
 // note queues r without waiting, counting it as lost when it cannot be.
-func (l *securityLog) note(r record) {
-	if l.failed.Load() || !l.enqueue(r, nil) {
+func (l *securityLog) note(r *record) {
+	if l.failed.Load() || !l.enqueue(r, nil, nil) {
 		l.lost.Add(1)
+		l.dropped.Add(1)
 	}
 }
 
 // enqueue stamps and queues r. The last quarter of the queue is kept for
 // admissions, so a flood of refusals never refuses a request that passed.
-func (l *securityLog) enqueue(r record, done chan error) bool {
+func (l *securityLog) enqueue(r *record, done chan error, state *atomic.Int32) bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	if l.closed || done == nil && len(l.queue) >= queueSize-queueSize/4 {
@@ -138,7 +161,7 @@ func (l *securityLog) enqueue(r record, done chan error) bool {
 		r.Path = r.Path[:maxPath]
 	}
 	select {
-	case l.queue <- entry{r, done}:
+	case l.queue <- entry{appendRecord(nil, r), done, state}:
 		return true
 	default:
 		return false
@@ -148,20 +171,23 @@ func (l *securityLog) enqueue(r record, done chan error) bool {
 // run writes batches in queue order until close empties the queue.
 func (l *securityLog) run() {
 	defer close(l.done)
-	batch := make([]entry, 0, batchSize)
+	batch := make([]entry, 0, queueSize)
 	for first := range l.queue {
-		batch = append(batch[:0], first)
+		batch = take(batch[:0], first)
 	fill:
-		for len(batch) < batchSize {
+		for len(batch) < queueSize {
 			select {
 			case next, open := <-l.queue:
 				if !open {
 					break fill
 				}
-				batch = append(batch, next)
+				batch = take(batch, next)
 			default:
 				break fill
 			}
+		}
+		if len(batch) == 0 {
+			continue
 		}
 		err := l.write(batch)
 		for _, e := range batch {
@@ -176,23 +202,36 @@ func (l *securityLog) run() {
 	l.file.Close()
 }
 
+// take adds e to batch unless its commit withdrew it.
+func take(batch []entry, e entry) []entry {
+	if e.state != nil && !e.state.CompareAndSwap(0, 1) {
+		return batch
+	}
+	return append(batch, e)
+}
+
 // write appends the pending loss count and batch, then syncs. A failure
 // disables admission for the rest of the process.
 func (l *securityLog) write(batch []entry) error {
 	if l.failed.Load() {
 		return errLogFailed
 	}
-	var buffer []byte
+	buffer := l.buffer[:0]
 	if lost := l.lost.Swap(0); lost > 0 {
-		buffer = appendRecord(buffer, record{Seq: l.seq.Add(1), Time: time.Now().UTC(), Kind: "log.loss", Lost: lost})
+		buffer = appendRecord(buffer, &record{Seq: l.seq.Add(1), Time: time.Now().UTC(), Kind: "log.loss", Lost: lost})
 	}
 	for _, e := range batch {
-		buffer = appendRecord(buffer, e.record)
+		buffer = append(buffer, e.line...)
 	}
 	if _, err := l.file.Write(buffer); err != nil {
 		return l.fail(err)
 	}
+	// A batch beyond a full queue's size is not kept, so idle memory stays bounded.
+	if cap(buffer) <= keptBuffer {
+		l.buffer = buffer
+	}
 	l.size += int64(len(buffer))
+	l.written.Store(l.size)
 	// Sync before the admission returns, so an acknowledged request is on disk.
 	if err := l.file.Sync(); err != nil {
 		return l.fail(err)
@@ -206,60 +245,6 @@ func (l *securityLog) write(batch []entry) error {
 	return nil
 }
 
-// keepActive handles a failed rotation, such as a rotated file held open on
-// Windows or an active file moved away: the batch is already synced, so the
-// active path is reopened and the rotation retried at each later write. The
-// active file may grow to twice its bound; past that, or when the path cannot
-// be reopened, the log fails, so no request runs without a record.
-func (l *securityLog) keepActive(err error) error {
-	if l.size >= 2*l.limit {
-		return l.fail(err)
-	}
-	if reopenErr := l.open(); reopenErr != nil {
-		return l.fail(errors.Join(err, reopenErr))
-	}
-	if !l.rotating {
-		l.rotating = true
-		fmt.Fprintf(os.Stderr, "security log rotation failed; writing continues to %s and the rotation is retried: %v\n", l.path, err)
-	}
-	return nil
-}
-
-// open appends to the active file, creating it private to this user.
-func (l *securityLog) open() error {
-	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return errors.Join(err, file.Close())
-	}
-	l.file, l.size = file, info.Size()
-	return nil
-}
-
-// rotate closes the full active file as <path>.1, shifting older files up
-// and deleting the oldest, so the log keeps at most logFiles files.
-func (l *securityLog) rotate() error {
-	if err := l.file.Close(); err != nil {
-		return err
-	}
-	if err := os.Remove(fmt.Sprintf("%s.%d", l.path, logFiles-1)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	for n := logFiles - 2; n >= 1; n-- {
-		err := os.Rename(fmt.Sprintf("%s.%d", l.path, n), fmt.Sprintf("%s.%d", l.path, n+1))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-	}
-	if err := os.Rename(l.path, l.path+".1"); err != nil {
-		return err
-	}
-	return l.open()
-}
-
 func (l *securityLog) fail(err error) error {
 	// A failed write or sync stops admission, so no request runs without a record.
 	if l.failed.CompareAndSwap(false, true) {
@@ -268,7 +253,7 @@ func (l *securityLog) fail(err error) error {
 	return errLogFailed
 }
 
-func appendRecord(buffer []byte, r record) []byte {
+func appendRecord(buffer []byte, r *record) []byte {
 	line, err := json.Marshal(r)
 	if err != nil {
 		panic(err) // a record holds only strings, numbers and times

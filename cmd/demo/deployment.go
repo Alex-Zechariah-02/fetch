@@ -1,22 +1,25 @@
 // The demonstration directory's identity, which binds state-changing demo
-// commands to the directory and files setup made, and the gateway's startup
-// observation read from its log.
+// commands to the directory and files setup made; demo rebind accepts a
+// settings file changed by hand; the operator lock keeps two key changes apart.
 
 package main
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 )
 
-const identityFile = "demo.json"
+const (
+	identityFile = "demo.json"
+	lockFile     = "operator.lock"
+)
 
 // demoIdentity binds state-changing demonstration operations to the exact
 // directory and files setup created. It grants no policy or admin authority.
@@ -62,9 +65,39 @@ func identifyDemo(dir string) error {
 	return os.WriteFile(filepath.Join(dir, identityFile), indented(identity), 0o600)
 }
 
+// checkDemo refuses dir unless it is the identified demonstration directory
+// setup made, with the settings and service secret it last bound.
 func checkDemo(dir string) error {
+	if err := checkFiles(dir); err != nil {
+		return err
+	}
+	identity, err := readIdentity(dir)
+	if err != nil {
+		return err
+	}
+	config, err := demoDigest(filepath.Join(dir, configFile))
+	if err != nil {
+		return err
+	}
+	secret, err := secretDigest(dir)
+	if err != nil {
+		return err
+	}
+	switch {
+	case identity.Format != "fetch-demo-1" || identity.Directory != dir:
+		return fmt.Errorf("%s was made for %s, not this directory; refusing the operation", identityFile, identity.Directory)
+	case identity.Config != config:
+		return fmt.Errorf("%s changed since setup or the last demo key change; refusing the operation (if you changed it, accept it with: demo rebind -dir %s)", configFile, dir)
+	case identity.Secret != secret:
+		return fmt.Errorf("%s changed since setup; refusing the operation (if you changed it, accept it with: demo rebind -dir %s)", secretFile, dir)
+	}
+	return nil
+}
+
+// checkFiles refuses dir when one of its demonstration files is a link or a directory.
+func checkFiles(dir string) error {
 	// These files belong to the demonstration directory; a link or directory may not stand in for one.
-	for _, name := range []string{identityFile, configFile, privateKeyFile, publicKeyFile, assertionKeyFile, assertionSetFile, signingFile, secretFile, databaseFile, "gateway.log", "orders.log", "inventory.log", "reports.log", "support.log", "accounts.log"} {
+	for _, name := range append([]string{identityFile, lockFile, configFile, privateKeyFile, publicKeyFile, assertionKeyFile, assertionSetFile, signingFile, secretFile, databaseFile, "gateway.log", "orders.log", "inventory.log", "reports.log", "support.log", "accounts.log"}, keyFiles()...) {
 		info, err := os.Lstat(filepath.Join(dir, name))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -76,37 +109,82 @@ func checkDemo(dir string) error {
 			return fmt.Errorf("demonstration file %s must be a regular file, not a link or directory", name)
 		}
 	}
+	return nil
+}
+
+// readIdentity reads dir's identity as setup wrote it: one object, nothing after it.
+func readIdentity(dir string) (demoIdentity, error) {
+	var identity demoIdentity
 	if _, err := os.Lstat(filepath.Join(dir, "caddy.json")); !errors.Is(err, os.ErrNotExist) {
-		return errors.New("legacy Caddy demonstration configuration is unsupported; create a new native demonstration directory")
+		return identity, errors.New("legacy Caddy demonstration configuration is unsupported; create a new native demonstration directory")
 	}
 	file, err := os.Open(filepath.Join(dir, identityFile))
 	if err != nil {
-		return fmt.Errorf("not an identified demonstration directory: %w", err)
+		return identity, fmt.Errorf("not an identified demonstration directory: %w", err)
 	}
 	defer file.Close()
 	// An identity is a small object; 4096 bytes cap the read, so a longer object fails to decode.
 	decoder := json.NewDecoder(io.LimitReader(file, 4096))
 	decoder.DisallowUnknownFields()
-	var identity demoIdentity
 	if err := decoder.Decode(&identity); err != nil {
-		return fmt.Errorf("invalid demonstration identity: %w", err)
+		return identity, fmt.Errorf("invalid demonstration identity: %w", err)
 	}
 	// A second value or trailing text means this is not the identity that setup wrote.
 	if _, err := decoder.Token(); err != io.EOF {
-		return errors.New("data after the demonstration identity")
+		return identity, errors.New("data after the demonstration identity")
 	}
-	config, err := demoDigest(filepath.Join(dir, configFile))
+	return identity, nil
+}
+
+// rebind is demo rebind: it accepts the settings and service secret now in
+// the directory, after an operator changed them by hand or a key change
+// stopped between its two writes. Only a directory setup made for this path
+// is rebound; the old and new digests are printed.
+func rebind(args []string) error {
+	dir, err := parse(flag.NewFlagSet("rebind", flag.ContinueOnError), args)
 	if err != nil {
 		return err
 	}
-	secret, err := secretDigest(dir)
+	if err := checkFiles(dir); err != nil {
+		return err
+	}
+	lock, err := lockDemo(dir)
 	if err != nil {
 		return err
 	}
-	if identity.Format != "fetch-demo-1" || identity.Directory != dir || identity.Config != config || identity.Secret != secret {
-		return errors.New("demonstration directory or configuration no longer matches setup; refusing the operation")
+	defer lock.Close()
+	identity, err := readIdentity(dir)
+	if err != nil {
+		return err
 	}
+	if identity.Format != "fetch-demo-1" || identity.Directory != dir {
+		return fmt.Errorf("%s was made for %s, not this directory; not rebinding", identityFile, identity.Directory)
+	}
+	if err := identifyDemo(dir); err != nil {
+		return err
+	}
+	now, err := readIdentity(dir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s: %s -> %s\n%s: %s -> %s\n", configFile, identity.Config, now.Config, secretFile, identity.Secret, now.Secret)
 	return nil
+}
+
+// lockDemo holds dir's operator lock, so two demo commands never rewrite its
+// settings at once; a second one is refused at once. The caller closes it.
+func lockDemo(dir string) (*os.File, error) {
+	path := filepath.Join(dir, lockFile)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	file.Close()
+	lock, err := lockEarlierDemoFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("another demo command is changing %s: %w", dir, err)
+	}
+	return lock, nil
 }
 
 func checkEarlierDemoForFresh(dir string) error {
@@ -162,29 +240,4 @@ func checkEarlierDemoForFresh(dir string) error {
 		return errors.New("earlier configuration is not native version 1")
 	}
 	return nil
-}
-
-// readAdmission reads the native controller's startup observation. Listening
-// alone is not readiness, and bootstrap/recovery are reported as such.
-func readAdmission(path string, start int64) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	if _, err := file.Seek(start, io.SeekStart); err != nil {
-		return "", err
-	}
-	// The default 64 KiB line limit bounds memory per line; a longer log line stops the scan.
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		var event struct {
-			Message   string `json:"msg"`
-			Admission string `json:"admission"`
-		}
-		if json.Unmarshal(scanner.Bytes(), &event) == nil && event.Message == "protected admission" {
-			return event.Admission, nil
-		}
-	}
-	return "", scanner.Err()
 }

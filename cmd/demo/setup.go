@@ -6,8 +6,7 @@ package main
 
 import (
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -76,11 +75,11 @@ func createDemo(dir, webDir, gateway, admin string, out io.Writer) error {
 }
 
 // assertionKeys makes the key the gateway signs its identity assertion with
-// (ECDSA P-256 as PKCS #8, PEM) and the JSON Web Key Set of its public half,
-// which the APIs verify assertions with. The set names the key as the gateway
-// does: by its RFC 7638 thumbprint.
+// (Ed25519 as PKCS #8, PEM; the gateway then signs EdDSA, RFC 8037) and the
+// JSON Web Key Set of its public half, which the APIs verify assertions with.
+// The set names the key as the gateway does: by its RFC 7638 thumbprint.
 func assertionKeys() (private, set []byte, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	verifying, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -88,7 +87,7 @@ func assertionKeys() (private, set []byte, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	public := jose.JSONWebKey{Key: &key.PublicKey, Algorithm: string(jose.ES256), Use: "sig"}
+	public := jose.JSONWebKey{Key: verifying, Algorithm: string(jose.EdDSA), Use: "sig"}
 	thumbprint, err := public.Thumbprint(crypto.SHA256)
 	if err != nil {
 		return nil, nil, err
@@ -143,7 +142,7 @@ func createState(dir string, files map[string][]byte, baseline map[string]any, g
 const localKid = "fetch-2026-10-a"
 
 // serviceFiles are the files the services and Accounts run with in dir: the
-// shared service secret and a new signing key pair with its settings.
+// control secret and a new signing key pair with its settings.
 func serviceFiles(dir string) (map[string][]byte, error) {
 	private, public, err := signingKeys()
 	if err != nil {
@@ -181,7 +180,7 @@ func signingSettings(kid, privateKey string) []byte {
 	return indented(map[string]string{"kid": kid, "private_key_file": privateKey})
 }
 
-// newSecret is a new service and control secret, hex encoded.
+// newSecret is a new control secret or internal call key, hex encoded.
 func newSecret() []byte {
 	// 32 random bytes make a 256-bit secret, the usual size for a shared secret.
 	secret := make([]byte, 32)

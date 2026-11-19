@@ -40,7 +40,7 @@ func answers(address string, wait time.Duration) bool {
 }
 
 func TestInventoryPublicContract(t *testing.T) {
-	s, err := New(Config{Name: "inventory", Secret: testSecret})
+	s, err := New(Config{Name: "inventory", Keys: testKeys("inventory")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +58,8 @@ func TestInventoryPublicContract(t *testing.T) {
 }
 
 func TestInventoryStateResetAndLimits(t *testing.T) {
-	s := newService(t, Config{Name: "inventory", Secret: testSecret})
-	before := s.state().SHA256
+	s := newService(t, Config{Name: "inventory", Keys: testKeys("inventory")})
+	before := stateSum(t, s)
 	call := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -75,7 +75,7 @@ func TestInventoryStateResetAndLimits(t *testing.T) {
 	if w := call("PATCH", "/inventory/items/ITM-501", `{"price_sen":3000,"available":false}`); w.Code != 200 {
 		t.Fatalf("update: %d %s", w.Code, w.Body)
 	}
-	if s.state().SHA256 == before {
+	if stateSum(t, s) == before {
 		t.Fatal("mutations did not change state")
 	}
 	for _, tc := range []struct {
@@ -96,12 +96,12 @@ func TestInventoryStateResetAndLimits(t *testing.T) {
 	if w := call("GET", "/inventory/items/ITM-501", `{}`); w.Code != 400 {
 		t.Errorf("GET body: %d", w.Code)
 	}
-	control := s.Control(s.secret)
+	control := s.Control(testSecret)
 	r := httptest.NewRequest("POST", "/reset", nil)
-	r.Header.Set("Authorization", "Bearer "+string(s.secret))
+	r.Header.Set("Authorization", "Bearer "+string(testSecret))
 	w := httptest.NewRecorder()
 	control.ServeHTTP(w, r)
-	if w.Code != 200 || w.Header().Get("X-Service") != "inventory" || s.state().SHA256 != before || len(s.receipts) != 0 {
+	if w.Code != 200 || w.Header().Get("X-Service") != "inventory" || stateSum(t, s) != before || len(s.recent.receipts) != 0 {
 		t.Fatalf("reset: %d %s", w.Code, w.Body)
 	}
 	for _, item := range s.data.(*inventory).items {
@@ -117,8 +117,8 @@ func TestInventoryStateResetAndLimits(t *testing.T) {
 }
 
 func TestInventoryReservationTransactions(t *testing.T) {
-	secret := testSecret
-	s := newService(t, Config{Name: "inventory", Secret: secret})
+	secret := testKeyset["orders"]
+	s := newService(t, Config{Name: "inventory", Keys: testKeys("inventory")})
 	call := func(method, path, body, key string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -162,11 +162,11 @@ func TestInventoryReservationTransactions(t *testing.T) {
 func TestServiceRunStopsOwnedListeners(t *testing.T) {
 	// Real listener lifecycle, with addresses allocated independently of the
 	// frontend's fixed ports.
-	s := newService(t, Config{Name: "inventory", Secret: testSecret})
+	s := newService(t, Config{Name: "inventory", Keys: testKeys("inventory")})
 	listen, control := freeAddress(t), freeAddress(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, s, listen, control, s.secret, Ingress{}) }()
+	go func() { done <- Run(ctx, s, listen, control, testSecret, Ingress{}) }()
 	for _, address := range []string{listen, control} {
 		if !answers(address, 5*time.Second) {
 			cancel()
@@ -187,16 +187,16 @@ func TestServiceRunStopsOwnedListeners(t *testing.T) {
 	// loopback address passes this check (and stops at the missing files).
 	tls := Ingress{Certificate: "cert.pem", Key: "key.pem", ClientCA: "ca.pem"}
 	const refused = "another address than 127.0.0.1"
-	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", s.secret, tls); err == nil || !strings.Contains(err.Error(), refused) {
+	if err := Run(ctx, s, "127.0.0.1:0", "127.0.0.1:0", testSecret, tls); err == nil || !strings.Contains(err.Error(), refused) {
 		t.Fatalf("TLS on 127.0.0.1: %v", err)
 	}
-	if err := Run(ctx, s, "127.0.0.3:0", "127.0.0.1:0", s.secret, tls); err == nil || strings.Contains(err.Error(), refused) {
+	if err := Run(ctx, s, "127.0.0.3:0", "127.0.0.1:0", testSecret, tls); err == nil || strings.Contains(err.Error(), refused) {
 		t.Fatalf("TLS on 127.0.0.3: %v", err)
 	}
 	// Every interface, and a network address this machine could bind, are
 	// refused without TLS.
 	for _, listen := range []string{"0.0.0.0:0", networkAddress(t)} {
-		if err := Run(ctx, s, listen, "127.0.0.1:0", s.secret, Ingress{}); err == nil {
+		if err := Run(ctx, s, listen, "127.0.0.1:0", testSecret, Ingress{}); err == nil {
 			t.Fatalf("service listener %s accepted without TLS", listen)
 		}
 	}
@@ -222,7 +222,7 @@ func networkAddress(t *testing.T) string {
 }
 
 func TestInventoryRefusalsAndOwnership(t *testing.T) {
-	s, err := New(Config{Name: "inventory", Secret: testSecret})
+	s, err := New(Config{Name: "inventory", Keys: testKeys("inventory")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestInventoryRefusalsAndOwnership(t *testing.T) {
 }
 
 func TestInventoryStockHonorsGatewayPermissionAndMerchantOwnership(t *testing.T) {
-	s, err := New(Config{Name: "inventory", Secret: testSecret})
+	s, err := New(Config{Name: "inventory", Keys: testKeys("inventory")})
 	if err != nil {
 		t.Fatal(err)
 	}

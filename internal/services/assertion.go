@@ -8,13 +8,18 @@
 package services
 
 import (
+	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"math/big"
 	"net/http"
 	"slices"
 	"strings"
@@ -31,6 +36,8 @@ const (
 	// assertionLeeway is the clock difference tolerated between the gateway
 	// and this service, on both "iat" and "exp".
 	assertionLeeway = 5 * time.Second
+	// maxAssertionLife bounds exp - iat: the gateway signs 30 s.
+	maxAssertionLife = 60 * time.Second
 	// assertionIssuer is the gateway's fixed "iss" of every assertion.
 	assertionIssuer = "apiward"
 	// refusalGap bounds the refusal log under a flood of unasserted
@@ -40,7 +47,7 @@ const (
 
 // assertions verifies the gateway's assertions for one service.
 type assertions struct {
-	keys     map[string]*ecdsa.PublicKey // by key ID
+	keys     map[string]crypto.PublicKey // by key ID: ed25519.PublicKey or *ecdsa.PublicKey (P-256)
 	audience string                      // this service's API ID
 	log      *slog.Logger
 
@@ -51,8 +58,8 @@ type assertions struct {
 
 // loadAssertions reads the gateway's public keys from a JSON Web Key Set
 // file, as the gateway's jwks command prints it. Every key must be a named
-// public ECDSA P-256 key; several are accepted so a key can be replaced
-// without a gap.
+// public Ed25519 or ECDSA P-256 key; several are accepted so a key can be
+// replaced, also by one of the other type, without a gap.
 func loadAssertions(path, audience string, log *slog.Logger) (*assertions, error) {
 	data, err := readBoundedFile(path, trusted)
 	if err != nil {
@@ -62,15 +69,80 @@ func loadAssertions(path, audience string, log *slog.Logger) (*assertions, error
 	if err := json.Unmarshal(data, &set); err != nil || len(set.Keys) == 0 {
 		return nil, errors.New("the file is not a JSON Web Key Set with at least one key")
 	}
-	a := &assertions{keys: map[string]*ecdsa.PublicKey{}, audience: audience, log: log}
+	a := &assertions{keys: map[string]crypto.PublicKey{}, audience: audience, log: log}
 	for _, entry := range set.Keys {
-		key, ok := entry.Key.(*ecdsa.PublicKey)
-		if !ok || key.Curve != elliptic.P256() || entry.KeyID == "" || a.keys[entry.KeyID] != nil {
-			return nil, fmt.Errorf("key %q: every key must be a distinct, named public ECDSA P-256 key", entry.KeyID)
+		if algorithmOf(entry.Key) == "" || entry.KeyID == "" || a.keys[entry.KeyID] != nil {
+			return nil, fmt.Errorf("key %q: every key must be a distinct, named public Ed25519 or ECDSA P-256 key", entry.KeyID)
 		}
-		a.keys[entry.KeyID] = key
+		a.keys[entry.KeyID] = entry.Key
 	}
 	return a, nil
+}
+
+// algorithmOf is the one JWS algorithm a key verifies: EdDSA for Ed25519,
+// ES256 for P-256, "" for any other key. The key fixes the algorithm, never
+// the token (RFC 8725 section 3.1).
+func algorithmOf(key crypto.PublicKey) string {
+	switch k := key.(type) {
+	case ed25519.PublicKey:
+		return "EdDSA"
+	case *ecdsa.PublicKey:
+		if k.Curve == elliptic.P256() {
+			return "ES256"
+		}
+	}
+	return ""
+}
+
+// verify checks a compact EdDSA or ES256 assertion (RFC 7515 section 7.1)
+// and returns its payload. Its header must name a known "kid", the
+// algorithm that key fixes, and no "crit" extension (RFC 7515 section
+// 4.1.11), so an unsigned or differently signed token never reaches
+// verification. The 64-byte signature covers the encoded header, a dot and
+// the encoded payload: Ed25519 signs them itself (RFC 8037 section 3.1);
+// ES256 signs their SHA-256, as two P-256 integers at fixed width (RFC 7518
+// section 3.4).
+func (a *assertions) verify(token string) ([]byte, error) {
+	header, rest, found := strings.Cut(token, ".")
+	body, seal, sealed := strings.Cut(rest, ".")
+	if !found || !sealed || strings.Contains(seal, ".") {
+		return nil, errors.New("not a compact assertion")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(header)
+	if err != nil {
+		return nil, errors.New("not a compact assertion")
+	}
+	var fields map[string]any
+	if json.Unmarshal(decoded, &fields) != nil || fields["crit"] != nil {
+		return nil, errors.New("not a compact assertion")
+	}
+	kid, _ := fields["kid"].(string)
+	key := a.keys[kid]
+	if key == nil {
+		return nil, errors.New("unknown key ID")
+	}
+	if fields["alg"] != algorithmOf(key) {
+		return nil, errors.New("the algorithm is not the one the key fixes")
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(seal)
+	if err != nil || len(signature) != 64 || !verified(key, []byte(token[:len(header)+1+len(body)]), signature) {
+		return nil, errors.New("signature not verified")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(body)
+	if err != nil {
+		return nil, errors.New("not a compact assertion")
+	}
+	return payload, nil
+}
+
+// verified checks a 64-byte signature of input with key.
+func verified(key crypto.PublicKey, input, signature []byte) bool {
+	if ed, ok := key.(ed25519.PublicKey); ok {
+		return ed25519.Verify(ed, input, signature)
+	}
+	digest := sha256.Sum256(input)
+	r, s := new(big.Int).SetBytes(signature[:32]), new(big.Int).SetBytes(signature[32:])
+	return ecdsa.Verify(key.(*ecdsa.PublicKey), digest[:], r, s)
 }
 
 // keyIDs lists the accepted key IDs, sorted, for the start line.
@@ -102,19 +174,9 @@ func (a *assertions) admit(r *http.Request, now time.Time) error {
 	if len(values) != 1 || len(values[0]) > maxAssertion {
 		return errors.New("no single assertion of at most 4096 bytes")
 	}
-	// Only ES256 is parsed, so an unsigned or differently signed token
-	// never reaches verification.
-	signed, err := jose.ParseSignedCompact(values[0], []jose.SignatureAlgorithm{jose.ES256})
+	payload, err := a.verify(values[0])
 	if err != nil {
-		return errors.New("not an ES256 compact assertion")
-	}
-	key := a.keys[signed.Signatures[0].Header.KeyID]
-	if key == nil {
-		return errors.New("unknown key ID")
-	}
-	payload, err := signed.Verify(key)
-	if err != nil {
-		return errors.New("signature not verified")
+		return err
 	}
 	var claims struct {
 		Issuer   string   `json:"iss"`
@@ -135,8 +197,10 @@ func (a *assertions) admit(r *http.Request, now time.Time) error {
 		return errors.New("made for another method or path")
 	}
 	issued, expires := time.Unix(claims.IssuedAt, 0), time.Unix(claims.Expires, 0)
-	if claims.IssuedAt == 0 || issued.After(now.Add(assertionLeeway)) || !now.Before(expires.Add(assertionLeeway)) {
-		return errors.New("expired or not yet valid")
+	// The gateway's assertions live 30 s; a longer one is refused, so a key
+	// misused to sign long-lived assertions gains no replay window.
+	if claims.IssuedAt == 0 || issued.After(now.Add(assertionLeeway)) || !now.Before(expires.Add(assertionLeeway)) || expires.Sub(issued) > maxAssertionLife {
+		return errors.New("expired, not yet valid or living too long")
 	}
 	r.Header.Del("X-Gateway-Subject")
 	r.Header.Del("X-Gateway-Roles")

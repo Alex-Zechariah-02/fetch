@@ -60,7 +60,7 @@ func (d *orders) transition(r *http.Request, id, action string) result {
 		var status int
 		var err error
 		epoch := d.epoch
-		d.outside(func() {
+		d.outside(r.Context(), func() {
 			status, _, err = d.inventory.call(r.Context(), "POST", "/internal/reservations/"+key+"/commit", nil, key)
 		})
 		if err != nil || status != 200 || d.epoch != epoch {
@@ -80,6 +80,9 @@ func (d *orders) transition(r *http.Request, id, action string) result {
 	}
 	if action == "cancel" && order.Payment == "wallet" {
 		d.wallets[subject] += order.Total
+	}
+	if action == "cancel" && martOrder(*order) {
+		d.martOrders[order.Customer]--
 	}
 	order.Status = next
 	order.Timeline = append(order.Timeline, TimelineEntry{next, time.Now().UTC()})

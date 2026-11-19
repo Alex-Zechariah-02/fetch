@@ -1,5 +1,6 @@
 // The client a request counts for: the direct peer, or the visitor the
-// demo's own proxy on this host names.
+// demo's own proxy on this host names; and the rate key of that client, an
+// IPv6 address cut to its /64 as the gateway's default ipv6_rate_prefix does.
 
 package guard
 
@@ -29,4 +30,23 @@ func clientOf(peer netip.Addr, header http.Header) netip.Addr {
 		return peer
 	}
 	return named.Unmap()
+}
+
+// ipv6Prefix is the gateway's default data.ipv6_rate_prefix: one /64 is
+// what a single subscriber is usually given, so a client rotating addresses
+// inside it shares one counter.
+const ipv6Prefix = 64
+
+// rateKey is the address a public operation's counter is keyed by: an IPv4
+// address as it is, an IPv6 address masked to its /64. The record keeps the
+// exact address.
+func rateKey(client netip.Addr) string {
+	if !client.Is6() {
+		return client.String()
+	}
+	prefix, err := client.Prefix(ipv6Prefix)
+	if err != nil {
+		return client.String()
+	}
+	return prefix.String()
 }
