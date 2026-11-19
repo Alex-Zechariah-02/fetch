@@ -53,8 +53,8 @@ type page struct {
 
 // loadWebsite reads the built shop in files once, its page and every asset of
 // a served type, and serves them from memory: the build does not change while
-// a demonstration runs. Browsers revalidate each file by its ETag, so an
-// unchanged file costs a 304 and no body.
+// a demonstration runs. Browsers revalidate each asset by its ETag, so an
+// unchanged asset costs a 304 and no body.
 func loadWebsite(files fs.FS) (http.Handler, error) {
 	pages := map[string]page{}
 	add := func(name, contentType string) error {
@@ -98,9 +98,14 @@ func website(pages map[string]page) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		// Kept, but checked again on every use: a rebuilt shop shows at once.
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("ETag", file.tag)
+		// The page is never stored, so a rebuilt shop shows at once; an asset
+		// is kept but checked again on every use by its ETag.
+		if name == "index.html" {
+			w.Header().Set("Cache-Control", "no-store")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("ETag", file.tag)
+		}
 		// ServeContent answers If-None-Match with 304, sets Content-Length and sends no body to HEAD.
 		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(file.data))
 	})

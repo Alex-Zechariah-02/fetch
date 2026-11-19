@@ -57,8 +57,9 @@ func TestFetchWebsiteTargets(t *testing.T) {
 	}
 }
 
-// A page and an asset carry the content policy and nosniff; a missing asset
-// and any other target are 404.
+// A page and an asset carry the content policy and nosniff; the page is
+// never stored, an asset is revalidated by its ETag; a missing asset and any
+// other target are 404.
 func TestFetchWebsiteResponseHeaders(t *testing.T) {
 	files := fstest.MapFS{
 		"index.html":          {Data: []byte("test page")},
@@ -78,8 +79,13 @@ func TestFetchWebsiteResponseHeaders(t *testing.T) {
 			continue
 		}
 		if w.Code != http.StatusOK || w.Header().Get("Content-Security-Policy") != sitePolicy || w.Header().Get("X-Content-Type-Options") != "nosniff" ||
-			w.Header().Get("X-Frame-Options") != "DENY" || w.Header().Get("Cache-Control") != "no-cache" || w.Header().Get("ETag") == "" {
+			w.Header().Get("X-Frame-Options") != "DENY" {
 			t.Errorf("%s: status %d headers %v", target, w.Code, w.Header())
+		}
+		page := !strings.HasPrefix(target, "/assets/")
+		if page && (w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("ETag") != "") ||
+			!page && (w.Header().Get("Cache-Control") != "no-cache" || w.Header().Get("ETag") == "") {
+			t.Errorf("%s: caching headers %v", target, w.Header())
 		}
 	}
 }
