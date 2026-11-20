@@ -64,12 +64,16 @@ export class Demo {
 
   // start runs the demonstration with the normal gateway, or with the
   // fault-injection gateway and one named fault, which the run command's
-  // processes inherit through the environment.
-  async start(options: { fault?: string } = {}): Promise<void> {
+  // processes inherit through the environment. With armed, the fault applies
+  // only while that file exists, so a test can start it and end it while
+  // the gateway runs.
+  async start(options: { fault?: string; armed?: string } = {}): Promise<void> {
     const gateway = options.fault ? 'apiward-fault' : 'apiward'
     const env = { ...process.env }
     delete env.GATEWAY_FAULT
+    delete env.GATEWAY_FAULT_ARMED
     if (options.fault) env.GATEWAY_FAULT = options.fault
+    if (options.armed) env.GATEWAY_FAULT_ARMED = options.armed
     const child = spawn(
       join(this.bin, 'demo' + exe),
       ['run', '-dir', this.dir, '-web', this.web, '-gateway', join(this.bin, gateway + exe), '-services', join(this.bin, 'services' + exe), '-accounts', join(this.bin, 'accounts' + exe), '-stdin'],
