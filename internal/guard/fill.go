@@ -23,7 +23,8 @@ const fillStep = 1 << 20
 // stay the shared zero page.
 var zeros [fillStep]byte
 
-// persist writes data at the logical end and makes it durable.
+// persist writes data at the logical end and makes it durable. A failed
+// sync is marked (syncError), so it is never taken for a full disk.
 func (l *securityLog) persist(data []byte) error {
 	if err := l.reserve(l.size + int64(len(data))); err != nil {
 		return err
@@ -32,7 +33,11 @@ func (l *securityLog) persist(data []byte) error {
 		return err
 	}
 	l.size += int64(len(data))
-	return l.sync()
+	if err := l.sync(); err != nil {
+		return syncError{err}
+	}
+	l.synced = l.size
+	return nil
 }
 
 // sync flushes the active file: fdatasync for a zero-filled file, whose
@@ -59,7 +64,7 @@ func (l *securityLog) reserve(need int64) error {
 		at += int64(n)
 	}
 	if err := l.file.Sync(); err != nil {
-		return err
+		return syncError{err}
 	}
 	l.filled = target
 	return nil

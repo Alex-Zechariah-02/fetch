@@ -8,7 +8,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/Alex-Zechariah-02/fetch/internal/guard"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -36,6 +38,10 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	ordersURL := flags.String("orders", "", "Orders internal HTTP origin")
 	signingFile := flags.String("signing-settings", "", "Accounts signing settings file")
 	protection := flags.String("local-security", "", "built-in protection: check tokens, roles, blocked accounts, rates and bodies here, with the trusted keys and blocked list in this folder and the security log written there")
+	var storage guard.Storage
+	flags.StringVar(&storage.Archive, "local-security-archive", "", "folder rotated security log files are compressed into (default: archive in the -local-security folder)")
+	flags.Int64Var(&storage.ArchiveBytes, "local-security-archive-bytes", guard.DefaultArchiveBytes, "size bound of this API's archived security log files; the oldest is deleted after a record of it")
+	whenFull := flags.String("local-security-when-full", "evict_oldest", "evict_oldest deletes the oldest security log files, each after a record of it; refuse deletes nothing and refuses requests once the log folder is full")
 	gatewayKey := flags.String("gateway-key", "", "the gateway's public keys (JSON Web Key Set, from gateway jwks): answer only requests carrying the gateway's signed identity assertion")
 	measure := flags.Bool("measure", false, "measurement mode: receipts kept as counts with no cap, and the accounts load-0001 to load-10000 seeded")
 	if err := flags.Parse(args); err != nil {
@@ -44,6 +50,16 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments")
 	}
+	if *whenFull != "evict_oldest" && *whenFull != "refuse" {
+		return fmt.Errorf("-local-security-when-full must be evict_oldest or refuse")
+	}
+	if storage.ArchiveBytes < 64<<20 {
+		return fmt.Errorf("-local-security-archive-bytes must be at least 64 MiB")
+	}
+	if storage.Archive != "" && !filepath.IsAbs(storage.Archive) {
+		return fmt.Errorf("-local-security-archive must be an absolute path")
+	}
+	storage.Refuse = *whenFull == "refuse"
 	bases := map[string]int{"inventory": 9501, "orders": 9502, "reports": 9503, "support": 9504, "accounts": 9505}
 	base, found := bases[name]
 	if !found {
@@ -90,7 +106,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	if err != nil {
 		return err
 	}
-	service, err := New(Config{Name: name, Keys: keys, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection, GatewayKey: *gatewayKey, Measure: *measure})
+	service, err := New(Config{Name: name, Keys: keys, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection, Storage: storage, GatewayKey: *gatewayKey, Measure: *measure})
 	if err != nil {
 		return err
 	}

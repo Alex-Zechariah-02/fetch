@@ -1,42 +1,118 @@
-// The security log's size bound and its failed rotations.
+// The security log's rotation, archive, eviction and recovery.
 
 package guard
 
 import (
-	"fmt"
+	"bufio"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
-// A log past its size bound rotates, keeping at most logFiles files, and
-// a method of any length is recorded at most maxMethod bytes long.
-func TestLogRotates(t *testing.T) {
+// archived opens a log under a fresh folder that archives into its
+// "archive" folder with s's other settings.
+func archived(t *testing.T, s Storage) (*securityLog, string) {
+	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "orders.log")
-	l, err := openLog(path)
+	s.Archive = filepath.Join(dir, "archive")
+	if s.MinFree == 0 {
+		s.MinFree = 1 // a developer's full disk must not evict what a test counts
+	}
+	l, err := openLog(filepath.Join(dir, "orders-security.log"), s)
 	if err != nil {
 		t.Fatal(err)
 	}
 	l.limit = 512
+	return l, dir
+}
+
+// records reads every record of the log's files, plain or compressed.
+func records(t *testing.T, dir string) []record {
+	t.Helper()
+	var all []record
+	filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.Contains(path, "security") || strings.HasSuffix(path, ".reserve") {
+			return err
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		var reader io.Reader = file
+		if strings.HasSuffix(path, packedSuffix) {
+			zr, err := gzip.NewReader(file)
+			if err != nil {
+				t.Fatalf("%s: %v", path, err)
+			}
+			reader = zr
+		}
+		lines := bufio.NewScanner(reader)
+		for lines.Scan() {
+			var r record
+			if json.Unmarshal(lines.Bytes(), &r) == nil {
+				all = append(all, r)
+			}
+		}
+		return nil
+	})
+	return all
+}
+
+func count(rs []record, kind string) int {
+	n := 0
+	for _, r := range rs {
+		if r.Kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
+func waitUntil(t *testing.T, what string, done func() bool) {
+	t.Helper()
+	for limit := time.Now().Add(10 * time.Second); !done(); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(limit) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+}
+
+func admit(l *securityLog, method string) error {
+	return l.commit(context.Background(), &record{Kind: "request.admitted", Method: method, Path: "/orders"})
+}
+
+// A log past its size bound rotates; each rotated file is compressed into
+// the archive, recorded, then deleted from the log folder, and a method of
+// any length is recorded at most maxMethod bytes long.
+func TestLogRotates(t *testing.T) {
+	l, dir := archived(t, Storage{ArchiveBytes: 1 << 30})
 	for range 4 * logFiles {
-		if err := l.commit(t.Context(), &record{Kind: "request.admitted", Method: strings.Repeat("M", 4096), Path: "/orders"}); err != nil {
+		if err := admit(l, strings.Repeat("M", 4096)); err != nil {
 			t.Fatal(err)
 		}
 	}
+	waitUntil(t, "the archive", func() bool { files, _ := listRotated(dir, "orders-security.log"); return len(files) == 0 })
 	l.close()
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
+	packed, err := listRotated(filepath.Join(dir, "archive"), "orders-security.log")
+	if err != nil || len(packed) < 2 {
+		t.Fatalf("%d archived files (%v)", len(packed), err)
 	}
-	if len(files) != logFiles {
-		t.Fatalf("%d files, want %d", len(files), logFiles)
+	all := records(t, dir)
+	if count(all, "log.archived") != len(packed) {
+		t.Fatalf("%d log.archived records for %d files", count(all, "log.archived"), len(packed))
 	}
-	for _, file := range files {
-		data, err := os.ReadFile(filepath.Join(dir, file.Name()))
-		if err != nil || len(data) > 1024 || strings.Contains(string(data), strings.Repeat("M", maxMethod+1)) {
-			t.Fatalf("%s: %d bytes (%v)", file.Name(), len(data), err)
+	for _, r := range all {
+		if len(r.Method) > maxMethod {
+			t.Fatalf("method of %d bytes", len(r.Method))
 		}
 	}
 }
@@ -49,7 +125,7 @@ func TestLogZeroTail(t *testing.T) {
 	if err := os.WriteFile(path, append(first, make([]byte, 4096)...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l, err := openLog(path)
+	l, err := openLog(path, Storage{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,52 +143,126 @@ func TestLogZeroTail(t *testing.T) {
 	}
 }
 
-// A failed rotation keeps the log writing to its active file and retries;
-// the log fails only at twice its bound, so no request runs unrecorded.
+// A rotation that cannot happen (refuse mode, log folder full) keeps the
+// log writing to its active file up to twice its bound; then records are
+// refused until files are moved away, and writing resumes without a restart.
 func TestLogRotationFailure(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "orders.log")
-	l, err := openLog(path)
+	path := filepath.Join(dir, "orders-security.log")
+	l, err := openLog(path, Storage{Refuse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer l.close()
 	l.limit = 512
-	// A non-empty folder in the oldest slot cannot be removed, so each
-	// rotation fails on every platform.
-	oldest := fmt.Sprintf("%s.%d", path, logFiles-1)
-	hold := func() {
-		if err := os.MkdirAll(filepath.Join(oldest, "held"), 0o700); err != nil {
+	// The folder holds a full set of rotated files already.
+	for i := range logFiles {
+		name := rotatedName(path, time.Now().Add(-time.Duration(i+1)*time.Hour))
+		if err := os.WriteFile(name, make([]byte, 512), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	commit := func() error {
-		return l.commit(t.Context(), &record{Kind: "request.admitted", Method: "GET", Path: "/orders"})
-	}
-	hold()
-	// commit returns after the writer's send, so l.size is read in order.
 	for l.size < 2*l.limit-300 {
-		if err := commit(); err != nil {
+		if err := admit(l, "GET"); err != nil {
 			t.Fatalf("a commit while the rotation fails: %v", err)
 		}
 	}
-	if err := os.RemoveAll(oldest); err != nil {
-		t.Fatal(err)
-	}
-	if err := commit(); err != nil {
-		t.Fatalf("a commit after the rotation recovered: %v", err)
-	}
-	if _, err := os.Stat(path + ".1"); err != nil {
-		t.Fatalf("no rotation once possible: %v", err)
-	}
-	hold()
 	var refused error
 	for range 40 {
-		if refused = commit(); refused != nil {
+		if refused = admit(l, "GET"); refused != nil {
 			break
 		}
 	}
 	if refused == nil {
 		t.Fatal("commits past twice the bound were admitted")
 	}
+	moved, _ := listRotated(dir, "orders-security.log")
+	for _, f := range moved {
+		os.Remove(f.path())
+	}
+	waitUntil(t, "writing again", func() bool { return admit(l, "GET") == nil })
+}
+
+// Over the archive's bound the oldest archived file is deleted only after a
+// log.evicted record naming it, and no file a record names remains.
+func TestLogEvictsRecordedFirst(t *testing.T) {
+	l, dir := archived(t, Storage{ArchiveBytes: 1})
+	for range 6 * logFiles {
+		if err := admit(l, strings.Repeat("M", 2048)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitUntil(t, "an eviction", func() bool { return l.archive.evictions.Load() >= 2 })
+	l.close()
+	all := records(t, dir)
+	evicted := map[string]bool{}
+	for _, r := range all {
+		if r.Kind == "log.evicted" && r.Digest != "" && r.Reason == "archive_budget" {
+			evicted[r.File] = true
+		}
+	}
+	// Files holding earlier eviction records are evicted too (a 1-byte
+	// budget keeps nothing), so at least the latest record remains.
+	if len(evicted) < 1 {
+		t.Fatal("no eviction record")
+	}
+	for name := range evicted {
+		if _, err := os.Stat(filepath.Join(dir, "archive", name+packedSuffix)); err == nil {
+			t.Fatalf("%s recorded as evicted but present", name)
+		}
+	}
+}
+
+// A failed write replaces the active file without a restart: the batch is
+// refused, the next attempt opens a new file, and log.recovered names the
+// suspect file; a full disk is waited out the same way.
+func TestLogRecovers(t *testing.T) {
+	for _, fault := range []string{"sync_failed", "storage_space"} {
+		t.Run(fault, func(t *testing.T) {
+			l, dir := archived(t, Storage{ArchiveBytes: 1 << 30})
+			if err := admit(l, "GET"); err != nil {
+				t.Fatal(err)
+			}
+			if fault == "sync_failed" {
+				l.file.Close() // the file fails under the writer
+			} else {
+				// Only the writer touches the trouble state; nothing else runs now.
+				l.fail(&os.PathError{Op: "write", Err: fullDisk()})
+			}
+			if err := admit(l, "GET"); err == nil {
+				t.Fatal("a record admitted while the log could not write")
+			}
+			waitUntil(t, "writing again", func() bool { return admit(l, "GET") == nil })
+			l.close()
+			for _, r := range records(t, dir) {
+				if r.Kind == "log.recovered" && r.Reason == fault {
+					return
+				}
+			}
+			t.Fatalf("no log.recovered record with reason %s", fault)
+		})
+	}
+}
+
+// The reserve file is made, released once, and made again.
+func TestLogReserve(t *testing.T) {
+	// Not parallel: the pause is a package value, set before the log opens.
+	pause := reservePause
+	reservePause = 0
+	t.Cleanup(func() { reservePause = pause })
+	l, _ := archived(t, Storage{ArchiveBytes: 1 << 30, Reserve: 64 << 10})
+	defer l.close()
+	waitUntil(t, "the reserve", func() bool { _, err := os.Stat(l.reservePath); return err == nil })
+	if !l.releaseReserve() || l.releaseReserve() {
+		t.Fatal("the reserve was not released exactly once")
+	}
+	waitUntil(t, "the reserve made again", func() bool { _, err := os.Stat(l.reservePath); return err == nil })
+}
+
+// fullDisk is the error a write to a full disk gives on this system.
+func fullDisk() error {
+	if runtime.GOOS == "windows" {
+		return syscall.Errno(112) // ERROR_DISK_FULL
+	}
+	return syscall.ENOSPC
 }

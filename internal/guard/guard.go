@@ -52,6 +52,9 @@ type Config struct {
 	Dir, API   string
 	Operations []Operation
 	Roles      []string
+	// Storage is the security log's archive; zero values take the
+	// defaults (withDefaults).
+	Storage Storage
 }
 
 // Guard holds one API's keys, table, counters, blocked list and log.
@@ -105,7 +108,7 @@ func New(cfg Config) (*Guard, error) {
 	if err := g.loadBlocked(g.blockedPath); err != nil {
 		return nil, fmt.Errorf("%s: %w", BlockedFile, err)
 	}
-	if g.log, err = openLog(filepath.Join(cfg.Dir, LogFile(cfg.API))); err != nil {
+	if g.log, err = openLog(filepath.Join(cfg.Dir, LogFile(cfg.API)), cfg.Storage.withDefaults(cfg.Dir)); err != nil {
 		return nil, err
 	}
 	g.stop, g.stopped = make(chan struct{}), make(chan struct{})

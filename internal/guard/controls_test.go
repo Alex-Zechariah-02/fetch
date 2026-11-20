@@ -21,7 +21,7 @@ func testGuard(t *testing.T) (*Guard, string) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "orders-security.log")
-	log, err := openLog(path)
+	log, err := openLog(path, Storage{})
 	if err != nil {
 		t.Fatal(err)
 	}

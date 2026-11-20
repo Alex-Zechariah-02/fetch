@@ -18,7 +18,7 @@ import (
 // whole; one more ID is refused and the list in force stays.
 func TestBlockedListBounds(t *testing.T) {
 	dir := t.TempDir()
-	log, err := openLog(filepath.Join(dir, "orders-security.log"))
+	log, err := openLog(filepath.Join(dir, "orders-security.log"), Storage{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,7 +10,6 @@ package guard
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -44,36 +43,6 @@ const (
 	keptBuffer = queueSize * 512
 )
 
-// record is one security log line. Tokens, bodies and queries are never
-// recorded.
-type record struct {
-	Seq          uint64    `json:"seq"`
-	Time         time.Time `json:"time"`
-	Kind         string    `json:"kind"`
-	RequestID    string    `json:"request_id,omitempty"`
-	API          string    `json:"api,omitempty"`
-	Stage        string    `json:"stage,omitempty"`
-	Decision     string    `json:"decision,omitempty"`
-	Status       int       `json:"status,omitempty"`
-	Error        string    `json:"error,omitempty"`
-	Reason       string    `json:"reason,omitempty"`
-	Method       string    `json:"method,omitempty"`
-	Path         string    `json:"path,omitempty"`
-	Operation    string    `json:"operation,omitempty"`
-	Subject      string    `json:"subject,omitempty"`
-	Roles        []string  `json:"roles,omitempty"`
-	IgnoredRoles []string  `json:"ignored_roles,omitempty"`
-	Client       string    `json:"client_address,omitempty"`
-	DurationMS   float64   `json:"duration_ms,omitempty"`
-	Lost         uint64    `json:"lost,omitempty"`
-	Accounts     int       `json:"accounts,omitempty"` // blocked list size after a replacement
-	// First, Counts and Addresses are a refusal summary's interval start,
-	// counts by reason and busiest client addresses.
-	First     time.Time         `json:"first,omitzero"`
-	Counts    map[string]uint64 `json:"counts,omitempty"`
-	Addresses []addressCount    `json:"addresses,omitempty"`
-}
-
 type entry struct {
 	line []byte     // the record as one JSON line, encoded by its request
 	done chan error // nil when nobody waits
@@ -105,17 +74,30 @@ type securityLog struct {
 	lost     atomic.Uint64 // not yet written in a loss record
 	dropped  atomic.Uint64 // every record lost since start, for the control listener
 	written  atomic.Int64  // bytes in the active file after the last batch
-	failed   atomic.Bool
-	mu       sync.RWMutex // orders queueing against close
-	closed   bool
-	done     chan struct{}
+	// down is set while the active file is being replaced after a failed
+	// write or sync, noSpace while the disk has none, full while the log
+	// folder is at its bound under refuse (recover.go).
+	down, noSpace, full atomic.Bool
+	trouble             // the writer's recovery state
+	archive             *archiver
+	slow                atomic.Int64 // saves that waited longer than slowSave
+	recoveries          atomic.Int64 // active files replaced after a failed write
+	mu                  sync.RWMutex // orders queueing against close
+	closed              bool
+	done                chan struct{}
 }
 
-// openLog writes to path from its logical end, creating it private to this user.
-func openLog(path string) (*securityLog, error) {
+// openLog writes to path from its logical end, creating it private to this
+// user, and starts the archiver unless s names no archive folder.
+func openLog(path string, s Storage) (*securityLog, error) {
 	l := &securityLog{path: path, limit: maxLogBytes, queue: make(chan entry, queueSize), done: make(chan struct{})}
 	if err := l.open(); err != nil {
 		return nil, err
+	}
+	l.refuse = s.Refuse
+	if s.Archive != "" {
+		l.archive = newArchiver(l, s)
+		go l.archive.run()
 	}
 	go l.run()
 	return l, nil
@@ -125,13 +107,17 @@ func openLog(path string) (*securityLog, error) {
 // wait longer than commitWait, refuses it.
 func (l *securityLog) commit(ctx context.Context, r *record) error {
 	done, state := make(chan error, 1), new(atomic.Int32)
-	if l.failed.Load() || !l.enqueue(r, done, state) {
+	if !l.enqueue(r, done, state) {
 		return errLogFailed
 	}
 	ctx, cancel := context.WithTimeout(ctx, commitWait)
 	defer cancel()
+	start := time.Now()
 	select {
 	case err := <-done:
+		if time.Since(start) >= slowSave {
+			l.slow.Add(1)
+		}
 		return err
 	case <-ctx.Done():
 		state.CompareAndSwap(0, 2)
@@ -141,7 +127,7 @@ func (l *securityLog) commit(ctx context.Context, r *record) error {
 
 // note queues r without waiting, counting it as lost when it cannot be.
 func (l *securityLog) note(r *record) {
-	if l.failed.Load() || !l.enqueue(r, nil, nil) {
+	if !l.enqueue(r, nil, nil) {
 		l.lost.Add(1)
 		l.dropped.Add(1)
 	}
@@ -201,6 +187,7 @@ func (l *securityLog) run() {
 	if l.lost.Load() > 0 {
 		l.write(nil)
 	}
+	l.archive.halt()
 	if err := errors.Join(l.trim(), l.file.Close()); err != nil {
 		fmt.Fprintf(os.Stderr, "security log close failed: %v\n", err)
 	}
@@ -215,20 +202,28 @@ func take(batch []entry, e entry) []entry {
 }
 
 // write adds the pending loss count and batch at the logical end, then
-// syncs. A failure disables admission for the rest of the process.
+// syncs. A batch the log cannot take (recover.go) is refused, its records
+// that nobody waits for counted as lost.
 func (l *securityLog) write(batch []entry) error {
-	if l.failed.Load() {
+	if !l.ready() {
+		l.lose(batch, 0)
 		return errLogFailed
 	}
+	lost := l.lost.Swap(0)
 	buffer := l.buffer[:0]
-	if lost := l.lost.Swap(0); lost > 0 {
+	if lost > 0 {
 		buffer = appendRecord(buffer, &record{Seq: l.seq.Add(1), Time: time.Now().UTC(), Kind: "log.loss", Lost: lost})
 	}
 	for _, e := range batch {
 		buffer = append(buffer, e.line...)
 	}
 	// Synced before the admission returns, so an acknowledged request is on disk.
-	if err := l.persist(buffer); err != nil {
+	err := l.persist(buffer)
+	if err != nil && spaceError(err) && l.releaseReserve() {
+		err = l.persist(buffer)
+	}
+	if err != nil {
+		l.lose(batch, lost)
 		return l.fail(err)
 	}
 	// A batch beyond a full queue's size is not kept, so idle memory stays bounded.
@@ -245,24 +240,10 @@ func (l *securityLog) write(batch []entry) error {
 	return nil
 }
 
-func (l *securityLog) fail(err error) error {
-	// A failed write or sync stops admission, so no request runs without a record.
-	if l.failed.CompareAndSwap(false, true) {
-		fmt.Fprintf(os.Stderr, "security log failed; admission disabled: %v\n", err)
-	}
-	return errLogFailed
-}
-
-func appendRecord(buffer []byte, r *record) []byte {
-	line, err := json.Marshal(r)
-	if err != nil {
-		panic(err) // a record holds only strings, numbers and times
-	}
-	return append(append(buffer, line...), '\n')
-}
-
-// close stops queueing, writes everything queued and closes the file.
+// close stops the archiver, whose records need the queue, then stops
+// queueing, writes everything queued and closes the file.
 func (l *securityLog) close() {
+	l.archive.halt()
 	l.mu.Lock()
 	if !l.closed {
 		l.closed = true

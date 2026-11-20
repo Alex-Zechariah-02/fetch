@@ -19,7 +19,7 @@ import (
 // instead of an admission without one.
 func TestPanicRecordsOutcome(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "orders-security.log")
-	log, err := openLog(path)
+	log, err := openLog(path, Storage{})
 	if err != nil {
 		t.Fatal(err)
 	}

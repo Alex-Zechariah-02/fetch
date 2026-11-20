@@ -1,7 +1,7 @@
 // The guard's counters on the API's control listener: requests in flight,
 // refusals for overload and a full rate table, rate counters held, records
-// lost and the active log's size, which the log itself cannot show when it
-// fails.
+// lost, the active log's size and the log's archive and disks, which the
+// log itself cannot show when it fails.
 
 package guard
 
@@ -22,9 +22,14 @@ func (g *Guard) Status(w http.ResponseWriter, _ *http.Request) {
 		"max_rate_counters":  maxCounters,
 		"log_bytes":          g.log.written.Load(),
 		"log_records_lost":   g.log.dropped.Load(),
-		"log_failed":         g.log.failed.Load(),
+		"log_failed":         g.log.unavailable(),
+		"log_recoveries":     g.log.recoveries.Load(),
+		"log_slow_saves":     g.log.slow.Load(),
 		"blocked_accounts":   len(*g.blocked.Load()),
 	})
+	if err == nil && g.log.archive != nil {
+		data, err = withArchive(data, g.log.archive)
+	}
 	if err != nil {
 		http.Error(w, "status unavailable", http.StatusInternalServerError)
 		return
@@ -32,4 +37,21 @@ func (g *Guard) Status(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write(append(data, '\n'))
+}
+
+// withArchive adds the archiver's state to the status object data.
+func withArchive(data []byte, r *archiver) ([]byte, error) {
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	fields["log_archive_ok"] = r.usable.Load()
+	fields["log_archive_bytes"] = r.stored.Load()
+	fields["log_archive_budget_bytes"] = r.budget
+	fields["log_pending_files"] = r.waiting.Load()
+	fields["log_free_bytes"] = map[string]int64{"log": r.freeLog.Load(), "archive": r.freeArchive.Load()}
+	fields["log_reserve_bytes"] = r.held.Load()
+	fields["log_evictions"] = r.evictions.Load()
+	fields["log_pressure_evictions"] = r.pressure.Load()
+	return json.Marshal(fields)
 }
