@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -114,6 +115,29 @@ func TestLogRotates(t *testing.T) {
 		if len(r.Method) > maxMethod {
 			t.Fatalf("method of %d bytes", len(r.Method))
 		}
+	}
+}
+
+// An API upgraded from an earlier version holds <log>.1 to .7; at start
+// they are compressed into the archive, recorded and deleted.
+func TestLogUpgradesEarlierFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orders-security.log")
+	for n := 1; n <= 3; n++ {
+		line := appendRecord(nil, &record{Seq: uint64(n), Time: time.Now().UTC(), Kind: "request.admitted", Path: "/orders"})
+		if err := os.WriteFile(fmt.Sprintf("%s.%d", path, n), line, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := openLog(path, Storage{Archive: filepath.Join(dir, "archive"), ArchiveBytes: 1 << 30, MinFree: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the earlier files archived", func() bool { files, _ := listRotated(dir, "orders-security.log"); return len(files) == 0 })
+	l.close()
+	archived, err := listRotated(filepath.Join(dir, "archive"), "orders-security.log")
+	if err != nil || len(archived) != 3 || count(records(t, dir), "log.archived") != 3 {
+		t.Fatalf("%d archived files, %d records (%v)", len(archived), count(records(t, dir), "log.archived"), err)
 	}
 }
 
