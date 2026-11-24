@@ -33,13 +33,16 @@ type archiver struct {
 	budget                int64
 	minFree               float64
 	reserve               int64
+	generalReserve        int64
+	evictReserve          int64
 	wake, stop, done      chan struct{}
 	halted                sync.Once
 	ctx                   context.Context
 	cancel                context.CancelFunc
 	failing               bool          // the archive failed at the last pass; archiver only
-	released              atomic.Int64  // when the writer last released the reserve (Unix ns)
-	pause                 time.Duration // how long the reserve is not made again after that
+	released              atomic.Int64  // when the writer last released the general reserve (Unix ns)
+	evictReleased         atomic.Int64  // when the writer last released the eviction reserve (Unix ns)
+	pause                 time.Duration // how long a reserve is not made again after release
 	usable                atomic.Bool
 	stored, waiting, held atomic.Int64
 	freeLog, freeArchive  atomic.Int64
@@ -48,10 +51,12 @@ type archiver struct {
 
 func newArchiver(l *securityLog, s Storage) *archiver {
 	ctx, cancel := context.WithCancel(context.Background())
+	general, evict := reserveSplit(s.Reserve)
 	r := &archiver{log: l, live: filepath.Dir(l.path), dir: s.Archive, budget: s.ArchiveBytes, minFree: float64(s.MinFree) / 100,
-		reserve: s.Reserve, pause: reservePause, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel}
+		reserve: s.Reserve, generalReserve: general, evictReserve: evict, pause: reservePause, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel}
 	if s.Reserve > 0 {
 		l.reservePath = reserveName(l.path)
+		l.evictReservePath = evictReserveName(l.path)
 	}
 	r.usable.Store(true)
 	r.freeLog.Store(-1)

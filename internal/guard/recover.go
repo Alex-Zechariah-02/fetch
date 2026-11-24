@@ -12,6 +12,7 @@
 package guard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -31,16 +32,17 @@ var errFolderFull = errors.New("security log folder full; move rotated files awa
 
 // trouble is the writer's recovery state; only the writer uses it.
 type trouble struct {
-	refuse      bool      // never delete; a full folder refuses records
-	reason      string    // why the log went down: sync_failed or storage_space
-	since       time.Time // when it went down
-	tried       time.Time // the last attempt to write again
-	suspect     string    // the replaced file's rotated name
-	suspectEnd  int64     // the end of its last synced batch
-	fresh       bool      // the active file was opened by a recovery and holds nothing synced
-	synced      int64     // the end of the last synced batch of the active file
-	reservePath string    // the reserve file ("" for none)
-	lastName    time.Time // the time in the last rotated name, which only rises
+	refuse           bool      // never delete; a full folder refuses records
+	reason           string    // why the log went down: sync_failed or storage_space
+	since            time.Time // when it went down
+	tried            time.Time // the last attempt to write again
+	suspect          string    // the replaced file's rotated name
+	suspectEnd       int64     // the end of its last synced batch
+	fresh            bool      // the active file was opened by a recovery and holds nothing synced
+	synced           int64     // the end of the last synced batch of the active file
+	reservePath      string    // the general reserve file ("" for none)
+	evictReservePath string    // the eviction reserve file ("" for none)
+	lastName         time.Time // the time in the last rotated name, which only rises
 }
 
 // fail refuses the batch whose write failed with err: for want of space the
@@ -62,6 +64,9 @@ func (l *securityLog) fail(err error) error {
 	}
 	if flag.CompareAndSwap(false, true) {
 		fmt.Fprintf(os.Stderr, "security log cannot write (%s); admission refused until it can: %v\n", l.reason, err)
+	}
+	if l.noSpace.Load() {
+		l.archive.signal()
 	}
 	return errLogFailed
 }
@@ -155,4 +160,54 @@ func (l *securityLog) lose(batch []entry, carried uint64) {
 // unavailable reports whether the log refuses records now.
 func (l *securityLog) unavailable() bool {
 	return l.down.Load() || l.noSpace.Load() || l.full.Load()
+}
+
+// commitEviction writes and syncs a log.evicted record, using the eviction
+// reserve when the log is refusing admissions for want of space (noSpace).
+// Only eviction records call commitEviction.
+func (l *securityLog) commitEviction(ctx context.Context, r *record) error {
+	done := make(chan error, 1)
+	l.mu.RLock()
+	if l.closed {
+		l.mu.RUnlock()
+		return errLogFailed
+	}
+	r.Seq, r.Time = l.seq.Add(1), time.Now().UTC()
+	e := entry{line: appendRecord(nil, r), done: done}
+	ctx, cancel := context.WithTimeout(ctx, commitWait)
+	defer cancel()
+	select {
+	case l.evictCh <- e:
+		l.mu.RUnlock()
+	case <-ctx.Done():
+		l.mu.RUnlock()
+		return errLogTimedOut
+	}
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return errLogTimedOut
+	}
+}
+
+// writeEviction writes a single log.evicted record on the writer goroutine.
+// Under noSpace it deletes and syncs the eviction reserve first, then writes
+// and syncs the record without clearing noSpace.
+func (l *securityLog) writeEviction(e entry) error {
+	if l.down.Load() || l.full.Load() {
+		return errLogFailed
+	}
+	if !l.noSpace.Load() {
+		err := l.write([]entry{e})
+		if err == nil || !l.noSpace.Load() {
+			return err
+		}
+	}
+	l.releaseEvictReserve()
+	if err := l.persist(e.line); err != nil {
+		return err
+	}
+	l.written.Store(l.size)
+	return nil
 }

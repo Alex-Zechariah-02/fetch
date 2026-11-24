@@ -69,6 +69,7 @@ type securityLog struct {
 	// rotating is set while rotations fail, so the warning is printed once.
 	rotating bool
 	queue    chan entry
+	evictCh  chan entry
 	buffer   []byte // the last batch's memory, reused; only run uses it
 	seq      atomic.Uint64
 	lost     atomic.Uint64 // not yet written in a loss record
@@ -90,7 +91,7 @@ type securityLog struct {
 // openLog writes to path from its logical end, creating it private to this
 // user, and starts the archiver unless s names no archive folder.
 func openLog(path string, s Storage) (*securityLog, error) {
-	l := &securityLog{path: path, limit: maxLogBytes, queue: make(chan entry, queueSize), done: make(chan struct{})}
+	l := &securityLog{path: path, limit: maxLogBytes, queue: make(chan entry, queueSize), evictCh: make(chan entry, 1), done: make(chan struct{})}
 	if err := l.open(); err != nil {
 		return nil, err
 	}
@@ -160,30 +161,39 @@ func (l *securityLog) enqueue(r *record, done chan error, state *atomic.Int32) b
 func (l *securityLog) run() {
 	defer close(l.done)
 	batch := make([]entry, 0, queueSize)
-	for first := range l.queue {
-		batch = take(batch[:0], first)
-	fill:
-		for len(batch) < queueSize {
-			select {
-			case next, open := <-l.queue:
-				if !open {
+	for {
+		select {
+		case e := <-l.evictCh:
+			e.done <- l.writeEviction(e)
+		case first, open := <-l.queue:
+			if !open {
+				goto finish
+			}
+			batch = take(batch[:0], first)
+		fill:
+			for len(batch) < queueSize {
+				select {
+				case next, open := <-l.queue:
+					if !open {
+						break fill
+					}
+					batch = take(batch, next)
+				default:
 					break fill
 				}
-				batch = take(batch, next)
-			default:
-				break fill
 			}
-		}
-		if len(batch) == 0 {
-			continue
-		}
-		err := l.write(batch)
-		for _, e := range batch {
-			if e.done != nil {
-				e.done <- err
+			if len(batch) == 0 {
+				continue
+			}
+			err := l.write(batch)
+			for _, e := range batch {
+				if e.done != nil {
+					e.done <- err
+				}
 			}
 		}
 	}
+finish:
 	if l.lost.Load() > 0 {
 		l.write(nil)
 	}

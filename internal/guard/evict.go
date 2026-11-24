@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -66,7 +67,12 @@ func oldestOver(files []logFile, dir string, bound int64) int {
 }
 
 // underPressure picks the oldest file on a disk below its threshold, or -1.
+// When the log is refusing writes for want of space (noSpace), the oldest
+// file is evicted immediately so space can be reclaimed.
 func (r *archiver) underPressure(files []logFile) int {
+	if r.log.noSpace.Load() && len(files) > 0 {
+		return 0
+	}
 	for _, dir := range []string{r.live, r.dir} {
 		d, err := diskOf(dir)
 		if err != nil || !d.below(r.minFree) {
@@ -94,7 +100,7 @@ func (r *archiver) evict(f logFile, reason string) error {
 	e.Kind, e.API, e.File, e.Bytes, e.Reason, e.Target = "log.evicted", r.log.api(), f.plain(), f.bytes, reason, where
 	// Not cancelled by halt: a record the writer already took is written,
 	// so the deletion it announces must follow.
-	if err := r.log.commit(context.Background(), &e); err != nil {
+	if err := r.log.commitEviction(context.Background(), &e); err != nil {
 		return err
 	}
 	if err := errors.Join(os.Remove(f.path()), syncDir(f.dir)); err != nil {
@@ -138,29 +144,58 @@ func reserveName(active string) string {
 	return strings.TrimSuffix(active, filepath.Ext(active)) + ".reserve"
 }
 
-// keepReserve makes the reserve file when it is missing and the disk has
-// room for it above the threshold.
+// evictReserveName is the eviction reserve file: <stem>.evict.reserve.
+func evictReserveName(active string) string {
+	return strings.TrimSuffix(active, filepath.Ext(active)) + ".evict.reserve"
+}
+
+// evictReserveCap is the dedicated eviction reserve taken from the budget;
+// at or below 1 MiB the budget is split evenly between both files.
+const evictReserveCap = 1 << 20
+
+func reserveSplit(budget int64) (general, evict int64) {
+	if budget <= 0 {
+		return 0, 0
+	}
+	if budget <= evictReserveCap {
+		evict = budget / 2
+		return budget - evict, evict
+	}
+	return budget - evictReserveCap, evictReserveCap
+}
+
+// keepReserve makes each reserve file when it is missing and the disk has
+// room for it above the threshold, reporting the sum of both in r.held.
 func (r *archiver) keepReserve() {
-	path := r.log.reservePath
-	if path == "" {
-		return
+	var held int64
+	for _, item := range []struct {
+		path     string
+		size     int64
+		released *atomic.Int64
+	}{
+		{r.log.reservePath, r.generalReserve, &r.released},
+		{r.log.evictReservePath, r.evictReserve, &r.evictReleased},
+	} {
+		if item.path == "" || item.size <= 0 {
+			continue
+		}
+		if _, err := os.Stat(item.path); err == nil {
+			held += item.size
+			continue
+		}
+		if time.Since(time.Unix(0, item.released.Load())) < r.pause {
+			continue
+		}
+		if d, err := diskOf(r.live); err != nil || d.below(r.minFree) || (d.total > 0 && d.free < 2*r.reserve) {
+			continue
+		}
+		if err := makeReserve(item.path, item.size); err != nil {
+			fmt.Fprintf(os.Stderr, "security log reserve not made yet: %v\n", err)
+			continue
+		}
+		held += item.size
 	}
-	if _, err := os.Stat(path); err == nil {
-		r.held.Store(r.reserve)
-		return
-	}
-	r.held.Store(0)
-	if time.Since(time.Unix(0, r.released.Load())) < r.pause {
-		return
-	}
-	if d, err := diskOf(r.live); err != nil || d.below(r.minFree) || (d.total > 0 && d.free < 2*r.reserve) {
-		return
-	}
-	if err := makeReserve(path, r.reserve); err != nil {
-		fmt.Fprintf(os.Stderr, "security log reserve not made yet: %v\n", err)
-		return
-	}
-	r.held.Store(r.reserve)
+	r.held.Store(held)
 }
 
 // makeReserve writes size zero bytes to path, synced, through a temporary
@@ -196,6 +231,19 @@ func (l *securityLog) releaseReserve() bool {
 		l.archive.released.Store(time.Now().UnixNano())
 	}
 	l.archive.signal()
+	return true
+}
+
+// releaseEvictReserve deletes the eviction reserve file and syncs its folder
+// so an eviction record can be written while the log is in noSpace.
+func (l *securityLog) releaseEvictReserve() bool {
+	if l.evictReservePath == "" || os.Remove(l.evictReservePath) != nil {
+		return false
+	}
+	_ = syncDir(filepath.Dir(l.evictReservePath))
+	if l.archive != nil {
+		l.archive.evictReleased.Store(time.Now().UnixNano())
+	}
 	return true
 }
 
