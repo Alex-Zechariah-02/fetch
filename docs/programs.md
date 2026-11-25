@@ -38,6 +38,7 @@ The programs and folders of this repository, with their flags. Back to the [READ
 - With `-tls-cert`, `-tls-key` and `-client-ca` (all three, or none) the API serves TLS and admits only clients presenting a certificate issued by that CA; only then may `-listen` name an address other than loopback, and then it must.
 - Inventory and Orders then also answer their `/internal/` endpoints, and nothing else, on `127.0.0.1` at the same port, where the other services' calls arrive; the TLS listener answers no `/internal/` path.
 - On Unix the TLS key must be readable by its owner only, and the certificate and client CA not writable by the group or others; each must belong to the service's user or root.
+- The API certificate, key and client CA reload automatically when any file's size or modification time changes (checked at most once a second); a failed reload keeps the previous files and logs the error.
 - Every API listener reads at most 64 KiB of request headers, and a request body only for POST, PATCH and PUT, up to the largest body its operations take.
 - The control listener is always loopback.
 - Accounts takes the same TLS flags.
@@ -50,6 +51,7 @@ The programs and folders of this repository, with their flags. Back to the [READ
 - The assertion must also name the request's own method and path, and the issuer `apiward`.
 - An assertion can be replayed on the same method and path until it expires, at most 35 seconds; there is no one-time memory. Reading one needs the gateway-to-service connection, which mutual TLS protects in the two-host setup.
 - On Unix the key set file must not be writable by the group or others and must belong to the service's user or root.
+- The gateway key set reloads automatically when the file's size or modification time changes (checked at most once a second); a failed reload keeps the previous keys and logs the error.
 - Refused assertions are written to the service's log, at most one line a second with the reason and the number refused since the last line.
 
 ### Built-in protection

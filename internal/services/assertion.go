@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
@@ -45,11 +46,20 @@ const (
 	refusalGap = time.Second
 )
 
+type assertionSet struct {
+	keys  map[string]crypto.PublicKey // by key ID: ed25519.PublicKey or *ecdsa.PublicKey (P-256)
+	stamp stamp
+}
+
 // assertions verifies the gateway's assertions for one service.
 type assertions struct {
-	keys     map[string]crypto.PublicKey // by key ID: ed25519.PublicKey or *ecdsa.PublicKey (P-256)
-	audience string                      // this service's API ID
+	path     string
+	audience string // this service's API ID
 	log      *slog.Logger
+
+	held     atomic.Pointer[assertionSet]
+	checked  atomic.Int64 // Unix ns of the last stat check
+	reloadMu sync.Mutex
 
 	mu      sync.Mutex // guards the refusal record below
 	refused int        // refusals since the last line
@@ -61,6 +71,21 @@ type assertions struct {
 // public Ed25519 or ECDSA P-256 key; several are accepted so a key can be
 // replaced, also by one of the other type, without a gap.
 func loadAssertions(path, audience string, log *slog.Logger) (*assertions, error) {
+	st, err := stampOf(path)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := loadAssertionKeys(path)
+	if err != nil {
+		return nil, err
+	}
+	a := &assertions{path: path, audience: audience, log: log}
+	a.held.Store(&assertionSet{keys: keys, stamp: st})
+	a.checked.Store(time.Now().UnixNano())
+	return a, nil
+}
+
+func loadAssertionKeys(path string) (map[string]crypto.PublicKey, error) {
 	data, err := readBoundedFile(path, trusted)
 	if err != nil {
 		return nil, err
@@ -69,14 +94,47 @@ func loadAssertions(path, audience string, log *slog.Logger) (*assertions, error
 	if err := json.Unmarshal(data, &set); err != nil || len(set.Keys) == 0 {
 		return nil, errors.New("the file is not a JSON Web Key Set with at least one key")
 	}
-	a := &assertions{keys: map[string]crypto.PublicKey{}, audience: audience, log: log}
+	keys := map[string]crypto.PublicKey{}
 	for _, entry := range set.Keys {
-		if algorithmOf(entry.Key) == "" || entry.KeyID == "" || a.keys[entry.KeyID] != nil {
+		if algorithmOf(entry.Key) == "" || entry.KeyID == "" || keys[entry.KeyID] != nil {
 			return nil, fmt.Errorf("key %q: every key must be a distinct, named public Ed25519 or ECDSA P-256 key", entry.KeyID)
 		}
-		a.keys[entry.KeyID] = entry.Key
+		keys[entry.KeyID] = entry.Key
 	}
-	return a, nil
+	return keys, nil
+}
+
+// currentKeys returns the active gateway public keys, reloading the file when
+// its size or modification time changed (checked at most once a second). A
+// failed reload keeps the previous keys and logs the error.
+func (a *assertions) currentKeys() map[string]crypto.PublicKey {
+	held := a.held.Load()
+	ns := time.Now().UnixNano()
+	if ns-a.checked.Load() < int64(time.Second) {
+		return held.keys
+	}
+	a.reloadMu.Lock()
+	defer a.reloadMu.Unlock()
+	held = a.held.Load()
+	if ns-a.checked.Load() < int64(time.Second) {
+		return held.keys
+	}
+	a.checked.Store(ns)
+	st, err := stampOf(a.path)
+	if err != nil {
+		a.log.Error("reloading gateway assertion keys", "path", a.path, "error", err)
+		return held.keys
+	}
+	if st == held.stamp {
+		return held.keys
+	}
+	keys, err := loadAssertionKeys(a.path)
+	if err != nil {
+		a.log.Error("reloading gateway assertion keys", "path", a.path, "error", err)
+		return held.keys
+	}
+	a.held.Store(&assertionSet{keys: keys, stamp: st})
+	return keys
 }
 
 // algorithmOf is the one JWS algorithm a key verifies: EdDSA for Ed25519,
@@ -117,7 +175,7 @@ func (a *assertions) verify(token string) ([]byte, error) {
 		return nil, errors.New("not a compact assertion")
 	}
 	kid, _ := fields["kid"].(string)
-	key := a.keys[kid]
+	key := a.currentKeys()[kid]
 	if key == nil {
 		return nil, errors.New("unknown key ID")
 	}
@@ -146,7 +204,7 @@ func verified(key crypto.PublicKey, input, signature []byte) bool {
 }
 
 // keyIDs lists the accepted key IDs, sorted, for the start line.
-func (a *assertions) keyIDs() []string { return slices.Sorted(maps.Keys(a.keys)) }
+func (a *assertions) keyIDs() []string { return slices.Sorted(maps.Keys(a.held.Load().keys)) }
 
 // check is admit with the refusal recorded: true admits r.
 func (a *assertions) check(r *http.Request, now time.Time) bool {
