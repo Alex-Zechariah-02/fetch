@@ -242,7 +242,9 @@ func (l *securityLog) releaseEvictReserve() bool {
 	if l.evictReservePath == "" || os.Remove(l.evictReservePath) != nil {
 		return false
 	}
-	_ = syncDir(filepath.Dir(l.evictReservePath))
+	if err := syncDir(filepath.Dir(l.evictReservePath)); err != nil {
+		fmt.Fprintf(os.Stderr, "security log eviction reserve folder sync failed: %v\n", err)
+	}
 	if l.archive != nil {
 		l.archive.evictReleased.Store(time.Now().UnixNano())
 	}
