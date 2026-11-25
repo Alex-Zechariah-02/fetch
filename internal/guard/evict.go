@@ -67,19 +67,21 @@ func oldestOver(files []logFile, dir string, bound int64) int {
 }
 
 // underPressure picks the oldest file on a disk below its threshold, or -1.
-// When the log is refusing writes for want of space (noSpace), the oldest
-// file is evicted immediately so space can be reclaimed.
+// Each write refused for want of space also picks one file on the log disk,
+// whatever its free space reads (a quota or inode limit).
 func (r *archiver) underPressure(files []logFile) int {
-	if r.log.noSpace.Load() && len(files) > 0 {
-		return 0
-	}
+	fails := r.log.spaceFails.Load()
 	for _, dir := range []string{r.live, r.dir} {
 		d, err := diskOf(dir)
-		if err != nil || !d.below(r.minFree) {
+		full := dir == r.live && r.log.noSpace.Load() && fails != r.spaceSeen
+		if err != nil || !full && !d.below(r.minFree) {
 			continue
 		}
 		for i, f := range files {
 			if same, err := diskOf(f.dir); err == nil && same.id == d.id {
+				if full {
+					r.spaceSeen = fails
+				}
 				return i
 			}
 		}

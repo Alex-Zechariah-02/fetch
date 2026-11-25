@@ -40,6 +40,7 @@ type archiver struct {
 	ctx                   context.Context
 	cancel                context.CancelFunc
 	failing               bool          // the archive failed at the last pass; archiver only
+	spaceSeen             uint64        // the spaceFails count last answered by an eviction; archiver only
 	released              atomic.Int64  // when the writer last released the general reserve (Unix ns)
 	evictReleased         atomic.Int64  // when the writer last released the eviction reserve (Unix ns)
 	pause                 time.Duration // how long a reserve is not made again after release

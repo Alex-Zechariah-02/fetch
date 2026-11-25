@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // While the log refuses admissions for want of space (noSpace), an eviction
@@ -61,5 +62,33 @@ func TestGuardEvictionReserveRecoversFullDisk(t *testing.T) {
 	}
 	if count(all, "log.recovered") < 1 {
 		t.Fatal("no log.recovered record written")
+	}
+}
+
+// Under noSpace the archiver evicts one file per failed write, so a full
+// disk costs the oldest file, not the whole history, before the writer tries
+// again.
+func TestGuardNoSpaceEvictsOneFile(t *testing.T) {
+	l, dir := archived(t, Storage{ArchiveBytes: 1 << 30, Reserve: 1 << 20})
+	defer l.close()
+
+	for range 10 {
+		if err := admit(l, strings.Repeat("M", 1024)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitUntil(t, "three archived files and the eviction reserve", func() bool {
+		archivedFiles, _ := listRotated(filepath.Join(dir, "archive"), "orders-security.log")
+		_, err := os.Stat(filepath.Join(dir, "orders-security.evict.reserve"))
+		return len(archivedFiles) >= 3 && err == nil
+	})
+
+	l.fail(&os.PathError{Op: "write", Err: fullDisk()})
+	waitUntil(t, "an eviction under noSpace", func() bool {
+		return l.archive.evictions.Load() >= 1
+	})
+	time.Sleep(300 * time.Millisecond)
+	if n := l.archive.evictions.Load(); n != 1 {
+		t.Fatalf("%d files evicted before the writer tried again, want 1", n)
 	}
 }

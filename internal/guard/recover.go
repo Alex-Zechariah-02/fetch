@@ -65,7 +65,8 @@ func (l *securityLog) fail(err error) error {
 	if flag.CompareAndSwap(false, true) {
 		fmt.Fprintf(os.Stderr, "security log cannot write (%s); admission refused until it can: %v\n", l.reason, err)
 	}
-	if l.noSpace.Load() {
+	if flag == &l.noSpace {
+		l.spaceFails.Add(1)
 		l.archive.signal()
 	}
 	return errLogFailed

@@ -86,6 +86,10 @@ type securityLog struct {
 	mu                  sync.RWMutex // orders queueing against close
 	closed              bool
 	done                chan struct{}
+
+	// spaceFails counts writes refused for want of space; the archiver evicts
+	// one file on the log disk for each.
+	spaceFails atomic.Uint64
 }
 
 // openLog writes to path from its logical end, creating it private to this
