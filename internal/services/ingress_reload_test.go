@@ -135,7 +135,6 @@ func TestIngressCertificateReload(t *testing.T) {
 		t.Fatalf("initial handshake: cn=%q err=%v, want gen1-server", cn, err)
 	}
 
-	// Replace with gen2 certificate, key and client CA.
 	writeFiles(srvCert2, srvKey2, ca2)
 	future := time.Now().Add(2 * time.Second)
 	for _, p := range []string{certPath, keyPath, caPath} {
@@ -150,7 +149,6 @@ func TestIngressCertificateReload(t *testing.T) {
 		t.Fatal("old gen1 client cert still accepted after reload")
 	}
 
-	// Corrupt the certificate file; gen2 must stay active.
 	if err := os.WriteFile(certPath, []byte("not pem"), 0o600); err != nil {
 		t.Fatal(err)
 	}

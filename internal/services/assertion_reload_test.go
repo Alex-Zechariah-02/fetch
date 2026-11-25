@@ -83,7 +83,6 @@ func TestAssertionKeysReload(t *testing.T) {
 		t.Fatal("key2 accepted before reload")
 	}
 
-	// Replace the file with key2 and advance its mtime past the 1s check window.
 	writeSet(jwk2)
 	future := now.Add(2 * time.Second)
 	if err := os.Chtimes(path, future, future); err != nil {
@@ -98,7 +97,6 @@ func TestAssertionKeysReload(t *testing.T) {
 		t.Fatal("removed key1 still accepted after reload")
 	}
 
-	// Corrupt the file; previous key2 must stay active.
 	if err := os.WriteFile(path, []byte("{bad"), 0o600); err != nil {
 		t.Fatal(err)
 	}
