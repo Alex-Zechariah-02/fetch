@@ -30,7 +30,7 @@ type stamp struct {
 }
 
 func stampOf(path string) (stamp, error) {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) // #nosec G703 -- path is an operator-configured signing key or TLS file
 	if err != nil {
 		return stamp{}, err
 	}

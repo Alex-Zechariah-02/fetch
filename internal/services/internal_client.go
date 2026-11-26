@@ -46,7 +46,7 @@ func newServiceClient(base string, key []byte) (*serviceClient, error) {
 	return &serviceClient{base: base, key: string(key), http: &http.Client{Timeout: 2 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (c *serviceClient) call(ctx context.Context, method, path string, body []byte, key string) (int, []byte, error) {
-	request, err := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(body)) // #nosec G704 -- c.base is a validated loopback origin (newServiceClient)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -57,7 +57,7 @@ func (c *serviceClient) call(ctx context.Context, method, path string, body []by
 	if key != "" {
 		request.Header.Set("Idempotency-Key", key)
 	}
-	response, err := c.http.Do(request)
+	response, err := c.http.Do(request) // #nosec G704 -- c.base is a validated loopback origin (newServiceClient)
 	if err != nil {
 		return 0, nil, err
 	}

@@ -106,6 +106,17 @@ jobs:
           go-version-file: go.mod
       # Correctness checks beyond go vet (settings: staticcheck.conf).
       - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      # Security checks on the shipped services and guard code. G104 (unchecked
+      # errors) and G304 (file path from a variable) match APIWard's exclusions;
+      # cmd/demo and cmd/measure run local build and process commands and read
+      # operator-supplied paths by design, and client holds the TypeScript shop.
+      - run: >-
+          go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 -quiet
+          -exclude=G104,G304
+          -exclude-dir=client
+          -exclude-dir=cmd/demo
+          -exclude-dir=cmd/measure
+          ./...
 
   client:
     # The browser tests run one at a time against one stack per spec file, so

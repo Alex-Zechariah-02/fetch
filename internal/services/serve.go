@@ -133,7 +133,7 @@ func write(w http.ResponseWriter, res result, encoded []byte) {
 		w.Header().Set("Retry-After", strconv.Itoa(res.retryAfter))
 	}
 	w.WriteHeader(res.status)
-	w.Write(encoded)
+	w.Write(encoded) // #nosec G705 -- a JSON body sent as application/json with nosniff
 	w.Write(newline)
 }
 
