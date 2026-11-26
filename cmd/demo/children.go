@@ -151,7 +151,7 @@ func (c *children) startServices(dir, serviceBinary, accountsBinary string, host
 		}
 		args = append(args, "-listen", listen)
 		if protect {
-			args = append(args, "-local-security", dir)
+			args = append(args, "-local-security", dir, "-local-security-trusted-proxy", localProxyAddress)
 		}
 		// Accounts takes the account for refresh and me from the gateway,
 		// so it requires the assertion there too; signing in stays open.

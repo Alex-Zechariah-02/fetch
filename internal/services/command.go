@@ -38,6 +38,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	ordersURL := flags.String("orders", "", "Orders internal HTTP origin")
 	signingFile := flags.String("signing-settings", "", "Accounts signing settings file")
 	protection := flags.String("local-security", "", "built-in protection: check tokens, roles, blocked accounts, rates and bodies here, with the trusted keys and blocked list in this folder and the security log written there")
+	trustedProxy := flags.String("local-security-trusted-proxy", "", "literal IP address of the proxy whose X-Forwarded-For header built-in protection trusts; empty trusts none")
 	var storage guard.Storage
 	flags.StringVar(&storage.Archive, "local-security-archive", "", "folder rotated security log files are compressed into (default: archive in the -local-security folder)")
 	flags.Int64Var(&storage.ArchiveBytes, "local-security-archive-bytes", guard.DefaultArchiveBytes, "size bound of this API's archived security log files; the oldest is deleted after a record of it")
@@ -106,7 +107,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	if err != nil {
 		return err
 	}
-	service, err := New(Config{Name: name, Keys: keys, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection, Storage: storage, GatewayKey: *gatewayKey, Measure: *measure})
+	service, err := New(Config{Name: name, Keys: keys, InventoryURL: *inventoryURL, OrdersURL: *ordersURL, SigningSettingsFile: *signingFile, Protection: *protection, TrustedProxy: *trustedProxy, Storage: storage, GatewayKey: *gatewayKey, Measure: *measure})
 	if err != nil {
 		return err
 	}

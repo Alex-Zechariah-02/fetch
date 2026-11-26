@@ -47,8 +47,8 @@ go run ./cmd/demo block -local [-unblock] cust-002
 
 ### How it runs
 
-- The demo process only routes each API path to its service with the caller's token, and names the caller in `X-Forwarded-For`.
-- An API trusts that header only from a peer on the same host (the demo process), so its public limits count each visitor; any other peer counts as itself.
+- The demo process only routes each API path to its service with the caller's token, dials the services from loopback address `127.0.0.3` and names the caller in `X-Forwarded-For`.
+- An API trusts `X-Forwarded-For` only from the address given by `-local-security-trusted-proxy` (`127.0.0.3` under `demo up -local`, empty by default so no peer is trusted), so its public limits count each visitor; any other peer counts as itself. Known limit: another process on the same host could choose `127.0.0.3` as its source address.
 - Each run makes a new folder `local` in the demo home with a new signing key, the public key file every API trusts (`keys.json`), an empty `blocked.json` and the security logs.
 - `block -local` replaces `blocked.json` whole and then each running API's list through its control listener; every API is tried and each one that did not take the list is named.
 - An API writes each list it takes to `blocked.json` (a new file renamed over the old, then synced) before it is in force, so an API restarted within a run keeps it; the next `up -local` starts a new folder with no blocked account.

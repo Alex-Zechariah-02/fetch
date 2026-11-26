@@ -1,5 +1,5 @@
 // The client a request counts for: the direct peer, or the visitor the
-// demo's own proxy on this host names; and the rate key of that client, an
+// configured trusted proxy names; and the rate key of that client, an
 // IPv6 address cut to its /64 as the gateway's default ipv6_rate_prefix does.
 
 package guard
@@ -11,10 +11,10 @@ import (
 )
 
 // clientOf is the client a request counts for: the direct peer, or, when
-// the peer is on this host (the demo's own proxy in front of the APIs), the
-// last X-Forwarded-For entry it set. Any other peer cannot name a client.
-func clientOf(peer netip.Addr, header http.Header) netip.Addr {
-	if !peer.IsLoopback() {
+// trusted is valid and matches the peer, the last X-Forwarded-For entry the
+// proxy set. Any other peer cannot name a client.
+func clientOf(peer netip.Addr, header http.Header, trusted netip.Addr) netip.Addr {
+	if !trusted.IsValid() || peer != trusted {
 		return peer
 	}
 	values := header.Values("X-Forwarded-For")
@@ -26,7 +26,7 @@ func clientOf(peer netip.Addr, header http.Header) netip.Addr {
 	last := values[len(values)-1]
 	last = last[strings.LastIndexByte(last, ',')+1:]
 	named, err := netip.ParseAddr(strings.TrimSpace(last))
-	if err != nil {
+	if err != nil || named.Zone() != "" {
 		return peer
 	}
 	return named.Unmap()

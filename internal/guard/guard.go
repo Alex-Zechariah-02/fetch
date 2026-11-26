@@ -55,16 +55,20 @@ type Config struct {
 	// Storage is the security log's archive; zero values take the
 	// defaults (withDefaults).
 	Storage Storage
+	// TrustedProxy is the literal IP address of the proxy whose
+	// X-Forwarded-For header is trusted; empty trusts no peer.
+	TrustedProxy string
 }
 
 // Guard holds one API's keys, table, counters, blocked list and log.
 type Guard struct {
-	api     string
-	keys    map[string]*rsa.PublicKey
-	table   *table
-	roles   []string
-	limiter *limiter
-	blocked atomic.Pointer[map[string]bool]
+	api          string
+	trustedProxy netip.Addr
+	keys         map[string]*rsa.PublicKey
+	table        *table
+	roles        []string
+	limiter      *limiter
+	blocked      atomic.Pointer[map[string]bool]
 	// blockedPath is the settings folder's list, rewritten by each
 	// replacement under replacing.
 	blockedPath string
@@ -89,7 +93,15 @@ func New(cfg Config) (*Guard, error) {
 	if err != nil {
 		return nil, err
 	}
-	g := &Guard{api: cfg.API, table: t, roles: slices.Clone(cfg.Roles), limiter: newLimiter(), keys: map[string]*rsa.PublicKey{}, blockedPath: filepath.Join(cfg.Dir, BlockedFile)}
+	var trustedProxy netip.Addr
+	if cfg.TrustedProxy != "" {
+		addr, err := netip.ParseAddr(cfg.TrustedProxy)
+		if err != nil || addr.Zone() != "" {
+			return nil, fmt.Errorf("trusted proxy %q: literal IP address required", cfg.TrustedProxy)
+		}
+		trustedProxy = addr.Unmap()
+	}
+	g := &Guard{api: cfg.API, trustedProxy: trustedProxy, table: t, roles: slices.Clone(cfg.Roles), limiter: newLimiter(), keys: map[string]*rsa.PublicKey{}, blockedPath: filepath.Join(cfg.Dir, BlockedFile)}
 	g.ids.prefix = newIdentifiers().prefix
 	var keys []Key
 	// One key at least, so tokens can verify; 64 bounds the key files read at startup.
@@ -199,7 +211,7 @@ func (g *Guard) summarised(c *check, status int, code, reason string) {
 func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	c := &check{w: w, log: g.log, started: time.Now(), record: record{RequestID: g.ids.issue(), API: g.api, Method: r.Method, Path: r.URL.Path}}
 	if peer, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
-		c.client = clientOf(peer.Addr().Unmap(), r.Header)
+		c.client = clientOf(peer.Addr().Unmap(), r.Header, g.trustedProxy)
 		c.record.Client = c.client.String()
 	}
 	w.Header().Set("X-Request-Id", c.record.RequestID)

@@ -102,22 +102,40 @@ func serveFetch(ctx context.Context, dir string, listener net.Listener, handler 
 	}
 }
 
+// localProxyAddress is the loopback source address the demo's API router dials
+// the services from in built-in protection mode, so the services trust
+// X-Forwarded-For from it and not from any other loopback client.
+const localProxyAddress = "127.0.0.3"
+
 // apiRouter sends the API paths the shop calls to their services, with the
 // same split as the shop's development proxy, and sends every other path to
 // site, the shop. rewrite, when not nil, changes each forwarded request.
 func apiRouter(site http.Handler, rewrite func(*http.Request)) http.Handler {
+	dialer := &net.Dialer{
+		LocalAddr: &net.TCPAddr{IP: net.ParseIP(localProxyAddress)},
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	transport := &http.Transport{
+		DialContext:         dialer.DialContext,
+		MaxIdleConnsPerHost: 256,
+		IdleConnTimeout:     90 * time.Second,
+	}
 	proxies := map[string]http.Handler{}
 	for _, service := range fetchServices {
 		target := &url.URL{Scheme: "http", Host: service.listen}
-		proxies[service.name] = &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
-			r.SetURL(target)
-			// The APIs see this proxy as their peer; it names the visitor
-			// so built-in protection can count each one separately.
-			r.SetXForwarded()
-			if rewrite != nil {
-				rewrite(r.Out)
-			}
-		}}
+		proxies[service.name] = &httputil.ReverseProxy{
+			Transport: transport,
+			Rewrite: func(r *httputil.ProxyRequest) {
+				r.SetURL(target)
+				// The APIs see this proxy as their peer; it names the visitor
+				// so built-in protection can count each one separately.
+				r.SetXForwarded()
+				if rewrite != nil {
+					rewrite(r.Out)
+				}
+			},
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if proxy, ok := proxies[apiOf(r.URL.Path)]; ok {

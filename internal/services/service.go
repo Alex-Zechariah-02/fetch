@@ -30,6 +30,9 @@ type Config struct {
 	// Protection is the settings folder of built-in protection; empty runs
 	// the service behind a gateway, trusting its identity headers.
 	Protection string
+	// TrustedProxy is the literal IP address of the proxy whose
+	// X-Forwarded-For header built-in protection trusts; empty trusts none.
+	TrustedProxy string
 	// Storage is where built-in protection archives its security log.
 	Storage guard.Storage
 	// GatewayKey is the file of the gateway's public keys; set, every API
@@ -167,7 +170,7 @@ func New(cfg Config) (*Service, error) {
 		s.gateway = gateway
 	}
 	if cfg.Protection != "" {
-		g, err := guard.New(guard.Config{Dir: cfg.Protection, API: cfg.Name, Operations: operationsOf(cfg.Name), Roles: Roles, Storage: cfg.Storage})
+		g, err := guard.New(guard.Config{Dir: cfg.Protection, API: cfg.Name, Operations: operationsOf(cfg.Name), Roles: Roles, Storage: cfg.Storage, TrustedProxy: cfg.TrustedProxy})
 		if err != nil {
 			return nil, fmt.Errorf("built-in protection: %w", err)
 		}
