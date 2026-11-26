@@ -34,3 +34,26 @@ func TestGatewayKeySetMustBeTrusted(t *testing.T) {
 		t.Errorf("a trusted key set without keys: %v", err)
 	}
 }
+
+func TestPrivateServiceKeyMustBeOwnerOnly(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "orders.key")
+	if err := os.WriteFile(keyPath, []byte(strings.Repeat("k", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []os.FileMode{0o640, 0o604} {
+		if err := os.Chmod(keyPath, mode); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadKeys(dir, "inventory"); err == nil || !strings.Contains(err.Error(), "readable by its owner only") {
+			t.Errorf("private key with mode %o: %v", mode, err)
+		}
+	}
+	if err := os.Chmod(keyPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadKeys(dir, "inventory"); err != nil {
+		t.Fatalf("owner-only private key refused: %v", err)
+	}
+}
