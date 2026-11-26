@@ -29,6 +29,7 @@ import (
 
 	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 	"github.com/go-jose/go-jose/v4"
+	josejson "github.com/go-jose/go-jose/v4/json"
 )
 
 const (
@@ -172,7 +173,10 @@ func (a *assertions) verify(token string) ([]byte, error) {
 		return nil, errors.New("not a compact assertion")
 	}
 	var fields map[string]any
-	if json.Unmarshal(decoded, &fields) != nil || fields["crit"] != nil {
+	if josejson.Unmarshal(decoded, &fields) != nil || fields == nil {
+		return nil, errors.New("not a compact assertion")
+	}
+	if _, hasCrit := fields["crit"]; hasCrit {
 		return nil, errors.New("not a compact assertion")
 	}
 	kid, _ := fields["kid"].(string)
@@ -247,7 +251,7 @@ func (a *assertions) admit(r *http.Request, now time.Time) error {
 		IssuedAt int64    `json:"iat"`
 		Expires  int64    `json:"exp"`
 	}
-	if json.Unmarshal(payload, &claims) != nil || claims.Issuer != assertionIssuer || claims.Audience != a.audience {
+	if josejson.Unmarshal(payload, &claims) != nil || claims.Issuer != assertionIssuer || claims.Audience != a.audience {
 		return errors.New("another issuer or audience")
 	}
 	// The gateway signed this one request: on any other method or path the

@@ -9,10 +9,14 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -144,5 +148,61 @@ func TestServiceRequiresGatewayAssertion(t *testing.T) {
 	accounts.ServeHTTP(w, login)
 	if w.Code != 200 {
 		t.Errorf("login without an assertion: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestAssertionRefusesCritNullAndDuplicateMembers(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := json.Marshal(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "g1", Algorithm: "ES256", Use: "sig"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "keys.json")
+	if err := os.WriteFile(keyFile, set, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newService(t, Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders, GatewayKey: keyFile})
+
+	signRaw := func(headerJSON, payloadJSON string) string {
+		h := base64.RawURLEncoding.EncodeToString([]byte(headerJSON))
+		p := base64.RawURLEncoding.EncodeToString([]byte(payloadJSON))
+		input := h + "." + p
+		sum := sha256.Sum256([]byte(input))
+		r, sv, err := ecdsa.Sign(rand.Reader, key, sum[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		sig := make([]byte, 64)
+		r.FillBytes(sig[:32])
+		sv.FillBytes(sig[32:])
+		return input + "." + base64.RawURLEncoding.EncodeToString(sig)
+	}
+	now := time.Now().Unix()
+	validHdr := `{"alg":"ES256","kid":"g1"}`
+	validPay := fmt.Sprintf(`{"iss":"apiward","aud":"support","sub":"cust-001","roles":["CUSTOMER"],"method":"GET","path":"/support/mine","iat":%d,"exp":%d,"jti":"r1"}`, now, now+30)
+	dupPay := fmt.Sprintf(`{"iss":"apiward","aud":"support","sub":"cust-001","sub":"cust-002","roles":["CUSTOMER"],"method":"GET","path":"/support/mine","iat":%d,"exp":%d,"jti":"r1"}`, now, now+30)
+
+	cases := []struct {
+		name, hdr, pay string
+		want           int
+	}{
+		{"valid", validHdr, validPay, http.StatusOK},
+		{"crit null", `{"alg":"ES256","kid":"g1","crit":null}`, validPay, http.StatusUnauthorized},
+		{"duplicate header member", `{"alg":"ES256","kid":"g1","kid":"g1"}`, validPay, http.StatusUnauthorized},
+		{"duplicate payload member", validHdr, dupPay, http.StatusUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/support/mine", nil)
+			req.Header.Set("X-Gateway-Assertion", signRaw(tc.hdr, tc.pay))
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("%s: status=%d, want %d (body=%s)", tc.name, rec.Code, tc.want, rec.Body.String())
+			}
+		})
 	}
 }
