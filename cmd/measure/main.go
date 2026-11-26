@@ -36,7 +36,14 @@ const (
 )
 
 // warmupRounds are measured but not kept, one per condition order.
-const warmupRounds = 3
+const (
+	warmupRounds  = 3
+	maxSamples    = 50
+	maxOffset     = 50_000
+	minConditions = 2
+	loginLimit    = 64 << 10
+	walletLimit   = 4 << 10
+)
 
 type latency struct {
 	MeanMS float64 `json:"mean_ms"`
@@ -85,7 +92,7 @@ func run(args []string, output io.Writer) error {
 	}
 	// 50 rounds and the warm-ups stay under the wallet's 60 calls a minute an
 	// account; offset 50000 keeps the highest port (9505) below 65536.
-	if flags.NArg() != 0 || *samples < 1 || *samples > 50 || *builtin < -1 || *builtin > 50000 {
+	if flags.NArg() != 0 || *samples < 1 || *samples > maxSamples || *builtin < -1 || *builtin > maxOffset {
 		return errors.New("use 1 to 50 samples, a built-in offset of -1 to 50000 and no positional arguments")
 	}
 	email := ""
@@ -157,12 +164,12 @@ func login(client *http.Client, origin, email string) (string, error) {
 	}
 	// A sign-in answer is a token and a profile; 64 KiB (one byte more read
 	// to see an overrun) bounds a wrong service's reply.
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, 65537))
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, loginLimit+1))
 	response.Body.Close()
 	var reply struct {
 		Token string `json:"token"`
 	}
-	if readErr != nil || len(body) > 65536 || response.StatusCode != 200 || json.Unmarshal(body, &reply) != nil || reply.Token == "" {
+	if readErr != nil || len(body) > loginLimit || response.StatusCode != 200 || json.Unmarshal(body, &reply) != nil || reply.Token == "" {
 		return "", errors.New("Accounts login failed; no measurement emitted")
 	}
 	return reply.Token, nil
@@ -171,7 +178,7 @@ func login(client *http.Client, origin, email string) (string, error) {
 // measure times one wallet read per condition per round, starting each round
 // with the next condition in turn so no condition always goes first.
 func measure(client *http.Client, conditions []condition, subject string, samples int) (measurement, error) {
-	if samples < 1 || samples > 50 || len(conditions) < 2 {
+	if samples < 1 || samples > maxSamples || len(conditions) < minConditions {
 		return measurement{}, errors.New("sample count is outside 1 to 50 or fewer than two conditions")
 	}
 	clock, err := newSampleClock()
@@ -235,7 +242,7 @@ func wallet(client *http.Client, c condition, subject string, clock sampleClock)
 		return 0, 0, fmt.Errorf("wallet request (%s) did not answer: %w", c.name, err)
 	}
 	// A wallet answer is one balance; above 4 KiB it is not the wallet.
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, 4097))
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, walletLimit+1))
 	closeErr := response.Body.Close()
 	ended, clockErr := clock.read()
 	if clockErr != nil {
@@ -245,7 +252,7 @@ func wallet(client *http.Client, c condition, subject string, clock sampleClock)
 		return 0, 0, errors.New("measurement clock did not advance; no measurement emitted")
 	}
 	elapsed := float64(ended-started) * 1000 / clock.frequency
-	if readErr != nil || closeErr != nil || len(body) > 4096 || response.StatusCode != 200 || response.Header.Get("X-Service") != "orders" || c.token != "" && response.Header.Get("X-Request-Id") == "" {
+	if readErr != nil || closeErr != nil || len(body) > walletLimit || response.StatusCode != 200 || response.Header.Get("X-Service") != "orders" || c.token != "" && response.Header.Get("X-Request-Id") == "" {
 		return 0, 0, fmt.Errorf("wallet request (%s) failed or had an invalid service response (status %d); no measurement emitted", c.name, response.StatusCode)
 	}
 	var reply struct {

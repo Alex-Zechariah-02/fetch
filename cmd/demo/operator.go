@@ -22,6 +22,12 @@ import (
 	"time"
 )
 
+const (
+	loginLimit = 64 << 10
+	drainLimit = 1 << 20
+	maxFlood   = 10_000
+)
+
 func accountLogin(origin, email string) (string, time.Time, error) {
 	// Five seconds: an Accounts that does not answer fails the sign-in instead of hanging.
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: refuseRedirect}
@@ -56,7 +62,7 @@ func loginWithClient(client *http.Client, origin, email, visitor string) (string
 		return "", time.Time{}, fmt.Errorf("Accounts refused the sign-in (status %d)", response.StatusCode)
 	}
 	// At most 64 KiB of a sign-in reply is decoded; a cut-off answer fails the sign-in.
-	if err := json.NewDecoder(io.LimitReader(response.Body, 65536)).Decode(&reply); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, loginLimit)).Decode(&reply); err != nil {
 		return "", time.Time{}, fmt.Errorf("Accounts answered the sign-in with no readable reply: %w", err)
 	}
 	if reply.Token == "" || reply.Expires.IsZero() {
@@ -89,7 +95,7 @@ func runAttack(args []string, defaultOrigin string) error {
 	if *scenario != "flood-search" && *scenario != "flood-login" && *scenario != "flood-orders" {
 		return errors.New("choose flood-search, flood-login or flood-orders")
 	}
-	if *count < 1 || *count > 10000 {
+	if *count < 1 || *count > maxFlood {
 		return errors.New("use a count from 1 to 10000")
 	}
 	var client *http.Client
@@ -149,7 +155,7 @@ func runAttack(args []string, defaultOrigin string) error {
 			return err
 		}
 		// The drain stops at 1 MiB, so a huge answer is not read past that; its status counts.
-		_, readErr := io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+		_, readErr := io.Copy(io.Discard, io.LimitReader(response.Body, drainLimit))
 		response.Body.Close()
 		if readErr != nil {
 			return readErr

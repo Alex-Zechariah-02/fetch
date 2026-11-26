@@ -117,13 +117,20 @@ func writeFolders(out string, folders map[string]map[string][]byte) (err error) 
 	return nil
 }
 
+// Certificate subject-name and DNS length bounds.
+const (
+	maxNames = 8
+	maxDNS   = 253
+	maxLabel = 63
+)
+
 // hostNames splits the gateway's comma-separated addresses and DNS names.
 func hostNames(list string) ([]net.IP, []string, error) {
 	var ips []net.IP
 	var dns []string
 	names := strings.Split(list, ",")
 	// 8 names is this tool's own ceiling, keeping the data certificate's subject list short.
-	if list == "" || len(names) > 8 {
+	if list == "" || len(names) > maxNames {
 		return nil, nil, errors.New("-gateway takes 1 to 8 IP addresses or DNS names, comma-separated")
 	}
 	for _, name := range names {
@@ -146,12 +153,12 @@ func hostNames(list string) ([]net.IP, []string, error) {
 // isDNSName accepts lower-case labels of letters, digits and '-', joined by dots.
 func isDNSName(name string) bool {
 	// 253 bytes: the longest DNS name, so a longer string cannot go in a certificate.
-	if name == "" || len(name) > 253 {
+	if name == "" || len(name) > maxDNS {
 		return false
 	}
 	for label := range strings.SplitSeq(name, ".") {
 		// 63 bytes per label and no hyphens at its edges: the shape DNS allows.
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+		if label == "" || len(label) > maxLabel || label[0] == '-' || label[len(label)-1] == '-' {
 			return false
 		}
 		for _, c := range label {

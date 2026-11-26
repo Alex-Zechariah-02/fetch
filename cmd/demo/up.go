@@ -217,6 +217,11 @@ func readLineFrom(r *bufio.Reader) (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
+const (
+	minPassword = 15
+	maxPassword = 256
+)
+
 // choosePassword asks for a new password twice. The gateway decides whether
 // it is acceptable; the length check here only saves a failed enrolment.
 func choosePassword() (string, error) {
@@ -234,7 +239,7 @@ func choosePasswordFrom(r *bufio.Reader) (string, error) {
 			return "", err
 		}
 		switch {
-		case len(first) < 15 || len(first) > 256 || !utf8.ValidString(first):
+		case len(first) < minPassword || len(first) > maxPassword || !utf8.ValidString(first):
 			fmt.Println("Use 15 to 256 bytes. A phrase of at least 15 plain characters works.")
 		case first != second:
 			fmt.Println("The two passwords differ. Please enter them again.")
