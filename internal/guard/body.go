@@ -53,6 +53,9 @@ func readBody(r *http.Request, rule *rule) *refusal {
 	if !jsonMedia(r.Header.Values("Content-Type")) {
 		return &refusal{http.StatusUnsupportedMediaType, "unsupported_media_type", "media_type"}
 	}
+	if !identityEncoding(r.Header.Values("Content-Encoding")) {
+		return &refusal{http.StatusUnsupportedMediaType, "unsupported_media_type", "content_encoding"}
+	}
 	// A declared length sizes the buffer once; an undeclared one grows to the limit at most.
 	buffer := bytes.NewBuffer(make([]byte, 0, max(r.ContentLength, 512)))
 	if _, err := buffer.ReadFrom(io.LimitReader(r.Body, limit+1)); err != nil {
@@ -96,6 +99,15 @@ func jsonMedia(fields []string) bool {
 		}
 	}
 	return true
+}
+
+// identityEncoding accepts an absent Content-Encoding field or a single field
+// naming only "identity" (case-insensitive).
+func identityEncoding(fields []string) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	return len(fields) == 1 && strings.EqualFold(strings.Trim(fields[0], " \t"), "identity")
 }
 
 // decodeJSON decodes exactly one JSON value into the form the schema library

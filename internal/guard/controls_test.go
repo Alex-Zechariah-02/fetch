@@ -183,3 +183,67 @@ func TestGuardAbsoluteFormTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestGuardEncodedJSONBodyRefused415(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orders-security.log")
+	log, err := openLog(path, Storage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.close()
+	table, err := newTable([]Operation{
+		{ID: "note", API: "orders", Method: http.MethodPost, Target: "/orders/note", Count: 60, Window: time.Minute, MaxBytes: 1024, Schema: map[string]any{"type": "object"}},
+		{ID: "ping", API: "orders", Method: http.MethodGet, Target: "/ping", Count: 60, Window: time.Minute},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &Guard{api: "orders", log: log, table: table, limiter: newLimiter(), blockedPath: filepath.Join(dir, BlockedFile)}
+	empty := map[string]bool{}
+	g.blocked.Store(&empty)
+
+	reached := 0
+	handler := g.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached++
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, tc := range []struct {
+		name      string
+		encodings []string
+		want      int
+	}{
+		{"absent", nil, http.StatusOK},
+		{"identity", []string{"identity"}, http.StatusOK},
+		{"identity uppercase", []string{"IDENTITY"}, http.StatusOK},
+		{"gzip", []string{"gzip"}, http.StatusUnsupportedMediaType},
+		{"identity and gzip", []string{"identity, gzip"}, http.StatusUnsupportedMediaType},
+		{"two headers", []string{"identity", "identity"}, http.StatusUnsupportedMediaType},
+		{"empty header", []string{""}, http.StatusUnsupportedMediaType},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := reached
+			r := httptest.NewRequest(http.MethodPost, "/orders/note", strings.NewReader(`{"x":"ok"}`))
+			r.Header.Set("Content-Type", "application/json")
+			for _, v := range tc.encodings {
+				r.Header.Add("Content-Encoding", v)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("%s: status=%d, want %d (body=%s)", tc.name, w.Code, tc.want, w.Body.String())
+			}
+			if tc.want != http.StatusOK && reached != before {
+				t.Fatalf("%s: handler reached despite refusal", tc.name)
+			}
+		})
+	}
+	// An operation without a body check is unchanged.
+	r := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	r.Header.Set("Content-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bodyless operation with Content-Encoding: status=%d, want 200", w.Code)
+	}
+}
