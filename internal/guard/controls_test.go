@@ -238,7 +238,6 @@ func TestGuardEncodedJSONBodyRefused415(t *testing.T) {
 			}
 		})
 	}
-	// An operation without a body check is unchanged.
 	r := httptest.NewRequest(http.MethodGet, "/ping", nil)
 	r.Header.Set("Content-Encoding", "gzip")
 	w := httptest.NewRecorder()

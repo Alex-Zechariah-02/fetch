@@ -136,8 +136,6 @@ func (g *Guard) Close() {
 	g.log.close()
 }
 
-// readFile reads at most limit bytes of a regular, trusted file at path,
-// refusing a longer file or one writable by another local account.
 func readFile(path string, limit int64) ([]byte, error) {
 	return trusted.ReadBounded(path, limit, trusted.Trusted)
 }

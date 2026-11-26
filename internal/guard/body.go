@@ -101,8 +101,6 @@ func jsonMedia(fields []string) bool {
 	return true
 }
 
-// identityEncoding accepts an absent Content-Encoding field or a single field
-// naming only "identity" (case-insensitive).
 func identityEncoding(fields []string) bool {
 	if len(fields) == 0 {
 		return true

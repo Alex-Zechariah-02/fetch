@@ -1,6 +1,6 @@
 // Bearer token checks: the Accounts public keys by key ID, and the RS256
 // token profile the gateway applies (header members, issuer, audience,
-// subject, expiry, not-before and roles), with 60 s clock leeway.
+// subject, expiry, not-before and roles), with a clock leeway.
 
 package guard
 
@@ -162,7 +162,7 @@ func checkHeader(segment string) (string, string) {
 const clockLeeway = 60 * time.Second
 
 // checkClaims applies the claim profile to a verified payload: the token is
-// valid before "exp" and from "nbf" onwards (RFC 7519), with 60 s clock leeway.
+// valid before "exp" and from "nbf" onwards (RFC 7519), with clockLeeway.
 func checkClaims(payload []byte, now time.Time) (identity, string) {
 	var claims map[string]any
 	if josejson.Unmarshal(payload, &claims) != nil || claims == nil {
