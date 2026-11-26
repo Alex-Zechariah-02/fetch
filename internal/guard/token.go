@@ -36,6 +36,9 @@ const (
 	maxSubject = 128
 	// Far-future exp and nbf values are refused, so a token's validity has a ceiling.
 	maxNumericDate = 253402300799 // 9999-12-31T23:59:59Z
+	// minRSABits is the smallest standard RSA key; maxRSABits caps verify cost.
+	minRSABits = 2048
+	maxRSABits = 8192
 )
 
 // Key is a trusted Accounts signing key: its key ID and public key file.
@@ -62,8 +65,7 @@ func parseKey(data []byte) (*rsa.PublicKey, error) {
 		return nil, err
 	}
 	key, ok := parsed.(*rsa.PublicKey)
-	// 2048 bits is the smallest standard RSA key; 8192 caps the cost of each verify.
-	if !ok || key.N.BitLen() < 2048 || key.N.BitLen() > 8192 {
+	if !ok || key.N.BitLen() < minRSABits || key.N.BitLen() > maxRSABits {
 		return nil, errors.New("an RSA public key of 2048 to 8192 bits is required")
 	}
 	return key, nil
