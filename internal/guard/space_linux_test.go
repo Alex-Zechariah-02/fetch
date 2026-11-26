@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"sync/atomic"
 	"testing"
 )
 
@@ -16,19 +17,20 @@ import (
 // tried again, and is refused when the retry fails too.
 func TestLogFullDiskReleasesReserve(t *testing.T) {
 	t.Parallel()
-	l, _ := archived(t, Storage{ArchiveBytes: 1 << 30, Reserve: 64 << 10})
+	var opens atomic.Int32
+	opener := func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		if opens.Add(1) == 1 {
+			return os.OpenFile(name, flag, perm)
+		}
+		return os.OpenFile("/dev/full", os.O_RDWR, 0)
+	}
+	l, _ := archived(t, Storage{ArchiveBytes: 1 << 30, Reserve: 64 << 10}, withLimit(1), withOpener(opener))
 	defer l.close()
 	waitUntil(t, "the reserve", func() bool { _, err := os.Stat(l.reservePath); return err == nil })
+	// The first admission exceeds the 1-byte limit and rotates onto /dev/full.
 	if err := admit(l, "GET"); err != nil {
 		t.Fatal(err)
 	}
-	full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	active := l.file
-	t.Cleanup(func() { active.Close() })
-	l.file = full // the writer is idle between batches
 	if err := admit(l, "GET"); err == nil {
 		t.Fatal("a record admitted on a full disk")
 	}

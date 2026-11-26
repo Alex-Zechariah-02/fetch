@@ -69,48 +69,74 @@ func TestLogReportsLossAtClose(t *testing.T) {
 
 // A batch that brings the active file to exactly its size bound rotates it;
 // one that stays below does not. Record lengths vary with their time, so
-// each write aims at the bound with the last record's length.
+// each fresh log aims its configured bound at two records.
 func TestLogRotatesAtItsBound(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	l, err := openLog(filepath.Join(dir, "orders-security.log"), Storage{})
+	probeDir := t.TempDir()
+	probe, err := openLog(filepath.Join(probeDir, "orders-security.log"), Storage{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.close()
-	if err := admit(l, "GET"); err != nil {
+	if err := admit(probe, "GET"); err != nil {
+		probe.close()
 		t.Fatal(err)
 	}
-	line := l.written.Load()
+	line := probe.written.Load()
+	probe.close()
+
 	for range 20 {
-		start := l.written.Load()
-		bound := start + line
-		l.limit = bound // the writer is idle between batches
-		if err := admit(l, "GET"); err != nil {
-			t.Fatal(err)
-		}
-		rotated, err := listRotated(dir, "orders-security.log")
+		dir := t.TempDir()
+		bound := 2 * line
+		l, err := openLog(filepath.Join(dir, "orders-security.log"), Storage{}, withLimit(bound))
 		if err != nil {
 			t.Fatal(err)
 		}
+		if err := admit(l, "GET"); err != nil {
+			l.close()
+			t.Fatal(err)
+		}
+		first := l.written.Load()
+		if first >= bound {
+			l.close()
+			line = first
+			continue
+		}
+		rotated, err := listRotated(dir, "orders-security.log")
+		if err != nil {
+			l.close()
+			t.Fatal(err)
+		}
+		if len(rotated) != 0 {
+			l.close()
+			t.Fatalf("the active file rotated at %d bytes, below its bound of %d", first, bound)
+		}
+		if err := admit(l, "GET"); err != nil {
+			l.close()
+			t.Fatal(err)
+		}
+		rotated, err = listRotated(dir, "orders-security.log")
+		if err != nil {
+			l.close()
+			t.Fatal(err)
+		}
 		if len(rotated) == 0 {
-			if l.written.Load() >= bound {
+			got := l.written.Load()
+			l.close()
+			if got >= bound {
 				t.Fatalf("the active file reached its bound of %d bytes without rotating", bound)
 			}
-			line = l.written.Load() - start
+			line = got - first
 			continue
 		}
 		info, err := os.Stat(rotated[0].path())
+		l.close()
 		if err != nil {
 			t.Fatal(err)
 		}
 		if info.Size() == bound {
 			return
 		}
-		if err := os.Remove(rotated[0].path()); err != nil {
-			t.Fatal(err)
-		}
-		line = info.Size() - start
+		line = info.Size() - first
 	}
 	t.Fatal("no batch ended exactly at the bound in 20 tries")
 }

@@ -45,7 +45,11 @@ func (l *securityLog) keepActive(err error) error {
 // open continues the active file at its logical end, creating it private to
 // this user; a zero tail a stopped process left is overwritten in place.
 func (l *securityLog) open() error {
-	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_RDWR, 0o600)
+	openFn := l.openFile
+	if openFn == nil {
+		openFn = os.OpenFile
+	}
+	file, err := openFn(l.path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}

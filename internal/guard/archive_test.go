@@ -4,6 +4,7 @@
 package guard
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -72,5 +73,17 @@ func TestArchiverFailureSyncsUsabilityState(t *testing.T) {
 	}
 	if r.note(true) {
 		t.Fatal("note(true) reported a second change when already usable")
+	}
+}
+
+// An opener failure stops openLog before starting background goroutines.
+func TestLogOpenerErrorFailsOpen(t *testing.T) {
+	t.Parallel()
+	want := errors.New("opener refused")
+	_, err := openLog(filepath.Join(t.TempDir(), "orders-security.log"), Storage{}, withOpener(func(string, int, os.FileMode) (*os.File, error) {
+		return nil, want
+	}))
+	if !errors.Is(err, want) {
+		t.Fatalf("openLog with failing opener: %v, want %v", err, want)
 	}
 }

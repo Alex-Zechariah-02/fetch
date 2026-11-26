@@ -66,6 +66,7 @@ type securityLog struct {
 	// filled is the file's size on disk: past size it is a synced zero tail.
 	filled     int64
 	limit      int64 // rotation size, maxLogBytes
+	openFile   func(string, int, os.FileMode) (*os.File, error)
 	queue      chan entry
 	evictCh    chan entry
 	buffer     []byte // the last batch's memory, reused; only run uses it
@@ -91,21 +92,31 @@ type securityLog struct {
 type logOption func(*logConfig)
 
 type logConfig struct {
-	pause time.Duration
+	limit    int64
+	pause    time.Duration
+	openFile func(string, int, os.FileMode) (*os.File, error)
+}
+
+func withLimit(bytes int64) logOption {
+	return func(c *logConfig) { c.limit = bytes }
 }
 
 func withReservePause(d time.Duration) logOption {
 	return func(c *logConfig) { c.pause = d }
 }
 
+func withOpener(fn func(string, int, os.FileMode) (*os.File, error)) logOption {
+	return func(c *logConfig) { c.openFile = fn }
+}
+
 // openLog writes to path from its logical end, creating it private to this
 // user, and starts the archiver unless s names no archive folder.
 func openLog(path string, s Storage, opts ...logOption) (*securityLog, error) {
-	cfg := logConfig{pause: defaultReservePause}
+	cfg := logConfig{limit: maxLogBytes, pause: defaultReservePause, openFile: os.OpenFile}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	l := &securityLog{path: path, limit: maxLogBytes, queue: make(chan entry, queueSize), evictCh: make(chan entry, 1), done: make(chan struct{})}
+	l := &securityLog{path: path, limit: cfg.limit, openFile: cfg.openFile, queue: make(chan entry, queueSize), evictCh: make(chan entry, 1), done: make(chan struct{})}
 	if err := l.open(); err != nil {
 		return nil, err
 	}

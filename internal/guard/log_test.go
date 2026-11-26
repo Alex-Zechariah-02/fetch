@@ -27,11 +27,11 @@ func archived(t *testing.T, s Storage, opts ...logOption) (*securityLog, string)
 	if s.MinFree == 0 {
 		s.MinFree = 1 // a developer's full disk must not evict what a test counts
 	}
-	l, err := openLog(filepath.Join(dir, "orders-security.log"), s, opts...)
+	allOpts := append([]logOption{withLimit(512)}, opts...)
+	l, err := openLog(filepath.Join(dir, "orders-security.log"), s, allOpts...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	l.limit = 512
 	return l, dir
 }
 
@@ -173,20 +173,20 @@ func TestLogZeroTail(t *testing.T) {
 func TestLogRotationFailure(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "orders-security.log")
-	l, err := openLog(path, Storage{Refuse: true})
+	const bound = 512
+	l, err := openLog(path, Storage{Refuse: true}, withLimit(bound))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer l.close()
-	l.limit = 512
 	// The folder holds a full set of rotated files already.
 	for i := range logFiles {
 		name := rotatedName(path, time.Now().Add(-time.Duration(i+1)*time.Hour))
-		if err := os.WriteFile(name, make([]byte, 512), 0o600); err != nil {
+		if err := os.WriteFile(name, make([]byte, bound), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for l.size < 2*l.limit-300 {
+	for l.written.Load() < 2*bound-300 {
 		if err := admit(l, "GET"); err != nil {
 			t.Fatalf("a commit while the rotation fails: %v", err)
 		}
