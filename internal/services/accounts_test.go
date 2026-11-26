@@ -125,3 +125,20 @@ func TestAccountsCredentialFailures(t *testing.T) {
 		t.Errorf("a %d-byte login body within the schema refused as too large", len(widest))
 	}
 }
+
+func TestAccountRouteMethodsAndBodies(t *testing.T) {
+	s, _, _ := accountService(t)
+	me := serviceRequest(s, "GET", "/accounts/me", "", "cust-001", "CUSTOMER", "")
+	if me.Code != 200 || !strings.Contains(me.Body.String(), `"user":`) || strings.Contains(me.Body.String(), `"token":`) {
+		t.Fatalf("GET /accounts/me: %d %s", me.Code, me.Body)
+	}
+	refresh := serviceRequest(s, "POST", "/accounts/refresh", "", "cust-001", "CUSTOMER", "")
+	if refresh.Code != 200 || !strings.Contains(refresh.Body.String(), `"token":`) {
+		t.Fatalf("POST /accounts/refresh: %d %s", refresh.Code, refresh.Body)
+	}
+	for _, bad := range [][2]string{{"POST", "/accounts/me"}, {"GET", "/accounts/refresh"}, {"GET", "/accounts/login"}} {
+		if w := serviceRequest(s, bad[0], bad[1], "", "cust-001", "CUSTOMER", ""); w.Code != 404 {
+			t.Errorf("%s %s: status=%d, want 404", bad[0], bad[1], w.Code)
+		}
+	}
+}
