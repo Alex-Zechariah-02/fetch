@@ -69,7 +69,7 @@ func (s *Service) Control(secret []byte) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Service", s.name)
 		values := r.Header.Values("Authorization")
-		if len(secret) < 32 || len(secret) > 4096 || len(values) != 1 || subtle.ConstantTimeCompare([]byte(values[0]), append([]byte("Bearer "), secret...)) != 1 {
+		if len(secret) < minSecret || len(secret) > maxSecret || len(values) != 1 || subtle.ConstantTimeCompare([]byte(values[0]), append([]byte("Bearer "), secret...)) != 1 {
 			writeJSON(w, failure(401, "unauthenticated", "Control authentication is required.", ""))
 			return
 		}

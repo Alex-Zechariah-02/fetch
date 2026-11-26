@@ -18,6 +18,12 @@ import (
 	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 )
 
+// Shared length bounds for control secrets and inter-service keys.
+const (
+	minSecret = 32
+	maxSecret = 4096
+)
+
 // callees maps each calling service to the one service it calls.
 var callees = map[string]string{"orders": "inventory", "reports": "orders", "support": "orders"}
 
@@ -96,8 +102,8 @@ func checkKeys(name string, keys map[string][]byte) error {
 		if !found {
 			return fmt.Errorf("%s takes the keys of %v; the %s key is missing", name, want, key)
 		}
-		if len(value) < 32 || len(value) > 4096 {
-			return fmt.Errorf("the %s key must contain 32 to 4096 bytes", key)
+		if len(value) < minSecret || len(value) > maxSecret {
+			return fmt.Errorf("the %s key must contain %d to %d bytes", key, minSecret, maxSecret)
 		}
 		for _, other := range want[i+1:] {
 			if bytes.Equal(value, keys[other]) {

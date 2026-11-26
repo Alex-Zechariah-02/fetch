@@ -237,12 +237,18 @@ func (d *orders) place(r *http.Request, body []byte, key string) result {
 	return result{status: 201, body: map[string]any{"order": created}, effect: "created " + created.ID}
 }
 
+// Shared order line bounds matching the policy's checkout schema.
+const (
+	maxItems    = 20
+	maxQuantity = 50
+)
+
 // validOrderRequest bounds every field, so a stored order and its receipt
-// stay small: IDs have 7 characters (MER-001), a postcode 5; at most 20
-// lines of at most 50 units keep the subtotal far inside an int64.
+// stay small: IDs have 7 characters (MER-001), a postcode 5; at most maxItems
+// lines of at most maxQuantity units keep the subtotal far inside an int64.
 func validOrderRequest(request orderRequest) bool {
 	if !length(request.Merchant, 7, 7) ||
-		len(request.Items) < 1 || len(request.Items) > 20 ||
+		len(request.Items) < 1 || len(request.Items) > maxItems ||
 		!length(request.Note, 0, 200) ||
 		!length(request.Address.Line1, 1, 100) ||
 		!length(request.Address.Line2, 0, 100) ||
@@ -253,7 +259,7 @@ func validOrderRequest(request orderRequest) bool {
 		return false
 	}
 	for _, line := range request.Items {
-		if !length(line.Item, 7, 7) || line.Quantity < 1 || line.Quantity > 50 {
+		if !length(line.Item, 7, 7) || line.Quantity < 1 || line.Quantity > maxQuantity {
 			return false
 		}
 	}

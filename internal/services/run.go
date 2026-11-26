@@ -53,7 +53,7 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 	if s.guard != nil {
 		defer s.guard.Close()
 	}
-	if len(secret) < 32 || len(secret) > 4096 {
+	if len(secret) < minSecret || len(secret) > maxSecret {
 		return errors.New("control secret must contain 32 to 4096 bytes")
 	}
 	if address, err := netip.ParseAddrPort(control); err != nil || !address.Addr().IsLoopback() {

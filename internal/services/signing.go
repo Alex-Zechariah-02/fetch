@@ -23,6 +23,12 @@ import (
 	"github.com/go-jose/go-jose/v4"
 )
 
+// RSA signing key size bounds in bits.
+const (
+	minRSA = 2048
+	maxRSA = 8192
+)
+
 // stamp tells a file's versions apart: its size and modification time.
 type stamp struct {
 	size     int64
@@ -120,8 +126,7 @@ func loadSigningKey(file string) (signingSettings, *rsa.PrivateKey, error) {
 	default:
 		return settings, nil, errors.New("an RSA private key is required")
 	}
-	// A key outside 2048 to 8192 bits is refused before it can sign a token.
-	if key == nil || key.N.BitLen() < 2048 || key.N.BitLen() > 8192 || key.Validate() != nil {
+	if key == nil || key.N.BitLen() < minRSA || key.N.BitLen() > maxRSA || key.Validate() != nil {
 		return settings, nil, errors.New("an RSA private key of 2048 to 8192 bits is required")
 	}
 	return settings, key, nil
