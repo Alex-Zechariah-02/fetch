@@ -31,7 +31,7 @@ type Ingress struct {
 // client certificate issued by ClientCA; nothing relaxes that requirement.
 func Listen(address string, ingress Ingress) (net.Listener, error) {
 	parsed, err := netip.ParseAddrPort(address)
-	if err != nil || parsed.Addr().IsUnspecified() {
+	if err != nil || parsed.Addr().Unmap().IsUnspecified() {
 		return nil, fmt.Errorf("%q: an API listens on one interface's literal IP address and a port", address)
 	}
 	given := 0

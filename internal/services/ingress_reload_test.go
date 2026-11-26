@@ -157,3 +157,25 @@ func TestIngressCertificateReload(t *testing.T) {
 		t.Fatalf("gen2 lost after bad reload: cn=%q err=%v", cn, err)
 	}
 }
+
+func TestListenRefusesMappedWildcard(t *testing.T) {
+	dir := t.TempDir()
+	ca, cert, key, _, _ := makeTestCAAndPair(t, "wild")
+	certPath := filepath.Join(dir, "srv.pem")
+	keyPath := filepath.Join(dir, "srv.key")
+	caPath := filepath.Join(dir, "ca.pem")
+	for p, b := range map[string][]byte{certPath: cert, keyPath: key, caPath: ca} {
+		if err := os.WriteFile(p, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ing := Ingress{Certificate: certPath, Key: keyPath, ClientCA: caPath}
+	for _, addr := range []string{"0.0.0.0:0", "[::]:0", "[::ffff:0.0.0.0]:0"} {
+		ln, err := Listen(addr, ing)
+		if err == nil {
+			got := ln.Addr().String()
+			ln.Close()
+			t.Fatalf("Listen(%q) succeeded (%s), want unspecified address refused", addr, got)
+		}
+	}
+}
