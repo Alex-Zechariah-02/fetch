@@ -92,3 +92,25 @@ func TestGuardNoSpaceEvictsOneFile(t *testing.T) {
 		t.Fatalf("%d files evicted before the writer tried again, want 1", n)
 	}
 }
+
+func TestMakeReserveNeverTruncatesInPlace(t *testing.T) {
+	dir := t.TempDir()
+	reserve := filepath.Join(dir, "orders-security.reserve")
+	victim := filepath.Join(dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep-me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(victim, reserve+".tmp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeReserve(reserve, 4096); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep-me" {
+		t.Fatalf("makeReserve overwrote linked .tmp target in place: got %d bytes (%q), want \"keep-me\"", len(got), got[:min(len(got), 16)])
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -200,10 +201,14 @@ func (r *archiver) keepReserve() {
 	r.held.Store(held)
 }
 
-// makeReserve writes size zero bytes to path, synced, through a temporary
-// name, so a partial reserve never counts as one.
+// makeReserve writes size zero bytes to path, synced, through a new temporary
+// file, so a partial reserve never counts as one and nothing is truncated in place.
 func makeReserve(path string, size int64) error {
-	file, err := os.OpenFile(path+".tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	temporary := path + ".tmp"
+	if err := os.Remove(temporary); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -214,10 +219,10 @@ func makeReserve(path string, size int64) error {
 		err = file.Sync()
 	}
 	if err = errors.Join(err, file.Close()); err == nil {
-		err = os.Rename(path+".tmp", path)
+		err = os.Rename(temporary, path)
 	}
 	if err != nil {
-		return errors.Join(err, os.Remove(path+".tmp"))
+		return errors.Join(err, os.Remove(temporary))
 	}
 	return syncDir(filepath.Dir(path))
 }
