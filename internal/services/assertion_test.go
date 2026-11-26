@@ -206,3 +206,66 @@ func TestAssertionRefusesCritNullAndDuplicateMembers(t *testing.T) {
 		})
 	}
 }
+
+func TestAssertionSizeAtBound(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := json.Marshal(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{
+		{Key: &key.PublicKey, KeyID: "g12", Algorithm: "ES256", Use: "sig"},
+		{Key: &key.PublicKey, KeyID: "g123", Algorithm: "ES256", Use: "sig"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "keys.json")
+	if err := os.WriteFile(keyFile, set, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newService(t, Config{Name: "support", Keys: testKeys("support"), OrdersURL: unusedOrders, GatewayKey: keyFile, Log: slog.New(slog.DiscardHandler)})
+
+	signSized := func(kid string, payloadBytes int) string {
+		now := time.Now().Unix()
+		prefix := fmt.Sprintf(`{"iss":"apiward","aud":"support","sub":"cust-001","roles":["CUSTOMER"],"method":"GET","path":"/support/mine","iat":%d,"exp":%d,"jti":"`, now, now+30)
+		suffix := `"}`
+		pad := payloadBytes - len(prefix) - len(suffix)
+		if pad < 0 {
+			t.Fatalf("payload target %d too small", payloadBytes)
+		}
+		hdr := fmt.Sprintf(`{"alg":"ES256","kid":%q}`, kid)
+		pay := prefix + strings.Repeat("x", pad) + suffix
+		input := base64.RawURLEncoding.EncodeToString([]byte(hdr)) + "." + base64.RawURLEncoding.EncodeToString([]byte(pay))
+		sum := sha256.Sum256([]byte(input))
+		rv, sv, err := ecdsa.Sign(rand.Reader, key, sum[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		sig := make([]byte, 64)
+		rv.FillBytes(sig[:32])
+		sv.FillBytes(sig[32:])
+		return input + "." + base64.RawURLEncoding.EncodeToString(sig)
+	}
+
+	atBound := signSized("g12", 2979)
+	overBound := signSized("g123", 2978)
+	if len(atBound) != maxAssertion || len(overBound) != maxAssertion+1 {
+		t.Fatalf("assertion lengths = %d and %d, want %d and %d", len(atBound), len(overBound), maxAssertion, maxAssertion+1)
+	}
+	for _, tc := range []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{"at bound", atBound, http.StatusOK},
+		{"one byte over", overBound, http.StatusUnauthorized},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/support/mine", nil)
+		req.Header.Set("X-Gateway-Assertion", tc.token)
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Fatalf("%s (%d bytes): status=%d, want %d", tc.name, len(tc.token), rec.Code, tc.want)
+		}
+	}
+}
