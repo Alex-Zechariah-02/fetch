@@ -40,3 +40,37 @@ func TestPlaceRemovesTmpOnRenameFailure(t *testing.T) {
 		t.Fatalf("orphan temporary file remained after rename failure: %v", err)
 	}
 }
+
+// When archiving into the archive folder fails, usability flips to false in
+// one place so a subsequent recovery transition is detected rather than lost.
+func TestArchiverFailureSyncsUsabilityState(t *testing.T) {
+	t.Parallel()
+	live := t.TempDir()
+	archive := t.TempDir()
+	src := filepath.Join(live, "orders-security-2026-01-01T00-00-00.000.log")
+	if err := os.WriteFile(src, []byte(`{"kind":"request.admitted","time":"2026-01-01T00:00:00Z"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Block target in archive so pack fails inside r.archive.
+	if err := os.Mkdir(filepath.Join(archive, filepath.Base(src)+packedSuffix), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l := &securityLog{path: filepath.Join(live, "orders-security.log")}
+	r := newArchiver(l, Storage{Archive: archive})
+	f := logFile{name: filepath.Base(src), dir: live}
+	if err := r.archive(f); err == nil {
+		t.Fatal("archive succeeded over a directory target")
+	}
+	if r.usable.Load() {
+		t.Fatal("usable stayed true after archive failed")
+	}
+	if r.note(false) {
+		t.Fatal("note(false) reported a second change after archive already marked unusable")
+	}
+	if !r.note(true) {
+		t.Fatal("note(true) did not report recovery after archive failure")
+	}
+	if r.note(true) {
+		t.Fatal("note(true) reported a second change when already usable")
+	}
+}

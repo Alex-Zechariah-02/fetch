@@ -39,7 +39,6 @@ type archiver struct {
 	halted                sync.Once
 	ctx                   context.Context
 	cancel                context.CancelFunc
-	failing               bool          // the archive failed at the last pass; archiver only
 	spaceSeen             uint64        // the spaceFails count last answered by an eviction; archiver only
 	released              atomic.Int64  // when the writer last released the general reserve (Unix ns)
 	evictReleased         atomic.Int64  // when the writer last released the eviction reserve (Unix ns)
@@ -149,7 +148,7 @@ func (r *archiver) archive(f logFile) error {
 	}
 	if err != nil {
 		if target == r.dir {
-			r.usable.Store(false)
+			r.note(false)
 		}
 		return err
 	}
@@ -216,14 +215,14 @@ func (r *archiver) probe() bool {
 }
 
 // note publishes the archive's health and reports each change once.
-func (r *archiver) note(usable bool) {
-	r.usable.Store(usable)
-	if usable == r.failing {
-		state := "unavailable; rotated files are compressed in the log folder"
-		if usable {
-			state = "available again"
-		}
-		fmt.Fprintf(os.Stderr, "security log archive folder %s %s\n", r.dir, state)
+func (r *archiver) note(usable bool) bool {
+	if r.usable.Swap(usable) == usable {
+		return false
 	}
-	r.failing = !usable
+	state := "unavailable; rotated files are compressed in the log folder"
+	if usable {
+		state = "available again"
+	}
+	fmt.Fprintf(os.Stderr, "security log archive folder %s %s\n", r.dir, state)
+	return true
 }
