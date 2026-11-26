@@ -49,24 +49,24 @@ type trouble struct {
 // log waits for space, any other failure replaces the active file.
 func (l *securityLog) fail(err error) error {
 	l.tried = time.Now()
+	from := l.currentHealth()
 	if errors.Is(err, errFolderFull) {
-		if l.full.CompareAndSwap(false, true) {
+		if l.moveHealth(from, healthFull) {
 			fmt.Fprintf(os.Stderr, "security log folder full; admission refused until rotated files are moved away: %v\n", err)
 		}
 		return errLogFailed
 	}
 	l.reason, l.since = "sync_failed", time.Now()
-	flag, other := &l.down, &l.noSpace
+	to := healthDown
 	if spaceError(err) {
-		l.reason, flag, other = "storage_space", &l.noSpace, &l.down
+		l.reason, to = "storage_space", healthNoSpace
 	} else {
 		l.suspect, l.suspectEnd = "", l.synced
 	}
-	if flag.CompareAndSwap(false, true) {
+	if l.moveHealth(from, to) && from != to {
 		fmt.Fprintf(os.Stderr, "security log cannot write (%s); admission refused until it can: %v\n", l.reason, err)
 	}
-	other.Store(false)
-	if flag == &l.noSpace {
+	if to == healthNoSpace {
 		l.spaceFails.Add(1)
 		l.archive.signal()
 	}
@@ -77,7 +77,11 @@ func (l *securityLog) fail(err error) error {
 // per retryEvery: a down log replaces its file, then any log that was down
 // or out of space writes log.recovered, which must be synced first.
 func (l *securityLog) ready() bool {
-	if l.full.Load() {
+	state := l.currentHealth()
+	switch state {
+	case healthWriting, healthRotating:
+		return true
+	case healthFull:
 		if time.Since(l.tried) < retryEvery {
 			return false
 		}
@@ -85,36 +89,36 @@ func (l *securityLog) ready() bool {
 		if l.folderFull() {
 			return false
 		}
-		l.full.Store(false)
-	}
-	if !l.down.Load() && !l.noSpace.Load() {
+		l.moveHealth(healthFull, healthWriting)
 		return true
-	}
-	if time.Since(l.tried) < retryEvery {
-		return false
-	}
-	l.tried = time.Now()
-	if l.down.Load() {
-		if err := l.reopen(); err != nil {
-			fmt.Fprintf(os.Stderr, "security log file not replaced yet: %v\n", err)
+	case healthDown, healthNoSpace:
+		if time.Since(l.tried) < retryEvery {
 			return false
 		}
-	}
-	lost := l.lost.Swap(0)
-	r := record{Seq: l.seq.Add(1), Time: time.Now().UTC(), Kind: "log.recovered", Reason: l.reason, File: l.suspect, Offset: l.suspectEnd,
-		Lost: lost, DurationMS: float64(time.Since(l.since)) / float64(time.Millisecond)}
-	if err := l.persist(appendRecord(nil, &r)); err != nil {
-		l.lost.Add(lost)
-		l.fail(err)
+		l.tried = time.Now()
+		if state == healthDown {
+			if err := l.reopen(); err != nil {
+				fmt.Fprintf(os.Stderr, "security log file not replaced yet: %v\n", err)
+				return false
+			}
+		}
+		lost := l.lost.Swap(0)
+		r := record{Seq: l.seq.Add(1), Time: time.Now().UTC(), Kind: "log.recovered", Reason: l.reason, File: l.suspect, Offset: l.suspectEnd,
+			Lost: lost, DurationMS: float64(time.Since(l.since)) / float64(time.Millisecond)}
+		if err := l.persist(appendRecord(nil, &r)); err != nil {
+			l.lost.Add(lost)
+			l.fail(err)
+			return false
+		}
+		if l.moveHealth(state, healthWriting) && state == healthDown {
+			l.recoveries.Add(1)
+		}
+		l.fresh = false
+		fmt.Fprintf(os.Stderr, "security log writing again (%s)\n", l.reason)
+		return true
+	default:
 		return false
 	}
-	if l.down.Swap(false) {
-		l.recoveries.Add(1)
-	}
-	l.noSpace.Store(false)
-	l.fresh = false
-	fmt.Fprintf(os.Stderr, "security log writing again (%s)\n", l.reason)
-	return true
 }
 
 // reopen closes the suspect file and moves it aside (deleting one this
@@ -157,11 +161,6 @@ func (l *securityLog) lose(batch []entry, carried uint64) {
 	l.dropped.Add(n - carried)
 }
 
-// unavailable reports whether the log refuses records now.
-func (l *securityLog) unavailable() bool {
-	return l.down.Load() || l.noSpace.Load() || l.full.Load()
-}
-
 // commitEviction writes and syncs a log.evicted record, using the eviction
 // reserve when the log is refusing admissions for want of space (noSpace).
 // Only eviction records call commitEviction.
@@ -195,12 +194,12 @@ func (l *securityLog) commitEviction(ctx context.Context, r *record) error {
 // Under noSpace it deletes and syncs the eviction reserve first, then writes
 // and syncs the record without clearing noSpace.
 func (l *securityLog) writeEviction(e entry) error {
-	if l.down.Load() || l.full.Load() {
+	if s := l.currentHealth(); s == healthDown || s == healthFull {
 		return errLogFailed
 	}
-	if !l.noSpace.Load() {
+	if l.currentHealth() != healthNoSpace {
 		err := l.write([]entry{e})
-		if err == nil || !l.noSpace.Load() {
+		if err == nil || l.currentHealth() != healthNoSpace {
 			return err
 		}
 	}

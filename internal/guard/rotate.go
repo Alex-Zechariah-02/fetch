@@ -36,8 +36,7 @@ func (l *securityLog) keepActive(err error) error {
 	if reopenErr := l.open(); reopenErr != nil {
 		return l.fail(errors.Join(err, reopenErr))
 	}
-	if !l.rotating {
-		l.rotating = true
+	if l.moveHealth(healthWriting, healthRotating) {
 		fmt.Fprintf(os.Stderr, "security log rotation failed; writing continues to %s and the rotation is retried: %v\n", l.path, err)
 	}
 	return nil
@@ -68,7 +67,7 @@ func (l *securityLog) open() error {
 // has room for another file.
 func (l *securityLog) rotate() error {
 	if l.refuse && l.folderFull() {
-		l.rotating = true
+		l.moveHealth(healthWriting, healthRotating)
 		return errFolderFull
 	}
 	if err := errors.Join(l.trim(), l.file.Close()); err != nil {

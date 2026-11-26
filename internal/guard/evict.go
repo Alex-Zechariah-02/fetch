@@ -74,7 +74,7 @@ func (r *archiver) underPressure(files []logFile) int {
 	fails := r.log.spaceFails.Load()
 	for _, dir := range []string{r.live, r.dir} {
 		d, err := diskOf(dir)
-		full := dir == r.live && r.log.noSpace.Load() && fails != r.spaceSeen
+		full := dir == r.live && r.log.currentHealth() == healthNoSpace && fails != r.spaceSeen
 		if err != nil || !full && !d.below(r.minFree) {
 			continue
 		}

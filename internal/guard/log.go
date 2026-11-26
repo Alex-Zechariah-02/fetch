@@ -64,28 +64,23 @@ type securityLog struct {
 	file *os.File
 	size int64 // bytes of records in the active file: its logical end
 	// filled is the file's size on disk: past size it is a synced zero tail.
-	filled int64
-	limit  int64 // rotation size, maxLogBytes
-	// rotating is set while rotations fail, so the warning is printed once.
-	rotating bool
-	queue    chan entry
-	evictCh  chan entry
-	buffer   []byte // the last batch's memory, reused; only run uses it
-	seq      atomic.Uint64
-	lost     atomic.Uint64 // not yet written in a loss record
-	dropped  atomic.Uint64 // every record lost since start, for the control listener
-	written  atomic.Int64  // bytes in the active file after the last batch
-	// down is set while the active file is being replaced after a failed
-	// write or sync, noSpace while the disk has none, full while the log
-	// folder is at its bound under refuse (recover.go).
-	down, noSpace, full atomic.Bool
-	trouble             // the writer's recovery state
-	archive             *archiver
-	slow                atomic.Int64 // saves that waited longer than slowSave
-	recoveries          atomic.Int64 // active files replaced after a failed write
-	mu                  sync.RWMutex // orders queueing against close
-	closed              bool
-	done                chan struct{}
+	filled     int64
+	limit      int64 // rotation size, maxLogBytes
+	queue      chan entry
+	evictCh    chan entry
+	buffer     []byte // the last batch's memory, reused; only run uses it
+	seq        atomic.Uint64
+	lost       atomic.Uint64 // not yet written in a loss record
+	dropped    atomic.Uint64 // every record lost since start, for the control listener
+	written    atomic.Int64  // bytes in the active file after the last batch
+	health     atomic.Int32  // logHealth state; only moveHealth writes it (health.go)
+	trouble                  // the writer's recovery state
+	archive    *archiver
+	slow       atomic.Int64 // saves that waited longer than slowSave
+	recoveries atomic.Int64 // active files replaced after a failed write
+	mu         sync.RWMutex // orders queueing against close
+	closed     bool
+	done       chan struct{}
 
 	// spaceFails counts writes refused for want of space; the archiver evicts
 	// one file on the log disk for each.
@@ -249,7 +244,9 @@ func (l *securityLog) write(batch []entry) error {
 		if err := l.rotate(); err != nil {
 			return l.keepActive(err)
 		}
-		l.rotating = false
+		if l.currentHealth() == healthRotating {
+			l.moveHealth(healthRotating, healthWriting)
+		}
 	}
 	return nil
 }
