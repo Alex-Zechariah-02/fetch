@@ -179,3 +179,41 @@ func TestListenRefusesMappedWildcard(t *testing.T) {
 		}
 	}
 }
+
+func TestIngressRefusesOversizedClientCA(t *testing.T) {
+	dir := t.TempDir()
+	ca, cert, key, _, _ := makeTestCAAndPair(t, "huge-ca")
+	certPath := filepath.Join(dir, "srv.pem")
+	keyPath := filepath.Join(dir, "srv.key")
+	caPath := filepath.Join(dir, "ca.pem")
+	for p, b := range map[string][]byte{certPath: cert, keyPath: key} {
+		if err := os.WriteFile(p, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	padTo := func(size int) []byte {
+		out := make([]byte, size)
+		copy(out, ca)
+		for i := len(ca); i < size; i++ {
+			out[i] = '\n'
+		}
+		return out
+	}
+	if err := os.WriteFile(caPath, padTo(maxClientCABytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := Listen("127.0.0.1:0", Ingress{Certificate: certPath, Key: keyPath, ClientCA: caPath})
+	if err != nil {
+		t.Fatalf("Listen refused a client CA file at the %d-byte bound: %v", maxClientCABytes, err)
+	}
+	ln.Close()
+
+	if err := os.WriteFile(caPath, padTo(maxClientCABytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ln, err = Listen("127.0.0.1:0", Ingress{Certificate: certPath, Key: keyPath, ClientCA: caPath})
+	if err == nil {
+		ln.Close()
+		t.Fatalf("Listen accepted a client CA file above %d bytes, want refusal", maxClientCABytes)
+	}
+}
