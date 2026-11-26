@@ -209,8 +209,8 @@ func removeState(state string) error {
 
 var stdinLines = bufio.NewReader(os.Stdin)
 
-func readLine() (string, error) {
-	line, err := stdinLines.ReadString('\n')
+func readLineFrom(r *bufio.Reader) (string, error) {
+	line, err := r.ReadString('\n')
 	if err != nil && line == "" {
 		return "", err
 	}
@@ -220,12 +220,16 @@ func readLine() (string, error) {
 // choosePassword asks for a new password twice. The gateway decides whether
 // it is acceptable; the length check here only saves a failed enrolment.
 func choosePassword() (string, error) {
+	return choosePasswordFrom(stdinLines)
+}
+
+func choosePasswordFrom(r *bufio.Reader) (string, error) {
 	for {
-		first, err := readSecretLine("Password (15 to 256 bytes, not shown): ")
+		first, err := readSecretLineFrom("Password (15 to 256 bytes, not shown): ", r)
 		if err != nil {
 			return "", err
 		}
-		second, err := readSecretLine("Repeat the password: ")
+		second, err := readSecretLineFrom("Repeat the password: ", r)
 		if err != nil {
 			return "", err
 		}

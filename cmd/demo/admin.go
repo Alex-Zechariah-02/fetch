@@ -23,27 +23,32 @@ import (
 // admin Origin on every request and, once signed in, the session cookie and
 // the session's CSRF token on every change.
 type adminClient struct {
-	client *http.Client
-	cookie string
-	csrf   string
+	address string
+	client  *http.Client
+	cookie  string
+	csrf    string
 }
 
 // The gateway's administrator session cookie.
 const adminSessionCookie = "__Host-gateway-admin"
 
 func newAdminClient() *adminClient {
+	return newAdminClientAt(adminListen)
+}
+
+func newAdminClientAt(address string) *adminClient {
 	// 30 s: an Admin API call that never answers fails instead of blocking setup forever.
-	return &adminClient{client: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: refuseRedirect}}
+	return &adminClient{address: address, client: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, CheckRedirect: refuseRedirect}}
 }
 
 // send makes one request and requires the wanted status. It never resends: a
 // request without an answer may still have been applied.
 func (a *adminClient) send(method, path string, body []byte, headers map[string]string, wanted int) (*http.Response, []byte, error) {
-	request, err := http.NewRequest(method, "http://"+adminListen+path, bytes.NewReader(body))
+	request, err := http.NewRequest(method, "http://"+a.address+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
 	}
-	request.Header.Set("Origin", "http://"+adminListen)
+	request.Header.Set("Origin", "http://"+a.address)
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

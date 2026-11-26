@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,11 +16,18 @@ import (
 // no outside program, so it works in the minimal container image too. Input
 // that is not a terminal, such as a pipe, is read as it is: nothing shows it.
 func readSecretLine(prompt string) (string, error) {
+	return readSecretLineFrom(prompt, stdinLines)
+}
+
+func readSecretLineFrom(prompt string, r *bufio.Reader) (string, error) {
 	fmt.Print(prompt)
 	defer fmt.Println()
+	if r != stdinLines {
+		return readLineFrom(r)
+	}
 	terminal := int(os.Stdin.Fd())
 	if !term.IsTerminal(terminal) {
-		return readLine()
+		return readLineFrom(r)
 	}
 	line, err := term.ReadPassword(terminal)
 	return string(line), err

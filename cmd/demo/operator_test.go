@@ -34,10 +34,7 @@ func TestOrderFloodUsesASeparateCustomerAccount(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer server.Close()
-	previous := dataListen
-	dataListen = strings.TrimPrefix(server.URL, "http://")
-	defer func() { dataListen = previous }()
-	if err := attack([]string{"-dir", operatorTestState(t), "-scenario", "flood-orders", "-count", "12"}); err != nil {
+	if err := runAttack([]string{"-dir", operatorTestState(t), "-scenario", "flood-orders", "-count", "12"}, server.URL); err != nil {
 		t.Fatal(err)
 	}
 	if email := <-signedIn; email != "customer2@fetch.test" {
@@ -133,10 +130,7 @@ func TestKeyOperatorRefusalsAndUnconfirmedReload(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(422) }))
 	defer server.Close()
-	old := adminListen
-	adminListen = strings.TrimPrefix(server.URL, "http://")
-	defer func() { adminListen = old }()
-	if _, err := changeKeys(dir, newAdminClient(), "rotate", ""); err == nil {
+	if _, err := changeKeys(dir, newAdminClientAt(strings.TrimPrefix(server.URL, "http://")), "rotate", ""); err == nil {
 		t.Fatal("unconfirmed reload reported success")
 	}
 	signing, _ := os.ReadFile(filepath.Join(dir, signingFile))
@@ -167,10 +161,7 @@ func TestAdminUnknownWriteIsNotRetried(t *testing.T) {
 		w.WriteHeader(200)
 	}))
 	defer server.Close()
-	old := adminListen
-	adminListen = strings.TrimPrefix(server.URL, "http://")
-	defer func() { adminListen = old }()
-	client := newAdminClient()
+	client := newAdminClientAt(strings.TrimPrefix(server.URL, "http://"))
 	defer client.client.CloseIdleConnections()
 	if _, _, err := client.send("GET", "/warm", nil, nil, 200); err != nil {
 		t.Fatal(err)
@@ -195,10 +186,7 @@ func TestAdminDoesNotFollowWriteRedirect(t *testing.T) {
 		w.WriteHeader(200)
 	}))
 	defer server.Close()
-	old := adminListen
-	adminListen = strings.TrimPrefix(server.URL, "http://")
-	defer func() { adminListen = old }()
-	client := newAdminClient()
+	client := newAdminClientAt(strings.TrimPrefix(server.URL, "http://"))
 	defer client.client.CloseIdleConnections()
 	if _, _, err := client.send("POST", "/write", nil, mutationHeaders(""), 200); err == nil {
 		t.Error("operator followed a write redirect")

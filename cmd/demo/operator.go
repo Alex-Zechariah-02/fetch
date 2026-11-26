@@ -69,6 +69,10 @@ func loginWithClient(client *http.Client, origin, email, visitor string) (string
 // another loopback source address, or with -target to a gateway on another
 // host from this machine's own address, and prints the answers by status.
 func attack(args []string) error {
+	return runAttack(args, "http://"+dataListen)
+}
+
+func runAttack(args []string, defaultOrigin string) error {
 	set := flag.NewFlagSet("attack", flag.ContinueOnError)
 	scenario := set.String("scenario", "", "flood-search, flood-login or flood-orders")
 	from := set.String("from", "127.0.0.50", "source IPv4 loopback address, on the demonstration's machine")
@@ -101,7 +105,7 @@ func attack(args []string) error {
 		if err := onlyFlags(set, "scenario", "count", "from", "dir"); err != nil {
 			return err
 		}
-		origin, source = "http://"+dataListen, "from="+*from
+		origin, source = defaultOrigin, "from="+*from
 		client, err = localClient(*from, *dir)
 	}
 	if err != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,12 +14,20 @@ import (
 // readSecretLine reads one line from the console without showing it. Input
 // that is not a console, such as a pipe, is read as it is: nothing shows it.
 func readSecretLine(prompt string) (string, error) {
+	return readSecretLineFrom(prompt, stdinLines)
+}
+
+func readSecretLineFrom(prompt string, r *bufio.Reader) (string, error) {
 	fmt.Print(prompt)
+	if r != stdinLines {
+		defer fmt.Println()
+		return readLineFrom(r)
+	}
 	console := windows.Handle(os.Stdin.Fd())
 	var mode uint32
 	if windows.GetConsoleMode(console, &mode) != nil {
 		defer fmt.Println()
-		return readLine()
+		return readLineFrom(r)
 	}
 	// Echo off while the administrator password is typed; the old mode returns after the read.
 	if err := windows.SetConsoleMode(console, mode&^windows.ENABLE_ECHO_INPUT); err != nil {
@@ -28,7 +37,7 @@ func readSecretLine(prompt string) (string, error) {
 		windows.SetConsoleMode(console, mode)
 		fmt.Println()
 	}()
-	return readLine()
+	return readLineFrom(r)
 }
 
 func newProcessGroup(cmd *exec.Cmd) {

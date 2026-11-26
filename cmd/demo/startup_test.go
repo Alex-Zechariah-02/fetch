@@ -60,17 +60,6 @@ func earlierStartupState(t *testing.T) string {
 }
 
 func TestUpRecognizesUnfinishedEarlierSetupBeforeBuilding(t *testing.T) {
-	// This test never starts a server; use OS-allocated probe ports so the
-	// package can run alongside the gateway's real-stack tests.
-	addresses := []*string{&adminListen, &dataListen, &metricsListen}
-	for i := range fetchServices {
-		addresses = append(addresses, &fetchServices[i].listen, &fetchServices[i].control)
-	}
-	for _, address := range addresses {
-		previous := *address
-		*address = "127.0.0.1:0"
-		t.Cleanup(func() { *address = previous })
-	}
 	home := earlierStartupState(t)
 	state := filepath.Join(home, "state")
 	before, err := os.ReadFile(filepath.Join(state, identityFile))
@@ -90,10 +79,12 @@ func TestUpRecognizesUnfinishedEarlierSetupBeforeBuilding(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(fetch)
-	previousInput := stdinLines
-	stdinLines = bufio.NewReader(strings.NewReader(""))
-	t.Cleanup(func() { stdinLines = previousInput })
-	if err := up([]string{"-home", home}); !errors.Is(err, io.EOF) {
+	host := localHost(home)
+	// This test never starts a server; use an OS-allocated probe port so the
+	// package can run alongside the gateway's real-stack tests.
+	host.addresses = []string{"127.0.0.1:0"}
+	host.input = bufio.NewReader(strings.NewReader(""))
+	if err := host.up("", false, false); !errors.Is(err, io.EOF) {
 		t.Fatalf("unfinished setup did not ask for its initial password before building: %v", err)
 	}
 	after, err := os.ReadFile(filepath.Join(state, identityFile))

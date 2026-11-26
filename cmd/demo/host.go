@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -26,6 +27,7 @@ type gatewayHost struct {
 	reused    string         // printed when a later run reuses the state
 	baseline  map[string]any // the baseline policy this run would establish
 	ca        string         // the CA file its settings must name; "" on one machine
+	input     *bufio.Reader  // password and stop input; nil defaults to stdinLines
 	build     func(source sources) (builtPrograms, error)
 	create    func(programs builtPrograms, out io.Writer) error
 	run       func(ctx context.Context, programs builtPrograms, ready func()) error
@@ -84,7 +86,11 @@ func (h gatewayHost) inspect() (firstRun, earlierSetup bool, err error) {
 // choose asks for the new administrator's password; nothing is created yet.
 func (h gatewayHost) choose() (string, error) {
 	fmt.Println("First run: choose the password for the Dashboard administrator", upAdmin+".")
-	return choosePassword()
+	input := h.input
+	if input == nil {
+		input = stdinLines
+	}
+	return choosePasswordFrom(input)
 }
 
 // up builds the host's programs and websites from the current sources,
