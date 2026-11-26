@@ -19,7 +19,7 @@ const groupAnchor = (group: string) => `group-${slugOf(group)}`
 export function StoreRoute({ address, item }: { address: string; item: string | null }) {
   const { id, list } = useMerchantId(address)
   const problem = list?.answer && !list.data ? describe(list.answer) : null
-  if (problem) return <ProblemNotice className="mt-10" problem={problem} action={<button type="button" onClick={list!.reload} className="text-sm font-bold text-brand hover:underline">Try again</button>} />
+  if (problem && list) return <ProblemNotice className="mt-10" problem={problem} action={<button type="button" onClick={list.reload} className="text-sm font-bold text-brand hover:underline">Try again</button>} />
   if (id === undefined) return <Loading label="Loading the shop"><Skeleton className="mt-10 h-72 w-full rounded-[28px]" /></Loading>
   if (id === null) return <MissingShop />
   if (item) return <StoreItem merchant={id} item={item} />

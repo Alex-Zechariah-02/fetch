@@ -53,6 +53,7 @@ function altered(token: string): string {
 // extended moves the token's expiry a day later without re-signing it.
 function extended(token: string): string {
   const [header, payload, signature] = token.split('.')
+  if (!payload) return token
   const claims = JSON.parse(atob(payload.replaceAll('-', '+').replaceAll('_', '/'))) as { exp?: number }
   claims.exp = (claims.exp ?? Math.floor(Date.now() / 1000)) + 86_400
   const encoded = btoa(JSON.stringify(claims)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
@@ -91,7 +92,7 @@ export const groups: Group[] = [
         request: 'Your token with one signature character changed',
         token: true,
         expected: () => gatewayRefuses(401, 'Sign-in check: the signature does not match'),
-        run: (token, signal) => one({ method: 'GET', path: '/accounts/me', token: altered(token!), signal }),
+        run: (token, signal) => one({ method: 'GET', path: '/accounts/me', token: altered(token ?? ''), signal }),
       },
       {
         id: 'extended',
@@ -99,7 +100,7 @@ export const groups: Group[] = [
         request: 'Your token with its expiry moved a day later, not re-signed',
         token: true,
         expected: () => gatewayRefuses(401, 'Sign-in check: the edited token no longer matches its signature'),
-        run: (token, signal) => one({ method: 'GET', path: '/accounts/me', token: extended(token!), signal }),
+        run: (token, signal) => one({ method: 'GET', path: '/accounts/me', token: extended(token ?? ''), signal }),
       },
     ],
   },

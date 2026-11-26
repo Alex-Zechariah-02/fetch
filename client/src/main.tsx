@@ -16,7 +16,9 @@ async function start() {
   // The page waits for its typeface so nothing reflows after it appears.
   // Should it fail to register, the page still renders in the fallback face.
   await loadFonts().catch((error: unknown) => console.error('The Fetch typeface could not be registered:', error))
-  createRoot(document.getElementById('root')!).render(
+  const root = document.getElementById('root')
+  if (!root) throw new Error('Missing #root element')
+  createRoot(root).render(
     <StrictMode>
       {/* The gateway's policy forbids inline <style> elements; Base UI must
           style everything through the app's own classes. */}

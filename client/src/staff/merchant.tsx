@@ -22,7 +22,7 @@ export function MerchantPage() {
   const { session } = useSession()
   const { params } = useLocation()
   const view = (['orders', 'menu', 'sales'].includes(params.get('view') ?? '') ? params.get('view') : 'orders') as View
-  const shopId = session!.user.merchant
+  const shopId = session?.user.merchant ?? null
   const shop = useQuery<MerchantAnswer>(shopId ? `/inventory/merchants/${encodeURIComponent(shopId)}` : null)
   return (
     <>
@@ -50,7 +50,8 @@ function OrdersBoard() {
   const problem = orders.answer && !orders.data ? describe(orders.answer) : null
   if (problem) return <ProblemNotice problem={problem} action={<Button size="sm" variant="secondary" onClick={orders.reload}>Try again</Button>} />
   if (!orders.data) return <Loading label="Loading orders"><div className="grid grid-cols-1 gap-4 lg:grid-cols-3">{[0, 1, 2].map((n) => <Skeleton key={n} className="h-64 rounded-3xl" />)}</div></Loading>
-  const by = (status: Order['status']) => orders.data!.items.filter((o) => o.status === status)
+  const orderItems = orders.data.items
+  const by = (status: Order['status']) => orderItems.filter((o) => o.status === status)
   const placed = by('placed')
   const accepted = by('accepted')
   const ready = by('ready')
@@ -85,13 +86,14 @@ function MenuEditor({ query }: { query: ReturnType<typeof useQuery<MerchantAnswe
   const problem = query.answer && !query.data ? describe(query.answer) : null
   if (problem) return <ProblemNotice problem={problem} action={<Button size="sm" variant="secondary" onClick={query.reload}>Try again</Button>} />
   if (!query.data) return <Loading label="Loading your menu"><div className="flex flex-col gap-3">{[0, 1, 2].map((n) => <Skeleton key={n} className="h-24" />)}</div></Loading>
+  const section = query.data.merchant.section
   const items = query.data.menu.flatMap((g) => g.items)
   if (items.length === 0) return <Empty icon={<CookingPot size={26} weight="bold" />} title="Your menu is empty" body="Items are added through Fetch’s merchant team for now." />
   return (
     <>
       <RefreshProblem query={query} className="mb-4" />
       <ul className="flex flex-col gap-3">
-        {items.map((item) => <MenuRow key={item.id} item={item} section={query.data!.merchant.section} onChanged={query.reload} />)}
+        {items.map((item) => <MenuRow key={item.id} item={item} section={section} onChanged={query.reload} />)}
       </ul>
     </>
   )

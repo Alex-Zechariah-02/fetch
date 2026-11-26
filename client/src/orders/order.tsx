@@ -53,6 +53,7 @@ function OrderView({ order, justPlaced, onChanged, refresh }: { order: Order; ju
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<Problem | null>(null)
   const reached = new Map(order.timeline.map((t) => [t.status, t.at]))
+  const cancelledAt = reached.get('cancelled')
   const cancelled = order.status === 'cancelled'
   // A status that changes while the page is open is announced politely; the
   // first status read is not, and focus never moves.
@@ -115,7 +116,7 @@ function OrderView({ order, justPlaced, onChanged, refresh }: { order: Order; ju
       ) : (
         <div className="mt-6 flex items-center gap-3 rounded-2xl bg-surface p-4 shadow-card">
           <XCircle size={22} className="text-bad" aria-hidden="true" />
-          <p className="text-sm text-ink-2">Cancelled {reached.get('cancelled') ? `at ${time(reached.get('cancelled')!)}` : ''}. {order.payment === 'wallet' ? `${rm(order.total_sen)} was returned to your Fetch wallet.` : 'Nothing is owed.'}</p>
+          <p className="text-sm text-ink-2">Cancelled {cancelledAt ? `at ${time(cancelledAt)}` : ''}. {order.payment === 'wallet' ? `${rm(order.total_sen)} was returned to your Fetch wallet.` : 'Nothing is owed.'}</p>
         </div>
       )}
 
