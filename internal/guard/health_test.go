@@ -157,6 +157,47 @@ func TestLogHealthTransitions(t *testing.T) {
 	wg.Wait()
 }
 
+// Recovering from a failed file counts a recovery; recovering from no space
+// does not, and a succeeding rotation clears a prior rotation failure.
+func TestLogHealthRecoveryAndRotation(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	l := &securityLog{path: filepath.Join(dir, "orders-security.log"), limit: 1, queue: make(chan entry, 1), evictCh: make(chan entry, 1), done: make(chan struct{})}
+	if err := l.open(); err != nil {
+		t.Fatal(err)
+	}
+	defer l.file.Close()
+
+	// healthRotating clears back to healthWriting on a succeeding rotation.
+	if !l.moveHealth(healthWriting, healthRotating) {
+		t.Fatal("failed to enter healthRotating")
+	}
+	if err := l.write([]entry{{line: []byte(`{"kind":"ok"}` + "\n")}}); err != nil {
+		t.Fatalf("write with rotation: %v", err)
+	}
+	if got := l.currentHealth(); got != healthWriting {
+		t.Fatalf("after succeeding rotation: health = %d, want healthWriting", got)
+	}
+
+	// healthNoSpace recovery resumes writing without incrementing recoveries.
+	if !l.moveHealth(healthWriting, healthNoSpace) {
+		t.Fatal("failed to enter healthNoSpace")
+	}
+	l.reason, l.since, l.tried = "storage_space", time.Now(), time.Time{}
+	if !l.ready() || l.currentHealth() != healthWriting || l.recoveries.Load() != 0 {
+		t.Fatalf("after no-space recovery: health=%d recoveries=%d", l.currentHealth(), l.recoveries.Load())
+	}
+
+	// healthDown recovery replaces the file and increments recoveries.
+	if !l.moveHealth(healthWriting, healthDown) {
+		t.Fatal("failed to enter healthDown")
+	}
+	l.reason, l.since, l.tried = "sync_failed", time.Now(), time.Time{}
+	if !l.ready() || l.currentHealth() != healthWriting || l.recoveries.Load() != 1 {
+		t.Fatalf("after down recovery: health=%d recoveries=%d", l.currentHealth(), l.recoveries.Load())
+	}
+}
+
 func BenchmarkLogHealth(b *testing.B) {
 	dir := b.TempDir()
 	l, err := openLog(filepath.Join(dir, "orders-security.log"), Storage{})
