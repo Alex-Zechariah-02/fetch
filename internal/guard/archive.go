@@ -173,7 +173,7 @@ func place(f logFile, dir string) (record, error) {
 		return record{}, errors.Join(err, os.Remove(target+".tmp"))
 	}
 	if err := os.Rename(target+".tmp", target); err != nil {
-		return record{}, err
+		return record{}, errors.Join(err, os.Remove(target+".tmp"))
 	}
 	e.Archived = f.bytes
 	return e, syncDir(dir)
