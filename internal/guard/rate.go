@@ -5,7 +5,6 @@
 package guard
 
 import (
-	"container/heap"
 	"sync"
 	"time"
 )
@@ -71,26 +70,68 @@ func (c *counter) wait(now, count int64) int64 {
 	return start + c.window + offset - now
 }
 
-// expiry orders counters by removable time; it implements heap.Interface.
+// expiry orders counters by removable time as a typed min-heap.
 type expiry []*counter
 
-func (q expiry) Len() int           { return len(q) }
-func (q expiry) Less(i, j int) bool { return q[i].removable() < q[j].removable() }
-func (q expiry) Swap(i, j int) {
+func (q expiry) swap(i, j int) {
 	q[i], q[j] = q[j], q[i]
 	q[i].index, q[j].index = i, j
 }
-func (q *expiry) Push(x any) {
-	c := x.(*counter)
+
+func (q *expiry) push(c *counter) {
 	c.index = len(*q)
 	*q = append(*q, c)
+	q.up(c.index)
 }
-func (q *expiry) Pop() any {
+
+func (q *expiry) pop() *counter {
 	old := *q
-	c := old[len(old)-1]
-	old[len(old)-1] = nil
-	*q = old[:len(old)-1]
-	return c
+	top := old[0]
+	last := len(old) - 1
+	q.swap(0, last)
+	old[last] = nil
+	*q = old[:last]
+	if len(*q) > 0 {
+		q.down(0)
+	}
+	return top
+}
+
+func (q expiry) fix(i int) {
+	if !q.down(i) {
+		q.up(i)
+	}
+}
+
+func (q expiry) up(i int) {
+	for i > 0 {
+		parent := (i - 1) / 2
+		if q[i].removable() >= q[parent].removable() {
+			break
+		}
+		q.swap(i, parent)
+		i = parent
+	}
+}
+
+func (q expiry) down(i int) bool {
+	start := i
+	for {
+		left := 2*i + 1
+		if left >= len(q) {
+			break
+		}
+		smallest := left
+		if right := left + 1; right < len(q) && q[right].removable() < q[left].removable() {
+			smallest = right
+		}
+		if q[i].removable() <= q[smallest].removable() {
+			break
+		}
+		q.swap(i, smallest)
+		i = smallest
+	}
+	return i > start
 }
 
 // verdict is a rate decision.
@@ -139,12 +180,12 @@ func (l *limiter) admit(key counterKey, count int, window time.Duration, now int
 		}
 		c = &counter{window: w, bucket: now / w, key: key}
 		l.counters[key] = c
-		heap.Push(&l.queue, c)
+		l.queue.push(c)
 	}
 	removable := c.removable()
 	c.roll(now)
 	if c.removable() != removable {
-		heap.Fix(&l.queue, c.index)
+		l.queue.fix(c.index)
 	}
 	if c.usage(now)+w > int64(count)*w {
 		return exceeded, max((c.wait(now, int64(count))+999)/1000, 1)
@@ -168,7 +209,7 @@ func (l *limiter) size() int {
 // those; the heap is ordered by removable time, so stopping early is safe.
 func (l *limiter) sweep(now int64, budget int) {
 	for ; budget > 0 && len(l.queue) > 0 && l.queue[0].removable() <= now; budget-- {
-		c := heap.Pop(&l.queue).(*counter)
+		c := l.queue.pop()
 		delete(l.counters, c.key)
 	}
 }

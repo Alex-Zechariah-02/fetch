@@ -159,7 +159,10 @@ func decodeJSON(data []byte) (any, string) {
 			top = stack[len(stack)-1]
 		}
 		if delim, isDelim := token.(json.Delim); top != nil && top.members != nil && !top.named && (!isDelim || delim != '}') {
-			name := token.(string)
+			name, ok := token.(string)
+			if !ok {
+				return nil, "malformed_json"
+			}
 			if _, exists := top.members[name]; exists {
 				return nil, "duplicate_member"
 			}
