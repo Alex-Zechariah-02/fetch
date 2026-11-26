@@ -84,9 +84,12 @@ func Run(ctx context.Context, s *Service, listen, control string, secret []byte,
 	handlers := []http.Handler{api, s.Control(secret)}
 	addresses := []string{control}
 	if ingress != (Ingress{}) && called(s.name) {
-		port := listener.Addr().(*net.TCPAddr).Port
+		tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+		if !ok {
+			return errors.New("API listener does not expose a TCP address")
+		}
 		handlers = append(handlers, s.internal())
-		addresses = append(addresses, netip.AddrPortFrom(InternalHost, uint16(port)).String()) // #nosec G115 -- a TCP port fits 16 bits
+		addresses = append(addresses, netip.AddrPortFrom(InternalHost, uint16(tcpAddr.Port)).String()) // #nosec G115 -- a TCP port fits 16 bits
 	}
 	for _, address := range addresses {
 		listener, err := Listen(address, Ingress{})

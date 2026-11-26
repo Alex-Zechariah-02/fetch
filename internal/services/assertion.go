@@ -200,12 +200,16 @@ func (a *assertions) verify(token string) ([]byte, error) {
 
 // verified checks a 64-byte signature of input with key.
 func verified(key crypto.PublicKey, input, signature []byte) bool {
-	if ed, ok := key.(ed25519.PublicKey); ok {
-		return ed25519.Verify(ed, input, signature)
+	switch k := key.(type) {
+	case ed25519.PublicKey:
+		return ed25519.Verify(k, input, signature)
+	case *ecdsa.PublicKey:
+		digest := sha256.Sum256(input)
+		r, s := new(big.Int).SetBytes(signature[:32]), new(big.Int).SetBytes(signature[32:])
+		return ecdsa.Verify(k, digest[:], r, s)
+	default:
+		return false
 	}
-	digest := sha256.Sum256(input)
-	r, s := new(big.Int).SetBytes(signature[:32]), new(big.Int).SetBytes(signature[32:])
-	return ecdsa.Verify(key.(*ecdsa.PublicKey), digest[:], r, s)
 }
 
 // keyIDs lists the accepted key IDs, sorted, for the start line.
