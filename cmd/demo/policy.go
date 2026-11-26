@@ -86,13 +86,23 @@ const (
 // issued Fetch's certificate and the client certificate Fetch admits.
 const fetchProfile = "fetch"
 
+// mapSlice returns a policy document's list of object maps for key, or nil.
+func mapSlice(doc map[string]any, key string) []map[string]any {
+	items, _ := doc[key].([]map[string]any)
+	return items
+}
+
 // deployedBaseline is the baseline for a gateway host: every upstream is the
 // same port on the Fetch host at fetch, reached over TLS with fetchProfile.
 func deployedBaseline(fetch netip.Addr) map[string]any {
 	policy := baselinePolicy()
 	policy["schema_version"] = deployedSchema
-	for _, upstream := range policy["upstreams"].([]map[string]any) {
-		address := deployedAddress(upstream["dial"].(string), fetch)
+	for _, upstream := range mapSlice(policy, "upstreams") {
+		dial, ok := upstream["dial"].(string)
+		if !ok {
+			continue
+		}
+		address := deployedAddress(dial, fetch)
 		delete(upstream, "dial")
 		upstream["url"], upstream["tls"] = "https://"+address, fetchProfile
 	}

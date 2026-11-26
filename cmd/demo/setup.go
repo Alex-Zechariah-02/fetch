@@ -257,7 +257,7 @@ func gatewaySettings(files gatewayFiles, keys gatewayKeys, data map[string]any, 
 func denyAll(baseline map[string]any) map[string]any {
 	policy := maps.Clone(baseline)
 	var operations []map[string]any
-	for _, op := range baseline["operations"].([]map[string]any) {
+	for _, op := range mapSlice(baseline, "operations") {
 		denied := maps.Clone(op)
 		denied["access"] = "deny"
 		operations = append(operations, denied)

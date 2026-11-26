@@ -116,13 +116,13 @@ func importDescriptions(gateway, specs string, baseline map[string]any, work str
 func migrationBase(baseline map[string]any) map[string]any {
 	base := maps.Clone(baseline)
 	var apis []map[string]any
-	for _, api := range baseline["apis"].([]map[string]any) {
+	for _, api := range mapSlice(baseline, "apis") {
 		if api["id"] == "web" {
 			apis = append(apis, api)
 		}
 	}
 	var operations []map[string]any
-	for _, op := range baseline["operations"].([]map[string]any) {
+	for _, op := range mapSlice(baseline, "operations") {
 		if op["api"] == "web" {
 			operations = append(operations, op)
 		}
