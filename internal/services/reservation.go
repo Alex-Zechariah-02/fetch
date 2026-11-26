@@ -28,11 +28,19 @@ type reservationResult struct {
 	Items    []PricedLine `json:"items"`
 	Subtotal int64        `json:"subtotal_sen"`
 }
+type reservationState uint8
+
+const (
+	reservationHeld reservationState = iota
+	reservationCommitted
+	reservationReleased
+)
+
 type reservation struct {
-	digest              [32]byte
-	counts              map[string]int
-	response            reservationResult
-	released, committed bool
+	digest   [32]byte
+	counts   map[string]int
+	response reservationResult
+	state    reservationState
 }
 
 func (d *inventory) reserve(r *http.Request, body []byte) result {
@@ -42,7 +50,7 @@ func (d *inventory) reserve(r *http.Request, body []byte) result {
 	}
 	digest := sha256.Sum256(body)
 	if previous, found := d.reservations[key]; found {
-		if previous.digest != digest || previous.released {
+		if previous.digest != digest || previous.state == reservationReleased {
 			return failure(409, "idempotency_conflict", "That reservation identity is already used.", "")
 		}
 		return result{status: 200, body: previous.response}
@@ -101,7 +109,7 @@ func (d *inventory) reserve(r *http.Request, body []byte) result {
 // otherwise keep that stock reserved for good.
 func (d *inventory) forget(key string) {
 	entry := d.reservations[key]
-	if !entry.released && !entry.committed {
+	if entry.state == reservationHeld {
 		for id, quantity := range entry.counts {
 			if stock := d.item(id); stock != nil && stock.Stock != nil {
 				stock.Reserved -= quantity
@@ -116,10 +124,10 @@ func (d *inventory) release(key string) result {
 		return failure(400, "invalid_request", "A valid reservation identity is required.", "")
 	}
 	entry, found := d.reservations[key]
-	if found && entry.committed {
+	if found && entry.state == reservationCommitted {
 		return failure(409, "invalid_transition", "This reservation was already consumed.", "")
 	}
-	if found && !entry.released {
+	if found && entry.state == reservationHeld {
 		for id, quantity := range entry.counts {
 			if stock := d.item(id); stock.Stock != nil {
 				stock.Reserved -= quantity
@@ -128,7 +136,7 @@ func (d *inventory) release(key string) result {
 	}
 	// A release may arrive before a timed-out prepare. Keep a tombstone so
 	// that delayed request cannot reserve orphaned stock afterwards.
-	entry.released = true
+	entry.state = reservationReleased
 	d.reservations[key] = entry
 	// A tombstone for a reservation never made joins the same bounded memory
 	// as a reservation, so it is forgotten in turn and Inventory stays bounded.
@@ -142,17 +150,17 @@ func (d *inventory) release(key string) result {
 
 func (d *inventory) commit(key string) result {
 	entry, found := d.reservations[key]
-	if !found || entry.released {
+	if !found || entry.state == reservationReleased {
 		return notFound()
 	}
-	if !entry.committed {
+	if entry.state == reservationHeld {
 		for id, quantity := range entry.counts {
 			if stock := d.item(id); stock.Stock != nil {
 				*stock.Stock -= quantity
 				stock.Reserved -= quantity
 			}
 		}
-		entry.committed = true
+		entry.state = reservationCommitted
 		d.reservations[key] = entry
 	}
 	return result{status: 200, body: map[string]any{"committed": true}}
