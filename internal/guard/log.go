@@ -87,16 +87,31 @@ type securityLog struct {
 	spaceFails atomic.Uint64
 }
 
+// logOption configures an opened securityLog before its goroutines start.
+type logOption func(*logConfig)
+
+type logConfig struct {
+	pause time.Duration
+}
+
+func withReservePause(d time.Duration) logOption {
+	return func(c *logConfig) { c.pause = d }
+}
+
 // openLog writes to path from its logical end, creating it private to this
 // user, and starts the archiver unless s names no archive folder.
-func openLog(path string, s Storage) (*securityLog, error) {
+func openLog(path string, s Storage, opts ...logOption) (*securityLog, error) {
+	cfg := logConfig{pause: defaultReservePause}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	l := &securityLog{path: path, limit: maxLogBytes, queue: make(chan entry, queueSize), evictCh: make(chan entry, 1), done: make(chan struct{})}
 	if err := l.open(); err != nil {
 		return nil, err
 	}
 	l.refuse = s.Refuse
 	if s.Archive != "" {
-		l.archive = newArchiver(l, s)
+		l.archive = newArchiver(l, s, cfg.pause)
 		go l.archive.run()
 	}
 	go l.run()

@@ -56,7 +56,7 @@ func TestArchiverFailureSyncsUsabilityState(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &securityLog{path: filepath.Join(live, "orders-security.log")}
-	r := newArchiver(l, Storage{Archive: archive})
+	r := newArchiver(l, Storage{Archive: archive}, defaultReservePause)
 	f := logFile{name: filepath.Base(src), dir: live}
 	if err := r.archive(f); err == nil {
 		t.Fatal("archive succeeded over a directory target")

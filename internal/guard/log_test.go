@@ -20,14 +20,14 @@ import (
 
 // archived opens a log under a fresh folder that archives into its
 // "archive" folder with s's other settings.
-func archived(t *testing.T, s Storage) (*securityLog, string) {
+func archived(t *testing.T, s Storage, opts ...logOption) (*securityLog, string) {
 	t.Helper()
 	dir := t.TempDir()
 	s.Archive = filepath.Join(dir, "archive")
 	if s.MinFree == 0 {
 		s.MinFree = 1 // a developer's full disk must not evict what a test counts
 	}
-	l, err := openLog(filepath.Join(dir, "orders-security.log"), s)
+	l, err := openLog(filepath.Join(dir, "orders-security.log"), s, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,11 +270,8 @@ func TestLogRecovers(t *testing.T) {
 
 // The reserve file is made, released once, and made again.
 func TestLogReserve(t *testing.T) {
-	// Not parallel: the pause is a package value, set before the log opens.
-	pause := reservePause
-	reservePause = 0
-	t.Cleanup(func() { reservePause = pause })
-	l, _ := archived(t, Storage{ArchiveBytes: 1 << 30, Reserve: 64 << 10})
+	t.Parallel()
+	l, _ := archived(t, Storage{ArchiveBytes: 1 << 30, Reserve: 64 << 10}, withReservePause(0))
 	defer l.close()
 	waitUntil(t, "the reserve", func() bool { _, err := os.Stat(l.reservePath); return err == nil })
 	if !l.releaseReserve() || l.releaseReserve() {

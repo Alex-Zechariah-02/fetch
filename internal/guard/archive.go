@@ -23,9 +23,9 @@ import (
 // archiveCheck is how often the archiver looks without a rotation.
 const archiveCheck = 10 * time.Second
 
-// reservePause is how long the reserve is not made again after a release,
-// so a disk near full does not release and rewrite it over and over.
-var reservePause = time.Minute
+// defaultReservePause is how long the reserve is not made again after a
+// release, so a disk near full does not release and rewrite it over and over.
+const defaultReservePause = time.Minute
 
 type archiver struct {
 	log                   *securityLog
@@ -49,11 +49,11 @@ type archiver struct {
 	evictions, pressure   atomic.Int64
 }
 
-func newArchiver(l *securityLog, s Storage) *archiver {
+func newArchiver(l *securityLog, s Storage, pause time.Duration) *archiver {
 	ctx, cancel := context.WithCancel(context.Background())
 	general, evict := reserveSplit(s.Reserve)
 	r := &archiver{log: l, live: filepath.Dir(l.path), dir: s.Archive, budget: s.ArchiveBytes, minFree: float64(s.MinFree) / 100,
-		reserve: s.Reserve, generalReserve: general, evictReserve: evict, pause: reservePause, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel}
+		reserve: s.Reserve, generalReserve: general, evictReserve: evict, pause: pause, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel}
 	if s.Reserve > 0 {
 		l.reservePath = reserveName(l.path)
 		l.evictReservePath = evictReserveName(l.path)
