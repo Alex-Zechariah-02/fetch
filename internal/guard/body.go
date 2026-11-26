@@ -34,36 +34,57 @@ type refusal struct {
 	code, reason string
 }
 
-// readBody enforces the rule's body declaration and replaces the request
-// body with the bytes read, so the handler reads exactly what was checked.
-func readBody(r *http.Request, rule *rule) *refusal {
+// bufferBody reads a declared request body within the global ceiling and
+// replaces r.Body with the bytes read, before an in-flight slot is taken.
+// It returns nil when no body was declared.
+func bufferBody(r *http.Request) ([]byte, *refusal) {
+	if r.ContentLength == 0 && len(r.TransferEncoding) == 0 {
+		return nil, nil
+	}
+	tooLarge := &refusal{http.StatusRequestEntityTooLarge, "payload_too_large", "too_large"}
+	if r.ContentLength > maxBody {
+		return nil, tooLarge
+	}
+	if r.Body == nil {
+		return nil, &refusal{http.StatusBadRequest, "bad_request", "read_failed"}
+	}
+	// A declared length sizes the buffer once; an undeclared one grows to the limit at most.
+	buffer := bytes.NewBuffer(make([]byte, 0, max(r.ContentLength, 512)))
+	if _, err := buffer.ReadFrom(io.LimitReader(r.Body, maxBody+1)); err != nil {
+		return nil, &refusal{http.StatusBadRequest, "bad_request", "read_failed"}
+	}
+	body := buffer.Bytes()
+	if int64(len(body)) > maxBody {
+		return nil, tooLarge
+	}
+	if body == nil {
+		body = []byte{}
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return body, nil
+}
+
+// readBody enforces the rule's body declaration on the bytes bufferBody read
+// and replaces the request body with them, so the handler reads exactly what
+// was checked.
+func readBody(r *http.Request, body []byte, rule *rule) *refusal {
 	if rule.Schema == nil {
 		// No schema is declared, so a body would reach the handler unchecked.
-		if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
+		if body != nil {
 			return &refusal{http.StatusBadRequest, "bad_request", "unexpected_body"}
 		}
 		return nil
 	}
 	// An operation's own cap never widens the global body ceiling.
 	limit := int64(min(rule.MaxBytes, maxBody))
-	tooLarge := &refusal{http.StatusRequestEntityTooLarge, "payload_too_large", "too_large"}
-	if r.ContentLength > limit {
-		return tooLarge
+	if int64(len(body)) > limit {
+		return &refusal{http.StatusRequestEntityTooLarge, "payload_too_large", "too_large"}
 	}
 	if !jsonMedia(r.Header.Values("Content-Type")) {
 		return &refusal{http.StatusUnsupportedMediaType, "unsupported_media_type", "media_type"}
 	}
 	if !identityEncoding(r.Header.Values("Content-Encoding")) {
 		return &refusal{http.StatusUnsupportedMediaType, "unsupported_media_type", "content_encoding"}
-	}
-	// A declared length sizes the buffer once; an undeclared one grows to the limit at most.
-	buffer := bytes.NewBuffer(make([]byte, 0, max(r.ContentLength, 512)))
-	if _, err := buffer.ReadFrom(io.LimitReader(r.Body, limit+1)); err != nil {
-		return &refusal{http.StatusBadRequest, "bad_request", "read_failed"}
-	}
-	body := buffer.Bytes()
-	if int64(len(body)) > limit {
-		return tooLarge
 	}
 	document, reason := decodeJSON(body)
 	if reason != "" {

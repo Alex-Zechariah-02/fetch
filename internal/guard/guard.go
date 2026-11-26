@@ -209,6 +209,18 @@ func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler)
 	// already discarded the identity headers).
 	r.Header.Del("X-Request-Id")
 	credentials := r.Header.Values("Authorization")
+	// A proxy and the API must read the same target: origin- or absolute-form, no CONNECT or Upgrade.
+	if (!strings.HasPrefix(r.RequestURI, "/") && !absoluteForm(r)) || r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" {
+		g.summarised(c, http.StatusBadRequest, "bad_request", "ingress")
+		return
+	}
+	// Read any body within the global ceiling before taking an in-flight
+	// slot, so a slow upload holds only its own connection.
+	body, refused := bufferBody(r)
+	if refused != nil {
+		g.summarised(c, refused.status, refused.code, refused.reason)
+		return
+	}
 	if g.inFlight.Add(1) > maxInFlight {
 		g.inFlight.Add(-1)
 		g.overloads.Add(1)
@@ -217,11 +229,6 @@ func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler)
 		return
 	}
 	defer g.inFlight.Add(-1)
-	// A proxy and the API must read the same target: origin- or absolute-form, no CONNECT or Upgrade.
-	if (!strings.HasPrefix(r.RequestURI, "/") && !absoluteForm(r)) || r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" {
-		g.summarised(c, http.StatusBadRequest, "bad_request", "ingress")
-		return
-	}
 	if !canonical(r) {
 		g.summarised(c, http.StatusBadRequest, "bad_request", "path_not_canonical")
 		return
@@ -243,7 +250,7 @@ func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler)
 	if !g.limit(c, rule) {
 		return
 	}
-	if refused := readBody(r, rule); refused != nil {
+	if refused := readBody(r, body, rule); refused != nil {
 		stage := "body"
 		if refused.reason == "schema_mismatch" {
 			stage = "validation"
