@@ -9,9 +9,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -104,31 +102,7 @@ const maxOperatorFile = 64 << 10
 // a regular file (a FIFO or device would hang or never end), judged by check
 // when not nil.
 func readBoundedFile(path string, check func(os.FileInfo) error) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s: not a regular file", path)
-	}
-	if check != nil {
-		if err := check(info); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maxOperatorFile+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxOperatorFile {
-		return nil, errors.New("operator file is too large")
-	}
-	return data, nil
+	return trusted.ReadBounded(path, maxOperatorFile, check)
 }
 
 // issue answers a sign-in or refresh with a new token for user. A token that

@@ -16,6 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 )
 
 // Ingress names an API listener's TLS files: its certificate chain, its key
@@ -124,7 +126,7 @@ func loadIngressState(i Ingress) (*ingressState, error) {
 	// The key must be the service user's alone, and the certificate and CA
 	// not rewritable by another account, which could let it impersonate the
 	// API or admit its own clients.
-	if err := errors.Join(checkFile(i.Key, private), checkFile(i.Certificate, trusted), checkFile(i.ClientCA, trusted)); err != nil {
+	if err := errors.Join(trusted.CheckFile(i.Key, trusted.Private), trusted.CheckFile(i.Certificate, trusted.Trusted), trusted.CheckFile(i.ClientCA, trusted.Trusted)); err != nil {
 		return nil, err
 	}
 	cs, err1 := stampOf(i.Certificate)

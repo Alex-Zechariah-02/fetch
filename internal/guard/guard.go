@@ -10,16 +10,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 )
 
 // Files of the settings folder every API of a run shares: the trusted keys
@@ -136,18 +136,10 @@ func (g *Guard) Close() {
 	g.log.close()
 }
 
-// readFile reads at most limit bytes of path, refusing a longer file.
+// readFile reads at most limit bytes of a regular, trusted file at path,
+// refusing a longer file or one writable by another local account.
 func readFile(path string, limit int64) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, limit+1))
-	if err == nil && int64(len(data)) > limit {
-		err = errors.New(path + " is too large")
-	}
-	return data, err
+	return trusted.ReadBounded(path, limit, trusted.Trusted)
 }
 
 // readJSON decodes one strict JSON value: no unknown or repeated members.

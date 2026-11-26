@@ -56,7 +56,7 @@ The programs and folders of this repository, with their flags. Back to the [READ
 
 ### Built-in protection
 
-- `-local-security <folder>` turns on built-in protection ([modes.md](modes.md)) with the trusted keys and blocked list in that folder; without it the API trusts the identity headers a gateway sets.
+- `-local-security <folder>` turns on built-in protection ([modes.md](modes.md)) with the trusted keys and blocked list in that folder; without it the API trusts the identity headers a gateway sets. On Unix the key set, public key and blocked-account files must not be writable by the group or others and must belong to the service's user or root.
 - With it, `-local-security-trusted-proxy <IP>` names the one proxy address whose `X-Forwarded-For` header is trusted (empty by default: trust none; `demo up -local` passes `127.0.0.3`), `-local-security-archive <absolute folder>` (default `archive` in that folder) is where rotated security log files are compressed, `-local-security-archive-bytes` (default 2 GiB, at least 64 MiB) bounds them, and `-local-security-when-full` is `evict_oldest` (default: the oldest file is deleted after a record of it) or `refuse` (nothing is deleted; requests are refused once the log folder is full).
 
 ## cmd/accounts

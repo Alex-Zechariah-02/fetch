@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 )
 
 // callees maps each calling service to the one service it calls.
@@ -73,7 +75,7 @@ func permitted(caller, method, path string) bool {
 func ReadKeys(folder, name string) (map[string][]byte, error) {
 	keys := map[string][]byte{}
 	for _, key := range needs(name) {
-		data, err := readBoundedFile(filepath.Join(folder, key+".key"), private)
+		data, err := readBoundedFile(filepath.Join(folder, key+".key"), trusted.Private)
 		if err != nil {
 			return nil, fmt.Errorf("reading the %s key: %w", key, err)
 		}

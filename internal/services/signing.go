@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Alex-Zechariah-02/fetch/internal/guard"
+	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 	"github.com/go-jose/go-jose/v4"
 )
 
@@ -83,7 +84,7 @@ func (c *signerCache) current(file string) (*signingKey, error) {
 
 func loadSigningKey(file string) (signingSettings, *rsa.PrivateKey, error) {
 	settings := signingSettings{}
-	data, err := readBoundedFile(file, trusted)
+	data, err := readBoundedFile(file, trusted.Trusted)
 	if err != nil {
 		return settings, nil, err
 	}
@@ -95,7 +96,7 @@ func loadSigningKey(file string) (signingSettings, *rsa.PrivateKey, error) {
 	if decoder.Decode(&settings) != nil || !validKid(settings.Kid) || !filepath.IsAbs(settings.PrivateKeyFile) {
 		return settings, nil, errors.New("signing settings require a key ID and absolute private key file")
 	}
-	data, err = readBoundedFile(settings.PrivateKeyFile, private)
+	data, err = readBoundedFile(settings.PrivateKeyFile, trusted.Private)
 	if err != nil {
 		return settings, nil, err
 	}

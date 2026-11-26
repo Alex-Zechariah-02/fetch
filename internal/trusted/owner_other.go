@@ -3,7 +3,7 @@
 
 //go:build !unix
 
-package services
+package trusted
 
 import "os"
 

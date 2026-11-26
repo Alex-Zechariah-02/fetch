@@ -1,9 +1,9 @@
 // The owner check of a trusted file on Unix: the file's owner must be the
-// service's user or root.
+// process user or root.
 
 //go:build unix
 
-package services
+package trusted
 
 import (
 	"errors"

@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 	"github.com/go-jose/go-jose/v4"
 )
 
@@ -86,7 +87,7 @@ func loadAssertions(path, audience string, log *slog.Logger) (*assertions, error
 }
 
 func loadAssertionKeys(path string) (map[string]crypto.PublicKey, error) {
-	data, err := readBoundedFile(path, trusted)
+	data, err := readBoundedFile(path, trusted.Trusted)
 	if err != nil {
 		return nil, err
 	}

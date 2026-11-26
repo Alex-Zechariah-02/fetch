@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/Alex-Zechariah-02/fetch/internal/ports"
+	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 )
 
 // Command starts one service. Explicit addresses are already resolved by the
@@ -98,7 +99,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 		}
 		*ordersURL = "http://" + address
 	}
-	secret, err := readBoundedFile(*secretFile, private)
+	secret, err := readBoundedFile(*secretFile, trusted.Private)
 	if err != nil {
 		return fmt.Errorf("reading the control secret: %w", err)
 	}
