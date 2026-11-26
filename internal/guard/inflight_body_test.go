@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -98,5 +99,94 @@ func TestSlowBodyDoesNotHoldInFlightSlot(t *testing.T) {
 	}
 	if got := g.inFlight.Load(); got != maxInFlight {
 		t.Fatalf("in-flight count after oversized body = %d, want %d", got, maxInFlight)
+	}
+}
+
+func TestInFlightCapAtLimitAndRelease(t *testing.T) {
+	dir := t.TempDir()
+	log, err := openLog(filepath.Join(dir, "orders-security.log"), Storage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.close()
+	table, err := newTable([]Operation{
+		{ID: "ping", API: "orders", Method: http.MethodGet, Target: "/ping", Count: maxInFlight + 16, Window: time.Minute},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &Guard{api: "orders", log: log, table: table, limiter: newLimiter(), blockedPath: filepath.Join(dir, BlockedFile)}
+	empty := map[string]bool{}
+	g.blocked.Store(&empty)
+
+	entered := make(chan struct{}, maxInFlight)
+	early := make(chan int, maxInFlight)
+	release := make(chan struct{})
+	var codes [maxInFlight]atomic.Int64
+	handler := g.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		entered <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	var wg sync.WaitGroup
+	for i := range maxInFlight {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ping", nil))
+			codes[idx].Store(int64(rec.Code))
+			select {
+			case <-release:
+			default:
+				early <- rec.Code
+			}
+		}(i)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for count := 0; count < maxInFlight; count++ {
+		select {
+		case <-entered:
+		case code := <-early:
+			close(release)
+			wg.Wait()
+			t.Fatalf("request %d/%d refused early with status %d, want %d concurrent admitted", count+1, maxInFlight, code, maxInFlight)
+		case <-deadline:
+			close(release)
+			wg.Wait()
+			t.Fatalf("only %d/%d concurrent requests entered handler", count, maxInFlight)
+		}
+	}
+
+	// One past the cap must be refused 503 overloaded without leaking a slot.
+	over := httptest.NewRecorder()
+	handler.ServeHTTP(over, httptest.NewRequest(http.MethodGet, "/ping", nil))
+	if over.Code != http.StatusServiceUnavailable || over.Header().Get("Retry-After") != "1" {
+		close(release)
+		wg.Wait()
+		t.Fatalf("request past cap: status=%d Retry-After=%q, want 503/1", over.Code, over.Header().Get("Retry-After"))
+	}
+	if got := g.inFlight.Load(); got != maxInFlight {
+		close(release)
+		wg.Wait()
+		t.Fatalf("in-flight at cap = %d, want %d", got, maxInFlight)
+	}
+
+	close(release)
+	wg.Wait()
+	for i := range maxInFlight {
+		if c := codes[i].Load(); c != http.StatusOK {
+			t.Fatalf("concurrent request %d status = %d, want 200", i, c)
+		}
+	}
+	if got := g.inFlight.Load(); got != 0 {
+		t.Fatalf("in-flight after all requests completed = %d, want 0", got)
+	}
+	after := httptest.NewRecorder()
+	handler.ServeHTTP(after, httptest.NewRequest(http.MethodGet, "/ping", nil))
+	if after.Code != http.StatusOK || g.inFlight.Load() != 0 {
+		t.Fatalf("follow-up request: status=%d inFlight=%d, want 200/0", after.Code, g.inFlight.Load())
 	}
 }
