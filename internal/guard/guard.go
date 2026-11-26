@@ -227,8 +227,8 @@ func (g *Guard) serve(w http.ResponseWriter, r *http.Request, next http.Handler)
 		return
 	}
 	defer g.inFlight.Add(-1)
-	// A proxy and the API must read the same target: origin-form only, no CONNECT or Upgrade.
-	if !strings.HasPrefix(r.RequestURI, "/") || r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" {
+	// A proxy and the API must read the same target: origin- or absolute-form, no CONNECT or Upgrade.
+	if (!strings.HasPrefix(r.RequestURI, "/") && !absoluteForm(r)) || r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" {
 		g.summarised(c, http.StatusBadRequest, "bad_request", "ingress")
 		return
 	}

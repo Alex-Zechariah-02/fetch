@@ -153,3 +153,15 @@ func canonical(r *http.Request) bool {
 	}
 	return true
 }
+
+// absoluteForm accepts an absolute-form target (RFC 9112 section 3.2.2) with
+// scheme http or https, a host and no credentials, taking the host from the
+// target.
+func absoluteForm(r *http.Request) bool {
+	u := r.URL
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Opaque != "" {
+		return false
+	}
+	r.Host = u.Host
+	return true
+}

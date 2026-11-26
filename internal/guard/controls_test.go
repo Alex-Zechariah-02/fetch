@@ -153,3 +153,33 @@ func TestHandlerCanFlush(t *testing.T) {
 		t.Fatalf("flush behind the guard: %v", flushErr)
 	}
 }
+
+func TestGuardAbsoluteFormTargets(t *testing.T) {
+	g, _ := testGuard(t)
+	defer g.log.close()
+	var seenHost string
+	handler := g.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenHost = r.Host
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "http://shop.test/ping", nil)
+	req.Host = "other.test"
+	req.Header.Set("Host", "other.test")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || seenHost != "shop.test" {
+		t.Fatalf("http absolute-form: status=%d host=%q, want 200 and shop.test", w.Code, seenHost)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "https://shop.test/ping", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("https absolute-form: status=%d, want 200", w.Code)
+	}
+	for _, target := range []string{"http://user@shop.test/ping", "ftp://shop.test/ping"} {
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status=%d, want 400", target, w.Code)
+		}
+	}
+}
