@@ -7,6 +7,9 @@ package guard
 
 import (
 	"math/rand/v2"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -134,4 +137,103 @@ func TestRateMatchesReference(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestRateClockTableHeapAndRetryAfter(t *testing.T) {
+	t.Run("503 alone gets Retry-After 1", func(t *testing.T) {
+		refused := httptest.NewRecorder()
+		answer(refused, http.StatusBadRequest, "bad_request")
+		if got := refused.Header().Get("Retry-After"); got != "" {
+			t.Fatalf("400 set Retry-After=%q, want empty", got)
+		}
+		busy := httptest.NewRecorder()
+		answer(busy, http.StatusServiceUnavailable, "overloaded")
+		if got := busy.Header().Get("Retry-After"); got != "1" {
+			t.Fatalf("503 set Retry-After=%q, want 1", got)
+		}
+		preset := httptest.NewRecorder()
+		preset.Header().Set("Retry-After", "30")
+		answer(preset, http.StatusServiceUnavailable, "overloaded")
+		if got := preset.Header().Get("Retry-After"); got != "30" {
+			t.Fatalf("503 replaced Retry-After 30 with %q", got)
+		}
+	})
+
+	t.Run("exact Retry-After across two buckets", func(t *testing.T) {
+		// 4 admitted in bucket 9 and 1 at +15 s into bucket 10 under 4 per
+		// minute: the previous bucket's weight allows the next one at +30 s.
+		l := newLimiter()
+		key := counterKey{"op", "exact"}
+		for range 4 {
+			if v, _ := l.admit(key, 4, time.Minute, 9*testWindow); v != admitted {
+				t.Fatal("bucket 9 admission refused")
+			}
+		}
+		if v, _ := l.admit(key, 4, time.Minute, 10*testWindow+15000); v != admitted {
+			t.Fatal("bucket 10 first admission refused")
+		}
+		if v, wait := l.admit(key, 4, time.Minute, 10*testWindow+15000); v != exceeded || wait != 15 {
+			t.Fatalf("verdict=%v wait=%d, want exceeded and 15", v, wait)
+		}
+	})
+
+	t.Run("clock moves forward", func(t *testing.T) {
+		l := newLimiter()
+		before := l.now()
+		time.Sleep(15 * time.Millisecond)
+		if after := l.now(); after <= before {
+			t.Fatalf("limiter clock did not advance: %d -> %d", before, after)
+		}
+	})
+
+	t.Run("sweep removes the earliest expiry first", func(t *testing.T) {
+		l := newLimiter()
+		l.admit(counterKey{"op", "early"}, 5, time.Second, 0)
+		l.admit(counterKey{"op", "late"}, 5, time.Second, 10000)
+		l.sweep(5000, 10)
+		if l.size() != 1 {
+			t.Fatalf("sweep left %d counters, want 1", l.size())
+		}
+	})
+
+	t.Run("a rolled counter moves back in expiry order", func(t *testing.T) {
+		l := newLimiter()
+		l.admit(counterKey{"op", "early"}, 5, time.Second, 0)
+		l.admit(counterKey{"op", "mid"}, 5, time.Second, 1000)
+		l.admit(counterKey{"op", "early"}, 5, time.Second, 2000)
+		l.sweep(3000, 10)
+		if l.size() != 1 {
+			t.Fatalf("sweep left %d counters, want 1", l.size())
+		}
+	})
+
+	t.Run("periodic sweep runs on every sweepEvery-th admission only", func(t *testing.T) {
+		l := newLimiter()
+		l.admit(counterKey{"op", "expired"}, 5, 10*time.Millisecond, 0)
+		for i := range sweepEvery - 2 {
+			l.admit(counterKey{"op", "live-" + strconv.Itoa(i)}, 5, time.Minute, 100)
+		}
+		if l.size() != sweepEvery-1 {
+			t.Fatalf("before admission %d: %d counters, want %d", sweepEvery, l.size(), sweepEvery-1)
+		}
+		l.admit(counterKey{"op", "last"}, 5, time.Minute, 100)
+		if l.size() != sweepEvery-1 {
+			t.Fatalf("after admission %d: %d counters, want %d", sweepEvery, l.size(), sweepEvery-1)
+		}
+	})
+
+	t.Run("full table refuses live keys and sweeps expired ones", func(t *testing.T) {
+		l := newLimiter()
+		for i := range maxCounters {
+			if v, _ := l.admit(counterKey{"op", "k" + strconv.Itoa(i)}, 5, time.Minute, 0); v != admitted {
+				t.Fatalf("counter %d refused below maxCounters", i)
+			}
+		}
+		if v, _ := l.admit(counterKey{"op", "overflow"}, 5, time.Minute, 0); v != full {
+			t.Fatalf("live table at maxCounters: verdict=%v, want full", v)
+		}
+		if v, _ := l.admit(counterKey{"op", "after-expiry"}, 5, time.Minute, 2*testWindow); v != admitted {
+			t.Fatalf("expired table at maxCounters: verdict=%v, want admitted after a sweep", v)
+		}
+	})
 }
