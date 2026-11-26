@@ -56,15 +56,16 @@ func (l *securityLog) fail(err error) error {
 		return errLogFailed
 	}
 	l.reason, l.since = "sync_failed", time.Now()
-	flag := &l.down
+	flag, other := &l.down, &l.noSpace
 	if spaceError(err) {
-		l.reason, flag = "storage_space", &l.noSpace
+		l.reason, flag, other = "storage_space", &l.noSpace, &l.down
 	} else {
 		l.suspect, l.suspectEnd = "", l.synced
 	}
 	if flag.CompareAndSwap(false, true) {
 		fmt.Fprintf(os.Stderr, "security log cannot write (%s); admission refused until it can: %v\n", l.reason, err)
 	}
+	other.Store(false)
 	if flag == &l.noSpace {
 		l.spaceFails.Add(1)
 		l.archive.signal()
@@ -104,8 +105,6 @@ func (l *securityLog) ready() bool {
 		Lost: lost, DurationMS: float64(time.Since(l.since)) / float64(time.Millisecond)}
 	if err := l.persist(appendRecord(nil, &r)); err != nil {
 		l.lost.Add(lost)
-		l.down.Store(false)
-		l.noSpace.Store(false)
 		l.fail(err)
 		return false
 	}
