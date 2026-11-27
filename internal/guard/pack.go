@@ -142,14 +142,21 @@ func stored(f logFile) (record, error) {
 	if err != nil {
 		return record{}, err
 	}
+	defer zr.Close()
 	r := record{Bytes: f.bytes}
 	for field := range strings.FieldsSeq(zr.Comment) {
 		key, value, _ := strings.Cut(field, "=")
 		switch key {
 		case "first":
-			r.First, _ = time.Parse(time.RFC3339Nano, value)
+			r.First, err = time.Parse(time.RFC3339Nano, value)
+			if err != nil {
+				return record{}, fmt.Errorf("archive header first time: %w", err)
+			}
 		case "last":
-			r.Last, _ = time.Parse(time.RFC3339Nano, value)
+			r.Last, err = time.Parse(time.RFC3339Nano, value)
+			if err != nil {
+				return record{}, fmt.Errorf("archive header last time: %w", err)
+			}
 		}
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
