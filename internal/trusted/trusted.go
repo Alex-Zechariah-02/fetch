@@ -37,21 +37,6 @@ func Private(info os.FileInfo) error {
 	return owner(info)
 }
 
-// CheckFile opens nothing: it judges the regular file at path with check.
-func CheckFile(path string, check func(os.FileInfo) error) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return errors.New(path + ": not a regular file")
-	}
-	if err := check(info); err != nil {
-		return errors.New(path + ": " + err.Error())
-	}
-	return nil
-}
-
 // ReadBounded reads at most limit bytes of a regular file at path, applying
 // check when not nil, and refuses a longer file.
 func ReadBounded(path string, limit int64, check func(os.FileInfo) error) ([]byte, error) {

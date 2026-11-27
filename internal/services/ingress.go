@@ -121,14 +121,13 @@ func (r *ingressReloader) configForClient(*tls.ClientHelloInfo) (*tls.Config, er
 	return next.cfg, nil
 }
 
-// maxClientCABytes bounds the client CA PEM file, matching APIWard's PEM cap.
-const maxClientCABytes = 64 << 10
-
 func loadIngressState(i Ingress) (*ingressState, error) {
 	// The key must be the service user's alone, and the certificate and CA
 	// not rewritable by another account, which could let it impersonate the
 	// API or admit its own clients.
-	if err := errors.Join(trusted.CheckFile(i.Key, trusted.Private), trusted.CheckFile(i.Certificate, trusted.Trusted)); err != nil {
+	certData, certErr := readBoundedFile(i.Certificate, trusted.Trusted)
+	keyData, keyErr := readBoundedFile(i.Key, trusted.Private)
+	if err := errors.Join(keyErr, certErr); err != nil {
 		return nil, err
 	}
 	cs, err1 := stampOf(i.Certificate)
@@ -137,11 +136,11 @@ func loadIngressState(i Ingress) (*ingressState, error) {
 	if err := errors.Join(err1, err2, err3); err != nil {
 		return nil, err
 	}
-	certificate, err := tls.LoadX509KeyPair(i.Certificate, i.Key)
+	certificate, err := tls.X509KeyPair(certData, keyData)
 	if err != nil {
 		return nil, fmt.Errorf("the API certificate: %w", err)
 	}
-	data, err := trusted.ReadBounded(i.ClientCA, maxClientCABytes, trusted.Trusted)
+	data, err := readBoundedFile(i.ClientCA, trusted.Trusted)
 	if err != nil {
 		return nil, fmt.Errorf("the client CA: %w", err)
 	}

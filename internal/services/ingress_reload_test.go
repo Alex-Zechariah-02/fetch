@@ -191,29 +191,40 @@ func TestIngressRefusesOversizedClientCA(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	padTo := func(size int) []byte {
+	padTo := func(src []byte, size int) []byte {
 		out := make([]byte, size)
-		copy(out, ca)
-		for i := len(ca); i < size; i++ {
+		copy(out, src)
+		for i := len(src); i < size; i++ {
 			out[i] = '\n'
 		}
 		return out
 	}
-	if err := os.WriteFile(caPath, padTo(maxClientCABytes), 0o600); err != nil {
+	if err := os.WriteFile(caPath, padTo(ca, maxOperatorFile), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ln, err := Listen("127.0.0.1:0", Ingress{Certificate: certPath, Key: keyPath, ClientCA: caPath})
 	if err != nil {
-		t.Fatalf("Listen refused a client CA file at the %d-byte bound: %v", maxClientCABytes, err)
+		t.Fatalf("Listen refused a client CA file at the %d-byte bound: %v", maxOperatorFile, err)
 	}
 	ln.Close()
 
-	if err := os.WriteFile(caPath, padTo(maxClientCABytes+1), 0o600); err != nil {
+	if err := os.WriteFile(caPath, padTo(ca, maxOperatorFile+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ln, err = Listen("127.0.0.1:0", Ingress{Certificate: certPath, Key: keyPath, ClientCA: caPath})
 	if err == nil {
 		ln.Close()
-		t.Fatalf("Listen accepted a client CA file above %d bytes, want refusal", maxClientCABytes)
+		t.Fatalf("Listen accepted a client CA file above %d bytes, want refusal", maxOperatorFile)
+	}
+	if err := os.WriteFile(caPath, ca, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certPath, padTo(cert, maxOperatorFile+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ln, err = Listen("127.0.0.1:0", Ingress{Certificate: certPath, Key: keyPath, ClientCA: caPath})
+	if err == nil {
+		ln.Close()
+		t.Fatalf("Listen accepted a certificate file above %d bytes, want refusal", maxOperatorFile)
 	}
 }
