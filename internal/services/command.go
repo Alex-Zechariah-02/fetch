@@ -18,6 +18,11 @@ import (
 	"github.com/Alex-Zechariah-02/fetch/internal/trusted"
 )
 
+const (
+	minArchive    = 64 << 20
+	controlOffset = 100
+)
+
 // Command starts one service. Explicit addresses are already resolved by the
 // operator; defaults apply the process port offset exactly once.
 func Command(ctx context.Context, fixedName string, args []string, output io.Writer) error {
@@ -55,7 +60,7 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	if *whenFull != "evict_oldest" && *whenFull != "refuse" {
 		return fmt.Errorf("-local-security-when-full must be evict_oldest or refuse")
 	}
-	if storage.ArchiveBytes < 64<<20 {
+	if storage.ArchiveBytes < minArchive {
 		return fmt.Errorf("-local-security-archive-bytes must be at least 64 MiB")
 	}
 	if storage.Archive != "" && !filepath.IsAbs(storage.Archive) {
@@ -74,8 +79,8 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 	if err != nil {
 		return err
 	}
-	// The control default is the API port plus 100, so the two listeners never collide.
-	defaultControl, err := ports.Offset("127.0.0.1:" + strconv.Itoa(base+100))
+	// The control default is the API port plus controlOffset, so the two listeners never collide.
+	defaultControl, err := ports.Offset("127.0.0.1:" + strconv.Itoa(base+controlOffset))
 	if err != nil {
 		return err
 	}
@@ -86,14 +91,14 @@ func Command(ctx context.Context, fixedName string, args []string, output io.Wri
 		*control = defaultControl
 	}
 	if name == "orders" && *inventoryURL == "" {
-		address, err := ports.Offset("127.0.0.1:9501")
+		address, err := ports.Offset("127.0.0.1:" + strconv.Itoa(bases["inventory"]))
 		if err != nil {
 			return err
 		}
 		*inventoryURL = "http://" + address
 	}
 	if (name == "reports" || name == "support") && *ordersURL == "" {
-		address, err := ports.Offset("127.0.0.1:9502")
+		address, err := ports.Offset("127.0.0.1:" + strconv.Itoa(bases["orders"]))
 		if err != nil {
 			return err
 		}

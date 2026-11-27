@@ -239,29 +239,35 @@ func (d *orders) place(r *http.Request, body []byte, key string) result {
 	return result{status: 201, body: map[string]any{"order": created}, effect: "created " + created.ID}
 }
 
-// Shared order line bounds matching the policy's checkout schema.
+// Shared order and address bounds matching the policy's checkout schema.
 const (
 	maxItems    = 20
 	maxQuantity = 50
+	idLen       = 7
+	maxNote     = 200
+	maxLine     = 100
+	postcodeLen = 5
+	maxCity     = 40
 )
 
 // validOrderRequest bounds every field, so a stored order and its receipt
-// stay small: IDs have 7 characters (MER-001), a postcode 5; at most maxItems
-// lines of at most maxQuantity units keep the subtotal far inside an int64.
+// stay small: IDs have idLen characters (MER-001), a postcode postcodeLen; at
+// most maxItems lines of at most maxQuantity units keep the subtotal far
+// inside an int64.
 func validOrderRequest(request orderRequest) bool {
-	if !length(request.Merchant, 7, 7) ||
+	if !length(request.Merchant, idLen, idLen) ||
 		len(request.Items) < 1 || len(request.Items) > maxItems ||
-		!length(request.Note, 0, 200) ||
-		!length(request.Address.Line1, 1, 100) ||
-		!length(request.Address.Line2, 0, 100) ||
-		!length(request.Address.Postcode, 5, 5) ||
-		!length(request.Address.City, 1, 40) ||
+		!length(request.Note, 0, maxNote) ||
+		!length(request.Address.Line1, 1, maxLine) ||
+		!length(request.Address.Line2, 0, maxLine) ||
+		!length(request.Address.Postcode, postcodeLen, postcodeLen) ||
+		!length(request.Address.City, 1, maxCity) ||
 		!slices.Contains(states, request.Address.State) ||
 		(request.Payment != "cash" && request.Payment != "wallet") {
 		return false
 	}
 	for _, line := range request.Items {
-		if !length(line.Item, 7, 7) || line.Quantity < 1 || line.Quantity > maxQuantity {
+		if !length(line.Item, idLen, idLen) || line.Quantity < 1 || line.Quantity > maxQuantity {
 			return false
 		}
 	}

@@ -167,7 +167,7 @@ func pagination(q url.Values, def int) (int, string, bool) {
 			return 0, "", false
 		}
 	}
-	return n, q.Get("after"), err == nil && n >= 1 && n <= 100
+	return n, q.Get("after"), err == nil && n >= 1 && n <= maxPage
 }
 func invalidQuery() result { return failure(400, "invalid_query", "Check the query parameters.", "") }
 func length(value string, min, max int) bool {

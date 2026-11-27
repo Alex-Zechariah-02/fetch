@@ -42,6 +42,12 @@ type Ticket struct {
 const (
 	keptTickets = 1000
 	maxMessages = 20
+	minSubject  = 5
+	maxSubject  = 120
+	maxMessage  = 2000
+	orderLen    = 8
+	minRef      = 16
+	maxRef      = 64
 )
 
 type support struct {
@@ -101,7 +107,7 @@ func (d *support) handle(r *http.Request, body []byte) result {
 			return *rejected
 		}
 		// The lengths bound one stored ticket; a value outside them is refused with 400.
-		if !length(request.Subject, 5, 120) || !length(request.Message, 1, 2000) || request.Order != nil && !length(*request.Order, 8, 8) || request.RequestRef != nil && !length(*request.RequestRef, 16, 64) {
+		if !length(request.Subject, minSubject, maxSubject) || !length(request.Message, 1, maxMessage) || request.Order != nil && !length(*request.Order, orderLen, orderLen) || request.RequestRef != nil && !length(*request.RequestRef, minRef, maxRef) {
 			return failure(400, "invalid_request", "Check the ticket subject, message and references.", "")
 		}
 		if request.Order != nil {
@@ -151,7 +157,7 @@ func (d *support) handle(r *http.Request, body []byte) result {
 		if rejected := decodeBody(r, body, ticketBody, &request); rejected != nil {
 			return *rejected
 		}
-		if !length(request.Message, 1, 2000) {
+		if !length(request.Message, 1, maxMessage) {
 			return failure(400, "invalid_request", "Enter a message of one to two thousand characters.", "message")
 		}
 		from := "customer"

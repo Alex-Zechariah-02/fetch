@@ -14,6 +14,7 @@ import (
 const (
 	defaultPage = 20
 	boardPage   = 50
+	maxPage     = 100
 )
 
 // page answers the order lists: support and operations see every order, a

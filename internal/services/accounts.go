@@ -23,6 +23,9 @@ import (
 const (
 	demoPassword  = "FetchDemo2026!"
 	tokenLifetime = 15 * time.Minute
+	minEmail      = 3
+	maxEmail      = 254
+	maxPassword   = 256
 )
 
 type signingSettings struct {
@@ -176,7 +179,7 @@ func (d *accounts) login(r *http.Request, body []byte) result {
 		return *rejected
 	}
 	// Lengths are checked before hashing, so no oversized credential reaches the password step.
-	if !length(request.Email, 3, 254) || !length(request.Password, 1, 256) {
+	if !length(request.Email, minEmail, maxEmail) || !length(request.Password, 1, maxPassword) {
 		return failure(400, "invalid_request", "Enter an email address and password within the allowed lengths.", "")
 	}
 	i, found := d.byEmail[strings.ToLower(strings.TrimSpace(request.Email))]

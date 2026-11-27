@@ -46,20 +46,20 @@ func objectSchema(required []string, properties map[string]any) map[string]any {
 // Operations lists every API operation in the baseline policy's order.
 func Operations() []guard.Operation {
 	// Each field's bound is the OpenAPI schema's; the guard refuses a body outside it.
-	itemChange := objectSchema([]string{}, map[string]any{"price_sen": integerSchema(50, 100000), "available": map[string]any{"type": "boolean"}})
-	stockChange := objectSchema([]string{"delta"}, map[string]any{"delta": integerSchema(-100, 100)})
-	line := objectSchema([]string{"item", "quantity"}, map[string]any{"item": stringSchema(7, 7), "quantity": integerSchema(1, 50)})
+	itemChange := objectSchema([]string{}, map[string]any{"price_sen": integerSchema(minPrice, maxPrice), "available": map[string]any{"type": "boolean"}})
+	stockChange := objectSchema([]string{"delta"}, map[string]any{"delta": integerSchema(-maxDelta, maxDelta)})
+	line := objectSchema([]string{"item", "quantity"}, map[string]any{"item": stringSchema(idLen, idLen), "quantity": integerSchema(1, maxQuantity)})
 	address := objectSchema([]string{"line1", "postcode", "city", "state"}, map[string]any{
-		"line1": stringSchema(1, 100), "line2": stringSchema(0, 100), "postcode": stringSchema(5, 5), "city": stringSchema(1, 40),
-		"state": map[string]any{"type": "string", "enum": []string{"Johor", "Kedah", "Kelantan", "Melaka", "Negeri Sembilan", "Pahang", "Perak", "Perlis", "Pulau Pinang", "Sabah", "Sarawak", "Selangor", "Terengganu", "Wilayah Persekutuan Kuala Lumpur", "Wilayah Persekutuan Labuan", "Wilayah Persekutuan Putrajaya"}},
+		"line1": stringSchema(1, maxLine), "line2": stringSchema(0, maxLine), "postcode": stringSchema(postcodeLen, postcodeLen), "city": stringSchema(1, maxCity),
+		"state": map[string]any{"type": "string", "enum": slices.Clone(states)},
 	})
 	checkout := objectSchema([]string{"merchant", "items", "address", "payment"}, map[string]any{
-		"merchant": stringSchema(7, 7), "items": map[string]any{"type": "array", "items": line, "minItems": 1, "maxItems": 20},
-		"address": address, "note": stringSchema(0, 200), "payment": map[string]any{"type": "string", "enum": []string{"cash", "wallet"}},
+		"merchant": stringSchema(idLen, idLen), "items": map[string]any{"type": "array", "items": line, "minItems": 1, "maxItems": maxItems},
+		"address": address, "note": stringSchema(0, maxNote), "payment": map[string]any{"type": "string", "enum": []string{"cash", "wallet"}},
 	})
-	ticket := objectSchema([]string{"subject", "message"}, map[string]any{"subject": stringSchema(5, 120), "message": stringSchema(1, 2000), "order": stringSchema(8, 8), "request_ref": stringSchema(16, 64)})
-	reply := objectSchema([]string{"message"}, map[string]any{"message": stringSchema(1, 2000)})
-	login := objectSchema([]string{"email", "password"}, map[string]any{"email": stringSchema(3, 254), "password": stringSchema(1, 256)})
+	ticket := objectSchema([]string{"subject", "message"}, map[string]any{"subject": stringSchema(minSubject, maxSubject), "message": stringSchema(1, maxMessage), "order": stringSchema(orderLen, orderLen), "request_ref": stringSchema(minRef, maxRef)})
+	reply := objectSchema([]string{"message"}, map[string]any{"message": stringSchema(1, maxMessage)})
+	login := objectSchema([]string{"email", "password"}, map[string]any{"email": stringSchema(minEmail, maxEmail), "password": stringSchema(1, maxPassword)})
 	public, all := []string(nil), Roles
 	customer, merchant, rider := []string{"CUSTOMER"}, []string{"MERCHANT"}, []string{"RIDER"}
 	support, operations := []string{"SUPPORT"}, []string{"OPERATIONS"}

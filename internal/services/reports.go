@@ -50,7 +50,7 @@ func (d *reports) load(ctx context.Context, keep func(Order) bool) ([]Order, err
 	seen := map[string]bool{}
 	epoch := -1
 	for read := 0; read < maxReportOrders; {
-		path := "/internal/orders?limit=100"
+		path := fmt.Sprintf("/internal/orders?limit=%d", maxPage)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
