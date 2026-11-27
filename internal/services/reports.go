@@ -36,14 +36,14 @@ func (d *reports) close()        { d.orders.close() }
 // outage, answered 502.
 var errOrdersFailed = errors.New("orders answered without a valid page")
 
-// maxReportOrders bounds the orders one report reads.
-const maxReportOrders = 20000
+const (
+	maxReportOrders = 20000
+	ordersTimeout   = 4 * time.Second
+)
 
-// load reads every order from Orders and keeps those keep accepts. 4 s
-// bounds the wait of one report; maxReportOrders, read in pages of 100 (the
-// most Orders gives), bound its work.
+// load reads every order from Orders and keeps those keep accepts.
 func (d *reports) load(ctx context.Context, keep func(Order) bool) ([]Order, error) {
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, ordersTimeout)
 	defer cancel()
 	kept := []Order{}
 	after := ""
@@ -58,10 +58,10 @@ func (d *reports) load(ctx context.Context, keep func(Order) bool) ([]Order, err
 		if err != nil {
 			return nil, err
 		}
-		if status >= 500 {
+		if status >= http.StatusInternalServerError {
 			return nil, fmt.Errorf("orders answered %d", status)
 		}
-		if status != 200 {
+		if status != http.StatusOK {
 			return nil, fmt.Errorf("%w: status %d: %.200s", errOrdersFailed, status, body)
 		}
 		var page struct {

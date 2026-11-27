@@ -227,7 +227,11 @@ func (a *assertions) check(r *http.Request, now time.Time) bool {
 	if now.Sub(a.logged) < refusalGap {
 		return false
 	}
-	a.log.Warn("gateway assertion refused", "reason", err.Error(), "method", bounded(r.Method, 32), "path", bounded(r.URL.EscapedPath(), 512), "refused", a.refused)
+	const (
+		maxLoggedMethod = 32
+		maxLoggedPath   = 512
+	)
+	a.log.Warn("gateway assertion refused", "reason", err.Error(), "method", bounded(r.Method, maxLoggedMethod), "path", bounded(r.URL.EscapedPath(), maxLoggedPath), "refused", a.refused)
 	a.refused, a.logged = 0, now
 	return false
 }

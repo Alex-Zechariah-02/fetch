@@ -112,6 +112,8 @@ func checkFiles(dir string) error {
 	return nil
 }
 
+const maxIdentityBytes = 4096
+
 // readIdentity reads dir's identity as setup wrote it: one object, nothing after it.
 func readIdentity(dir string) (demoIdentity, error) {
 	var identity demoIdentity
@@ -123,8 +125,7 @@ func readIdentity(dir string) (demoIdentity, error) {
 		return identity, fmt.Errorf("not an identified demonstration directory: %w", err)
 	}
 	defer file.Close()
-	// An identity is a small object; 4096 bytes cap the read, so a longer object fails to decode.
-	decoder := json.NewDecoder(io.LimitReader(file, 4096))
+	decoder := json.NewDecoder(io.LimitReader(file, maxIdentityBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&identity); err != nil {
 		return identity, fmt.Errorf("invalid demonstration identity: %w", err)
@@ -208,8 +209,7 @@ func checkEarlierDemoForFresh(dir string) error {
 		Config    string `json:"config_sha256"`
 		Secret    string `json:"fixture_secret_sha256"`
 	}
-	// The earlier identity gets the same 4096-byte cap, so a longer object fails to decode.
-	decoder := json.NewDecoder(io.LimitReader(file, 4096))
+	decoder := json.NewDecoder(io.LimitReader(file, maxIdentityBytes))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&identity) != nil {
 		return errors.New("invalid earlier demo identity")

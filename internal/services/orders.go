@@ -240,10 +240,10 @@ func (d *orders) quote(r *http.Request, subject string) result {
 		status, body, err = d.inventory.call(r.Context(), "GET", "/internal/merchants/"+url.PathEscape(q.Get("merchant")), nil, "")
 	})
 	// The fee below is read from the orders as they are now.
-	if err != nil || status >= 500 || d.epoch != epoch {
+	if err != nil || status >= http.StatusInternalServerError || d.epoch != epoch {
 		return inventoryUnavailable()
 	}
-	if status != 200 {
+	if status != http.StatusOK {
 		return notFound()
 	}
 	var response struct {

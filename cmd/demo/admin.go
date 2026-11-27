@@ -66,8 +66,8 @@ func (a *adminClient) send(method, path string, body []byte, headers map[string]
 		return nil, nil, fmt.Errorf("%s %s: no answer from the gateway, so it may or may not have been applied; check the Dashboard: %w", method, path, err)
 	}
 	defer response.Body.Close()
-	// 1 MiB caps the memory one answer takes; a longer reply is cut short.
-	reply, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	const maxAdminBody = 1 << 20
+	reply, err := io.ReadAll(io.LimitReader(response.Body, maxAdminBody))
 	if err != nil {
 		return nil, nil, err
 	}

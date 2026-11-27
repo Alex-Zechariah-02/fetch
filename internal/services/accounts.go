@@ -20,7 +20,10 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-const demoPassword = "FetchDemo2026!"
+const (
+	demoPassword  = "FetchDemo2026!"
+	tokenLifetime = 15 * time.Minute
+)
 
 type signingSettings struct {
 	Kid            string `json:"kid"`
@@ -114,7 +117,7 @@ func (d *accounts) issue(user User) result {
 		d.log.Error("token not signed; sign-in refused", "settings", d.signingFile, "error", err)
 		return failure(503, "accounts_unavailable", "Sign-in is temporarily unavailable. Try again later.", "")
 	}
-	return result{status: 200, body: map[string]any{"token": token, "expires_at": expires, "user": user}}
+	return result{status: http.StatusOK, body: map[string]any{"token": token, "expires_at": expires, "user": user}}
 }
 
 // sign makes user's token, issued at now, with the current signing key.
@@ -123,8 +126,7 @@ func (d *accounts) sign(user User, now time.Time) (string, time.Time, error) {
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	// A token lives 15 minutes, so an expired one is refused until the client refreshes.
-	expires := now.Add(15 * time.Minute)
+	expires := now.Add(tokenLifetime)
 	claims, err := json.Marshal(map[string]any{"iss": "fetch-accounts", "aud": "fetch-gateway", "sub": user.ID, "roles": user.Roles, "name": user.Name, "iat": now.Unix(), "nbf": now.Unix(), "exp": expires.Unix()})
 	if err != nil {
 		return "", time.Time{}, err

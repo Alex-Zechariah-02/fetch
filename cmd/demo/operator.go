@@ -58,7 +58,7 @@ func loginWithClient(client *http.Client, origin, email, visitor string) (string
 		Token   string    `json:"token"`
 		Expires time.Time `json:"expires_at"`
 	}
-	if response.StatusCode != 200 {
+	if response.StatusCode != http.StatusOK {
 		return "", time.Time{}, fmt.Errorf("Accounts refused the sign-in (status %d)", response.StatusCode)
 	}
 	// At most 64 KiB of a sign-in reply is decoded; a cut-off answer fails the sign-in.

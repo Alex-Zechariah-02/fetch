@@ -75,7 +75,7 @@ func (d *orders) create(r *http.Request, body []byte) result {
 	delete(d.placing, scope)
 	// A server failure is not kept, so a retry with the key tries again
 	// under a new reservation; the failed attempt's own is released.
-	if key != "" && res.status < 500 {
+	if key != "" && res.status < http.StatusInternalServerError {
 		// Encoded once: the stored bytes are also this answer's.
 		encoded, err := res.encode()
 		if err != nil {
@@ -94,7 +94,7 @@ func (d *orders) create(r *http.Request, body []byte) result {
 }
 func (d *orders) release(ctx context.Context, key string) bool {
 	// Compensation survives caller cancellation and uses one stable identity.
-	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
 	if d.releasing[key] {
 		return false
@@ -105,7 +105,7 @@ func (d *orders) release(ctx context.Context, key string) bool {
 		// Two attempts bound the Inventory calls one failed checkout makes.
 		for range 2 {
 			status, _, err := d.inventory.call(cleanup, "DELETE", "/internal/reservations/"+key, nil, key)
-			if err == nil && status == 200 {
+			if err == nil && status == http.StatusOK {
 				released = true
 				return
 			}
@@ -163,14 +163,16 @@ func (d *orders) retry() {
 		if settled {
 			delay = time.Second
 		} else {
-			delay = min(2*delay, 30*time.Second)
+			delay = min(2*delay, maxReleaseDelay)
 		}
 	}
 }
 
-// retryBatch bounds one turn of the compensation worker; each release makes
-// at most two Inventory calls of three seconds.
-const retryBatch = 32
+const (
+	retryBatch      = 32
+	cleanupTimeout  = 3 * time.Second
+	maxReleaseDelay = 30 * time.Second
+)
 
 func (d *orders) place(r *http.Request, body []byte, key string) result {
 	var request orderRequest
@@ -199,11 +201,11 @@ func (d *orders) place(r *http.Request, body []byte, key string) result {
 	})
 	// Everything below reads the wallet, the orders and the next order
 	// number as they are now. After a reset the order is not placed.
-	if err != nil || status >= 500 || status == 401 || d.epoch != epoch {
+	if err != nil || status >= http.StatusInternalServerError || status == http.StatusUnauthorized || d.epoch != epoch {
 		d.release(r.Context(), reservationKey)
 		return inventoryUnavailable()
 	}
-	if status != 200 {
+	if status != http.StatusOK {
 		var problem apiError
 		if json.Unmarshal(reply, &problem) != nil || problem.Error == "" {
 			return inventoryUnavailable()

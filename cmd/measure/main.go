@@ -169,7 +169,7 @@ func login(client *http.Client, origin, email string) (string, error) {
 	var reply struct {
 		Token string `json:"token"`
 	}
-	if readErr != nil || len(body) > loginLimit || response.StatusCode != 200 || json.Unmarshal(body, &reply) != nil || reply.Token == "" {
+	if readErr != nil || len(body) > loginLimit || response.StatusCode != http.StatusOK || json.Unmarshal(body, &reply) != nil || reply.Token == "" {
 		return "", errors.New("Accounts login failed; no measurement emitted")
 	}
 	return reply.Token, nil
@@ -252,7 +252,7 @@ func wallet(client *http.Client, c condition, subject string, clock sampleClock)
 		return 0, 0, errors.New("measurement clock did not advance; no measurement emitted")
 	}
 	elapsed := float64(ended-started) * 1000 / clock.frequency
-	if readErr != nil || closeErr != nil || len(body) > walletLimit || response.StatusCode != 200 || response.Header.Get("X-Service") != "orders" || c.token != "" && response.Header.Get("X-Request-Id") == "" {
+	if readErr != nil || closeErr != nil || len(body) > walletLimit || response.StatusCode != http.StatusOK || response.Header.Get("X-Service") != "orders" || c.token != "" && response.Header.Get("X-Request-Id") == "" {
 		return 0, 0, fmt.Errorf("wallet request (%s) failed or had an invalid service response (status %d); no measurement emitted", c.name, response.StatusCode)
 	}
 	var reply struct {

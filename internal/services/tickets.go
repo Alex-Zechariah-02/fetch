@@ -115,17 +115,17 @@ func (d *support) ownOrder(ctx context.Context, subject, order string) *result {
 		} `json:"order"`
 	}
 	switch {
-	case err != nil || status >= 500:
-		refused := failure(503, "orders_unavailable", "Orders could not confirm the order. Try again later.", "")
+	case err != nil || status >= http.StatusInternalServerError:
+		refused := failure(http.StatusServiceUnavailable, "orders_unavailable", "Orders could not confirm the order. Try again later.", "")
 		return &refused
-	case status == 200 && json.Unmarshal(body, &answer) == nil && answer.Order.Customer == subject:
+	case status == http.StatusOK && json.Unmarshal(body, &answer) == nil && answer.Order.Customer == subject:
 		return nil
-	case status == 200 || status == 404:
+	case status == http.StatusOK || status == http.StatusNotFound:
 		// Another customer's order is refused like one that does not exist.
-		refused := failure(422, "invalid_order", "Choose one of your own orders.", "order")
+		refused := failure(http.StatusUnprocessableEntity, "invalid_order", "Choose one of your own orders.", "order")
 		return &refused
 	default:
-		refused := failure(503, "orders_unavailable", "Orders could not confirm the order. Try again later.", "")
+		refused := failure(http.StatusServiceUnavailable, "orders_unavailable", "Orders could not confirm the order. Try again later.", "")
 		return &refused
 	}
 }

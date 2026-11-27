@@ -16,9 +16,11 @@ import (
 	"time"
 )
 
-// idleCalls is how many idle connections a service keeps to the one service
-// it calls.
-const idleCalls = 256
+const (
+	idleCalls        = 256
+	internalTimeout  = 2 * time.Second
+	maxInternalReply = 1 << 20
+)
 
 type serviceClient struct {
 	base string
@@ -42,8 +44,8 @@ func newServiceClient(base string, key []byte) (*serviceClient, error) {
 	// Go keeps 2 idle connections per host by default, so under load most
 	// calls would open a new one; 256 keeps them for the concurrent calls of a
 	// busy service, all to one loopback origin.
-	transport := &http.Transport{Proxy: nil, ResponseHeaderTimeout: 2 * time.Second, MaxIdleConns: idleCalls, MaxIdleConnsPerHost: idleCalls}
-	return &serviceClient{base: base, key: string(key), http: &http.Client{Timeout: 2 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	transport := &http.Transport{Proxy: nil, ResponseHeaderTimeout: internalTimeout, MaxIdleConns: idleCalls, MaxIdleConnsPerHost: idleCalls}
+	return &serviceClient{base: base, key: string(key), http: &http.Client{Timeout: internalTimeout, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (c *serviceClient) call(ctx context.Context, method, path string, body []byte, key string) (int, []byte, error) {
 	request, err := http.NewRequestWithContext(ctx, method, c.base+path, bytes.NewReader(body)) // #nosec G704 -- c.base is a validated loopback origin (newServiceClient)
@@ -62,11 +64,11 @@ func (c *serviceClient) call(ctx context.Context, method, path string, body []by
 		return 0, nil, err
 	}
 	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxInternalReply+1))
 	if err != nil {
 		return 0, nil, err
 	}
-	if len(data) > 1<<20 {
+	if len(data) > maxInternalReply {
 		return 0, nil, errors.New("internal response exceeds its bound")
 	}
 	return response.StatusCode, data, nil

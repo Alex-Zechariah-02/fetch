@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,11 @@ import (
 	"time"
 
 	"github.com/Alex-Zechariah-02/fetch/internal/services"
+)
+
+const (
+	maxSubject     = 128
+	maxControlBody = 1 << 20
 )
 
 // token obtains a demo account token from Fetch Accounts. It never reads a
@@ -57,7 +63,7 @@ func accountToken(subject string) (string, time.Time, error) {
 }
 func validSubject(s string) bool {
 	// Seeded account IDs are short printable ASCII; anything else cannot match one, so it is refused.
-	if len(s) < 1 || len(s) > 128 {
+	if len(s) < 1 || len(s) > maxSubject {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
@@ -114,12 +120,11 @@ func resetService(client *http.Client, service demoService, secret string) (stri
 		return "", fmt.Errorf("no answer; its reset outcome is unknown: %w", err)
 	}
 	var state services.State
-	// A reset answer is a small state object, so 1 MiB bounds the read from a broken listener.
-	decodeErr := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&state)
+	// A reset answer is a small state object, so maxControlBody bounds the read from a broken listener.
+	decodeErr := json.NewDecoder(io.LimitReader(response.Body, maxControlBody)).Decode(&state)
 	response.Body.Close()
 	hash, hashErr := hex.DecodeString(state.SHA256)
-	// The seed hash must be a full SHA-256, 32 bytes, so a truncated digest is refused.
-	if response.StatusCode != 200 || decodeErr != nil || state.Service != service.name || hashErr != nil || len(hash) != 32 {
+	if response.StatusCode != http.StatusOK || decodeErr != nil || state.Service != service.name || hashErr != nil || len(hash) != sha256.Size {
 		return "", fmt.Errorf("invalid reset answer, status %d", response.StatusCode)
 	}
 	return state.SHA256, nil

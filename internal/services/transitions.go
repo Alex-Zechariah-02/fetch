@@ -63,7 +63,7 @@ func (d *orders) transition(r *http.Request, id, action string) result {
 		d.outside(r.Context(), func() {
 			status, _, err = d.inventory.call(r.Context(), "POST", "/internal/reservations/"+key+"/commit", nil, key)
 		})
-		if err != nil || status != 200 || d.epoch != epoch {
+		if err != nil || status != http.StatusOK || d.epoch != epoch {
 			return inventoryUnavailable()
 		}
 		// The list may have moved and the order changed while Inventory
