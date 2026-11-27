@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { Lifebuoy, MapPin, ShoppingBagOpen, SignOut, Wallet } from '@phosphor-icons/react'
-import { setAddress, useAddress } from '../lib/address'
+import { blankAddress, setAddress, useAddress } from '../lib/address'
 import { rm } from '../lib/format'
 import { describe } from '../lib/messages'
 import { useQuery } from '../lib/query'
 import { navigate } from '../lib/router'
 import { hasRole, roleNames, signOut, useSession } from '../lib/session'
-import type { Address, User } from '../lib/types'
+import type { User } from '../lib/types'
 import { AddressForm } from '../app/shell'
 import { Button, ButtonLink } from '../ui/button'
 import { Loading, ProblemNotice, Skeleton } from '../ui/notice'
@@ -14,9 +14,6 @@ import { Loading, ProblemNotice, Skeleton } from '../ui/notice'
 // The account page shows what Fetch Accounts returns for the signed-in person,
 // read through the gateway, and this tab's delivery address. Nothing here
 // grants or changes a role.
-
-// Prefilled with Kuala Lumpur, where the shops are; any town or state may replace it.
-const blankAddress: Address = { line1: '', line2: '', postcode: '', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
 
 export function AccountPage() {
   const { session } = useSession()

@@ -4,7 +4,7 @@ import { Popover } from '@base-ui/react/popover'
 import {
   CaretDown, Check, Info, Lifebuoy, MagnifyingGlass, MapPin, Moon, ShoppingBagOpen, SignOut, Sun, UserCircle, X,
 } from '@phosphor-icons/react'
-import { addressErrors, setAddress, useAddress } from '../lib/address'
+import { addressErrors, blankAddress, setAddress, useAddress } from '../lib/address'
 import { basketCount, useBasket } from '../lib/basket'
 import { Link, navigate, useLocation } from '../lib/router'
 import { dismissNotice, hasRole, roleNames, signOut, useSession } from '../lib/session'
@@ -212,9 +212,6 @@ function SearchBox() {
     </form>
   )
 }
-
-// Prefilled with Kuala Lumpur, where the shops are; any town or state may replace it.
-const blankAddress: Address = { line1: '', line2: '', postcode: '', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
 
 function AddressPicker() {
   const address = useAddress()

@@ -6,6 +6,9 @@ import { states, type Address } from './types'
 // held in this tab's sessionStorage. It belongs to one person: a change of
 // person clears it.
 
+// Prefilled with Kuala Lumpur, where the shops are; any town or state may replace it.
+export const blankAddress: Address = { line1: '', line2: '', postcode: '', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
+
 const storageKey = 'fetch.address'
 const listeners = new Set<() => void>()
 let address: Address | null = read()

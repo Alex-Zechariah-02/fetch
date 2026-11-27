@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Money, PencilSimple, ShoppingBagOpen, Wallet } from '@phosphor-icons/react'
-import { addressErrors, setAddress, useAddress } from '../lib/address'
+import { addressErrors, blankAddress, setAddress, useAddress } from '../lib/address'
 import { newIdempotencyKey, outcomeOfWrite, type Answer } from '../lib/api'
 import { basketSubtotal, emptyBasket, useBasket, type Basket } from '../lib/basket'
 import { rm } from '../lib/format'
@@ -16,8 +16,6 @@ import { Empty, ProblemNotice } from '../ui/notice'
 import { Photo } from '../ui/photo'
 import { useQuote } from '../shop/parts'
 
-// Prefilled with Kuala Lumpur, where the shops are; any town or state may replace it.
-const blank: Address = { line1: '', line2: '', postcode: '', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
 // defaultAddress fills the form in one step with a complete address the
 // order schema accepts.
 const defaultAddress: Address = { line1: '1 Jalan Ampang', line2: 'Level 10', postcode: '50450', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
@@ -44,7 +42,7 @@ export function CheckoutPage() {
 
 function Checkout({ basket }: { basket: Basket }) {
   const saved = useAddress()
-  const [address, setDraft] = useState<Address>(saved ?? blank)
+  const [address, setDraft] = useState<Address>(saved ?? blankAddress)
   const [note, setNote] = useState('')
   const [payment, setPayment] = useState<Payment>('cash')
   const [tried, setTried] = useState(false)
