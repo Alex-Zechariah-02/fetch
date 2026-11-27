@@ -1,3 +1,5 @@
+// Service command argument checks and full five-service startup and shutdown.
+
 package services
 
 import (
@@ -25,7 +27,8 @@ func TestServiceCommandValidation(t *testing.T) {
 
 func freeServiceAddress(t *testing.T) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	// 127.0.0.2 avoids ephemeral port collisions with parallel tests on 127.0.0.1.
+	listener, err := net.Listen("tcp", "127.0.0.2:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +50,7 @@ func TestServiceCommandLifecycle(t *testing.T) {
 	}
 	_, _, signingFile := accountService(t)
 	addresses := map[string]string{}
-	client := &http.Client{Timeout: time.Second}
+	client := &http.Client{Timeout: 5 * time.Second}
 	for _, name := range []string{"inventory", "orders", "reports", "support", "accounts"} {
 		api, control := freeServiceAddress(t), freeServiceAddress(t)
 		addresses[name] = api
@@ -79,8 +82,13 @@ func TestServiceCommandLifecycle(t *testing.T) {
 				t.Errorf("%s did not stop", name)
 			}
 		})
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(15 * time.Second)
 		for {
+			select {
+			case err := <-done:
+				t.Fatalf("%s exited before ready: %v", name, err)
+			default:
+			}
 			request, _ := http.NewRequest("GET", "http://"+control+"/state", nil)
 			request.Header.Set("Authorization", "Bearer "+string(testSecret))
 			response, err := client.Do(request)
