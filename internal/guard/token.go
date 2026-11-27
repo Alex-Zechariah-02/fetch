@@ -33,6 +33,8 @@ const (
 	maxTokenBytes = 4096
 	// 64 roles caps the sorting, logging and header building one token causes.
 	maxRoles   = 64
+	maxRole    = 64
+	maxKid     = 64
 	maxSubject = 128
 	// Far-future exp and nbf values are refused, so a token's validity has a ceiling.
 	maxNumericDate = 253402300799 // 9999-12-31T23:59:59Z
@@ -144,8 +146,7 @@ func checkHeader(segment string) (string, string) {
 		return "", "malformed_credential"
 	}
 	kid, _ := header["kid"].(string)
-	// 64 characters bounds the key identifier used as a map key on every verify.
-	if alg, _ := header["alg"].(string); alg != string(jose.RS256) || kid == "" || len(kid) > 64 {
+	if alg, _ := header["alg"].(string); alg != string(jose.RS256) || kid == "" || len(kid) > maxKid {
 		return "", "unsupported_header"
 	}
 	for name, value := range header {
@@ -273,8 +274,7 @@ func subjectID(id string) bool {
 // roleID accepts 1 to 64 letters, digits, '.', '_' and '-', starting with a
 // letter or digit.
 func roleID(id string) bool {
-	// 64 characters bounds a role name that is sorted, logged and sent in a header.
-	if id == "" || len(id) > 64 {
+	if id == "" || len(id) > maxRole {
 		return false
 	}
 	for i := 0; i < len(id); i++ {

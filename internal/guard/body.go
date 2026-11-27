@@ -49,7 +49,8 @@ func bufferBody(r *http.Request) ([]byte, *refusal) {
 		return nil, &refusal{http.StatusBadRequest, "bad_request", "read_failed"}
 	}
 	// A declared length sizes the buffer once; an undeclared one grows to the limit at most.
-	buffer := bytes.NewBuffer(make([]byte, 0, max(r.ContentLength, 512)))
+	const initialBody = 512
+	buffer := bytes.NewBuffer(make([]byte, 0, max(r.ContentLength, initialBody)))
 	if _, err := buffer.ReadFrom(io.LimitReader(r.Body, maxBody+1)); err != nil {
 		return nil, &refusal{http.StatusBadRequest, "bad_request", "read_failed"}
 	}

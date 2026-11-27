@@ -104,9 +104,10 @@ func New(cfg Config) (*Guard, error) {
 	g := &Guard{api: cfg.API, trustedProxy: trustedProxy, table: t, roles: slices.Clone(cfg.Roles), limiter: newLimiter(), keys: map[string]*rsa.PublicKey{}, blockedPath: filepath.Join(cfg.Dir, BlockedFile)}
 	g.ids.prefix = newIdentifiers().prefix
 	var keys []Key
-	// One key at least, so tokens can verify; 64 bounds the key files read at startup.
-	if err := readJSON(filepath.Join(cfg.Dir, KeysFile), &keys); err != nil || len(keys) == 0 || len(keys) > 64 {
-		return nil, fmt.Errorf("%s: one to 64 trusted keys are required (%v)", KeysFile, err)
+	// One key at least, so tokens can verify; maxKeys bounds the key files read at startup.
+	const maxKeys = 64
+	if err := readJSON(filepath.Join(cfg.Dir, KeysFile), &keys); err != nil || len(keys) == 0 || len(keys) > maxKeys {
+		return nil, fmt.Errorf("%s: one to %d trusted keys are required (%v)", KeysFile, maxKeys, err)
 	}
 	for _, key := range keys {
 		data, err := readFile(key.PublicKeyFile, maxFile)
