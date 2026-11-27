@@ -66,3 +66,14 @@ func TestCommitWithdrawsOnTimeout(t *testing.T) {
 		t.Fatalf("withdrawn admission written:\n%s", data)
 	}
 }
+
+// Informational 1xx headers do not overwrite the final HTTP status recorded.
+func TestStatusRecorderIgnoresInformationalStatus(t *testing.T) {
+	t.Parallel()
+	rec := &statusRecorder{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK}
+	rec.WriteHeader(http.StatusEarlyHints)
+	rec.WriteHeader(http.StatusCreated)
+	if rec.status != http.StatusCreated {
+		t.Fatalf("recorded status %d, want %d", rec.status, http.StatusCreated)
+	}
+}
