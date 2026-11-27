@@ -4,6 +4,8 @@
 package guard
 
 import (
+	"math"
+	"math/bits"
 	"strconv"
 	"syscall"
 )
@@ -21,5 +23,13 @@ func diskOf(dir string) (disk, error) {
 		return disk{free: -1, total: -1, id: strconv.FormatUint(st.Dev, 10)}, nil
 	}
 	block := uint64(fs.Bsize)
-	return disk{free: bytesOf(fs.Bavail * block), total: bytesOf(fs.Blocks * block), id: strconv.FormatUint(st.Dev, 10)}, nil
+	return disk{free: blockBytes(fs.Bavail, block), total: blockBytes(fs.Blocks, block), id: strconv.FormatUint(st.Dev, 10)}, nil
+}
+
+func blockBytes(blocks, size uint64) int64 {
+	high, low := bits.Mul64(blocks, size)
+	if high != 0 {
+		return math.MaxInt64
+	}
+	return bytesOf(low)
 }
