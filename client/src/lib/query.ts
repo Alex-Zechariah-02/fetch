@@ -22,19 +22,29 @@ interface Held<T> {
 // pageLimit bounds the pages one read of a whole list follows.
 const pageLimit = 20
 
+function isPaged(data: unknown): data is { items: unknown[]; next?: unknown } {
+  return typeof data === 'object' && data !== null && 'items' in data && Array.isArray(data.items)
+}
+
 // readAll reads a paged list whole: each answer's next cursor is followed
 // with after=, and the pages' items joined, up to pageLimit pages. A page that
 // fails ends the read with its answer.
 async function readAll<T>(path: string, signal: AbortSignal): Promise<Answer<T>> {
   const first = await call<T>({ method: 'GET', path, signal })
   if (first.kind !== 'ok') return first
-  const items: unknown[] = [...(first.data as { items: unknown[] }).items]
-  let next = (first.data as { next?: string }).next
+  if (!isPaged(first.data)) {
+    return { kind: 'failed', status: first.status, code: 'bad_answer', message: null, ref: first.ref, service: first.service }
+  }
+  const items: unknown[] = [...first.data.items]
+  let next = typeof first.data.next === 'string' ? first.data.next : undefined
   for (let pages = 1; next && pages < pageLimit; pages++) {
     const page = await call<T>({ method: 'GET', path: `${path}${path.includes('?') ? '&' : '?'}after=${encodeURIComponent(next)}`, signal })
     if (page.kind !== 'ok') return page
-    items.push(...(page.data as { items: unknown[] }).items)
-    next = (page.data as { next?: string }).next
+    if (!isPaged(page.data)) {
+      return { kind: 'failed', status: page.status, code: 'bad_answer', message: null, ref: page.ref, service: page.service }
+    }
+    items.push(...page.data.items)
+    next = typeof page.data.next === 'string' ? page.data.next : undefined
   }
   return { ...first, data: { ...first.data, items, next: undefined } as T }
 }
