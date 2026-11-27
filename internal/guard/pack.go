@@ -97,23 +97,30 @@ func writePacked(src, temporary string, r record) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer out.Close()
 	zw := gzip.NewWriter(out)
 	zw.Name, zw.Comment, zw.ModTime = filepath.Base(src), packedComment(r), r.Last
-	if _, err := io.Copy(zw, in); err != nil {
-		return 0, err
+	_, err = io.Copy(zw, in)
+	if err == nil {
+		err = zw.Close()
 	}
-	if err := zw.Close(); err != nil {
-		return 0, err
+	if err == nil {
+		err = out.Sync()
 	}
-	if err := out.Sync(); err != nil {
-		return 0, err
+	var size int64
+	if err == nil {
+		var info os.FileInfo
+		info, err = out.Stat()
+		if err == nil {
+			size = info.Size()
+		}
 	}
-	info, err := out.Stat()
+	if closeErr := out.Close(); err == nil {
+		err = closeErr
+	}
 	if err != nil {
 		return 0, err
 	}
-	return info.Size(), nil
+	return size, nil
 }
 
 func packedComment(r record) string {
