@@ -133,12 +133,18 @@ func (r *archiver) measure() {
 	}
 	r.stored.Store(stored)
 	r.waiting.Store(waiting)
-	for dir, free := range map[string]func(int64){r.live: r.freeLog.Store, r.dir: r.freeArchive.Store} {
-		d, err := diskOf(dir)
+	for _, target := range []struct {
+		dir   string
+		store func(int64)
+	}{
+		{r.live, r.freeLog.Store},
+		{r.dir, r.freeArchive.Store},
+	} {
+		d, err := diskOf(target.dir)
 		if err != nil {
 			d.free = -1
 		}
-		free(d.free)
+		target.store(d.free)
 	}
 }
 
@@ -212,8 +218,10 @@ func makeReserve(path string, size int64) error {
 	if err != nil {
 		return err
 	}
-	for at := int64(0); at < size && err == nil; at += fillStep {
-		_, err = file.WriteAt(zeros[:min(fillStep, size-at)], at)
+	for at := int64(0); at < size && err == nil; {
+		var n int
+		n, err = file.WriteAt(zeros[:min(fillStep, size-at)], at)
+		at += int64(n)
 	}
 	if err == nil {
 		err = file.Sync()
@@ -232,6 +240,9 @@ func makeReserve(path string, size int64) error {
 func (l *securityLog) releaseReserve() bool {
 	if l.reservePath == "" || os.Remove(l.reservePath) != nil {
 		return false
+	}
+	if err := syncDir(filepath.Dir(l.reservePath)); err != nil {
+		fmt.Fprintf(os.Stderr, "security log reserve folder sync failed: %v\n", err)
 	}
 	fmt.Fprintf(os.Stderr, "security log reserve released: the disk is full; the oldest files are evicted to make room\n")
 	if l.archive != nil {

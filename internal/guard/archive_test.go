@@ -87,3 +87,15 @@ func TestLogOpenerErrorFailsOpen(t *testing.T) {
 		t.Fatalf("openLog with failing opener: %v, want %v", err, want)
 	}
 }
+
+// measure populates both freeLog and freeArchive even when archive shares live.
+func TestMeasureRecordsBothFreeSpacesWhenSameDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	l := &securityLog{path: filepath.Join(dir, "orders-security.log")}
+	r := newArchiver(l, Storage{Archive: dir}, defaultReservePause)
+	r.measure()
+	if r.freeLog.Load() != r.freeArchive.Load() || r.freeLog.Load() < 0 {
+		t.Fatalf("freeLog=%d freeArchive=%d, want both non-negative and equal", r.freeLog.Load(), r.freeArchive.Load())
+	}
+}
