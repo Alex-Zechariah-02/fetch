@@ -17,5 +17,9 @@ func diskOf(dir string) (disk, error) {
 	if err := syscall.Stat(dir, &st); err != nil {
 		return disk{}, err
 	}
-	return disk{free: bytesOf(fs.Bavail) * fs.Bsize, total: bytesOf(fs.Blocks) * fs.Bsize, id: strconv.FormatUint(st.Dev, 10)}, nil
+	if fs.Bsize <= 0 {
+		return disk{free: -1, total: -1, id: strconv.FormatUint(st.Dev, 10)}, nil
+	}
+	block := uint64(fs.Bsize)
+	return disk{free: bytesOf(fs.Bavail * block), total: bytesOf(fs.Blocks * block), id: strconv.FormatUint(st.Dev, 10)}, nil
 }
