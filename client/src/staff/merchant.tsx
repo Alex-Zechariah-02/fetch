@@ -17,11 +17,12 @@ import { Photo } from '../ui/photo'
 import { Column, OrderCard, Tabs, WorkspaceTitle, useAction } from './staff'
 
 type View = 'orders' | 'menu' | 'sales'
+const views: readonly View[] = ['orders', 'menu', 'sales']
 
 export function MerchantPage() {
   const { session } = useSession()
   const { params } = useLocation()
-  const view = (['orders', 'menu', 'sales'].includes(params.get('view') ?? '') ? params.get('view') : 'orders') as View
+  const view = views.find((v) => v === params.get('view')) ?? 'orders'
   const shopId = session?.user.merchant ?? null
   const shop = useQuery<MerchantAnswer>(shopId ? `/inventory/merchants/${encodeURIComponent(shopId)}` : null)
   return (

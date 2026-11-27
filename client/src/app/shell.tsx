@@ -8,7 +8,7 @@ import { addressErrors, setAddress, useAddress } from '../lib/address'
 import { basketCount, useBasket } from '../lib/basket'
 import { Link, navigate, useLocation } from '../lib/router'
 import { dismissNotice, hasRole, roleNames, signOut, useSession } from '../lib/session'
-import { setTheme, useTheme, type ThemeChoice } from '../lib/theme'
+import { isThemeChoice, setTheme, useTheme, type ThemeChoice } from '../lib/theme'
 import { states, type Address, type Role, type User } from '../lib/types'
 import { Button, ButtonLink } from '../ui/button'
 import { cx } from '../ui/cx'
@@ -173,7 +173,7 @@ function AccountMenu({ user }: { user: User }) {
             )}
             <Menu.Group>
               <Menu.GroupLabel className="px-2.5 pt-1.5 pb-1 text-xs font-semibold text-ink-3">Appearance</Menu.GroupLabel>
-              <Menu.RadioGroup value={choice} onValueChange={(value) => setTheme(value as ThemeChoice)}>
+              <Menu.RadioGroup value={choice} onValueChange={(value) => { if (isThemeChoice(value)) setTheme(value) }}>
                 {themeChoices.map((option) => (
                   <Menu.RadioItem key={option.value} value={option.value} closeOnClick={false} className={menuItem}>
                     {option.icon}

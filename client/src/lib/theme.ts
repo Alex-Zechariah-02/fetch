@@ -5,11 +5,17 @@ import { useSyncExternalStore } from 'react'
 // a class on <html> so the CSS tokens and the dark: variant agree.
 
 export type ThemeChoice = 'system' | 'light' | 'dark'
+export interface ThemeState { choice: ThemeChoice; dark: boolean }
+
+export function isThemeChoice(value: unknown): value is ThemeChoice {
+  return value === 'system' || value === 'light' || value === 'dark'
+}
 
 const storageKey = 'fetch.theme'
 const media = window.matchMedia('(prefers-color-scheme: dark)')
 const listeners = new Set<() => void>()
 let choice: ThemeChoice = readChoice()
+let state: ThemeState = { choice, dark: false }
 
 function readChoice(): ThemeChoice {
   try {
@@ -24,6 +30,7 @@ function apply() {
   const dark = choice === 'dark' || (choice === 'system' && media.matches)
   document.documentElement.classList.toggle('dark', dark)
   document.documentElement.classList.toggle('light', !dark)
+  state = { choice, dark }
   for (const listener of listeners) listener()
 }
 
@@ -46,7 +53,6 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener)
 }
 
-export function useTheme(): { choice: ThemeChoice; dark: boolean } {
-  const current = useSyncExternalStore(subscribe, () => choice)
-  return { choice: current, dark: document.documentElement.classList.contains('dark') }
+export function useTheme(): ThemeState {
+  return useSyncExternalStore(subscribe, () => state)
 }

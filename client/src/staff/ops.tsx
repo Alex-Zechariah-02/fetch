@@ -121,7 +121,7 @@ const filters: (OrderStatus | 'all')[] = ['all', 'placed', 'accepted', 'ready', 
 
 function AllOrders() {
   const { params } = useLocation()
-  const status = (filters.includes(params.get('status') as OrderStatus) ? params.get('status') : 'all') as OrderStatus | 'all'
+  const status = filters.find((f) => f === params.get('status')) ?? 'all'
   // The 100 latest in one read, every 15 s: an overview, not a live board.
   const orders = useQuery<List<Order>>(`/orders?limit=100${status === 'all' ? '' : `&status=${status}`}`, { poll: 15_000 })
   return (

@@ -13,13 +13,14 @@ import { OrderCard, Tabs, WorkspaceTitle, useAction } from './staff'
 import { Thread } from '../help/ticket'
 
 type Filter = 'open' | 'answered' | 'resolved' | 'all'
+const filters: readonly Filter[] = ['open', 'answered', 'resolved', 'all']
 
 // The support desk: the ticket queue, one ticket with its linked order and
 // request reference, replies and resolving. The reference is what an
 // administrator looks up in the gateway Dashboard.
 export function SupportPage() {
   const { params } = useLocation()
-  const filter = (['open', 'answered', 'resolved', 'all'].includes(params.get('status') ?? '') ? params.get('status') : 'open') as Filter
+  const filter = filters.find((f) => f === params.get('status')) ?? 'open'
   const selected = params.get('ticket')
   // Every 10 s: new tickets reach the queue soon after a customer writes.
   const queue = useQuery<List<TicketSummary>>(`/support/queue${filter === 'all' ? '' : `?status=${filter}`}`, { poll: 10_000, all: true })
