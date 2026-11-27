@@ -46,10 +46,16 @@ const (
 type entry struct {
 	line []byte     // the record as one JSON line, encoded by its request
 	done chan error // nil when nobody waits
-	// state settles an admission once: the writer takes it (1), or a commit
-	// whose wait ended withdraws it first (2), so it is never written.
+	// state settles an admission once: the writer takes it, or a commit
+	// whose wait ended withdraws it first, so it is never written.
 	state *atomic.Int32
 }
+
+const (
+	entryQueued int32 = iota
+	entryTaken
+	entryWithdrawn
+)
 
 var (
 	errLogFailed = errors.New("security log unavailable")
@@ -146,7 +152,7 @@ func (l *securityLog) commit(ctx context.Context, r *record) error {
 		}
 		return err
 	case <-ctx.Done():
-		state.CompareAndSwap(0, 2)
+		state.CompareAndSwap(entryQueued, entryWithdrawn)
 		return errLogTimedOut
 	}
 }
@@ -223,14 +229,17 @@ finish:
 		l.write(nil)
 	}
 	l.archive.halt()
-	if err := errors.Join(l.trim(), l.file.Close()); err != nil {
-		fmt.Fprintf(os.Stderr, "security log close failed: %v\n", err)
+	if l.file != nil {
+		if err := errors.Join(l.trim(), l.file.Close()); err != nil {
+			fmt.Fprintf(os.Stderr, "security log close failed: %v\n", err)
+		}
+		l.file = nil
 	}
 }
 
 // take adds e to batch unless its commit withdrew it.
 func take(batch []entry, e entry) []entry {
-	if e.state != nil && !e.state.CompareAndSwap(0, 1) {
+	if e.state != nil && !e.state.CompareAndSwap(entryQueued, entryTaken) {
 		return batch
 	}
 	return append(batch, e)

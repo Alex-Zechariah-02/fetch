@@ -74,7 +74,9 @@ func (l *securityLog) rotate() error {
 		l.moveHealth(healthWriting, healthRotating)
 		return errFolderFull
 	}
-	if err := errors.Join(l.trim(), l.file.Close()); err != nil {
+	err := errors.Join(l.trim(), l.file.Close())
+	l.file = nil
+	if err != nil {
 		return err
 	}
 	if err := l.setAside(); err != nil {

@@ -4,6 +4,8 @@
 package guard
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -196,6 +198,28 @@ func TestLogHealthRecoveryAndRotation(t *testing.T) {
 	if !l.ready() || l.currentHealth() != healthWriting || l.recoveries.Load() != 1 {
 		t.Fatalf("after down recovery: health=%d recoveries=%d", l.currentHealth(), l.recoveries.Load())
 	}
+}
+
+// Closing a log after reopen failed and left l.file nil never panics.
+func TestCloseAfterFailedReopenDoesNotPanic(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var opens atomic.Int32
+	l, err := openLog(filepath.Join(dir, "orders-security.log"), Storage{}, withOpener(func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		if opens.Add(1) > 1 {
+			return nil, errors.New("reopen blocked")
+		}
+		return os.OpenFile(name, flag, perm)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Trigger healthDown and a failing reopen through the writer goroutine.
+	l.moveHealth(healthWriting, healthDown)
+	if err := l.commit(t.Context(), &record{Kind: "request.admitted"}); err == nil {
+		t.Fatal("commit succeeded despite blocked reopen")
+	}
+	l.close()
 }
 
 func BenchmarkLogHealth(b *testing.B) {

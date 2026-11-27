@@ -138,7 +138,11 @@ func (l *securityLog) reopen() error {
 			return err
 		}
 	}
-	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	openFn := l.openFile
+	if openFn == nil {
+		openFn = os.OpenFile
+	}
+	file, err := openFn(l.path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
