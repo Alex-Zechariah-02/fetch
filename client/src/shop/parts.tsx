@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Clock, Moped, Plus } from '@phosphor-icons/react'
 import { addToBasket, basketSubtotal, setQuantity, maxQuantity, useBasket } from '../lib/basket'
 import { minutes, rm } from '../lib/format'
@@ -55,11 +55,14 @@ export function unavailableReason(item: Item, merchant: Pick<Merchant, 'open'>):
 export function useAdd(merchant: Pick<Merchant, 'id' | 'name'>) {
   const [pending, setPending] = useState<{ item: Item; quantity: number; other: string } | null>(null)
   const [added, setAdded] = useState<string | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
   const basket = useBasket()
   const flash = (item: Item) => {
     setAdded(item.id)
+    clearTimeout(timer.current)
     // Long enough to read "Added", short enough to be gone before the next tap.
-    setTimeout(() => setAdded((current) => (current === item.id ? null : current)), 1400)
+    timer.current = setTimeout(() => setAdded((current) => (current === item.id ? null : current)), 1400)
   }
   const add = (item: Item, quantity = 1) => {
     const result = addToBasket(merchant, item, quantity)

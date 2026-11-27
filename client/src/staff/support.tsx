@@ -84,6 +84,7 @@ function TicketDetail({ id, onChanged }: { id: string; onChanged: () => void }) 
   if (problem) return <ProblemNotice problem={problem} />
   if (!ticket.data) return <Loading label="Loading the ticket"><Skeleton className="h-80 rounded-3xl" /></Loading>
   const t = ticket.data.ticket
+  const orderProblem = !order.data && order.answer ? describe(order.answer) : null
   return (
     <div className="flex flex-col gap-4">
       <RefreshProblem query={ticket} />
@@ -111,7 +112,7 @@ function TicketDetail({ id, onChanged }: { id: string; onChanged: () => void }) 
       {t.order && (
         <div>
           <h3 className="mb-2 flex items-center gap-2 font-extrabold"><Receipt size={18} aria-hidden="true" />Linked order</h3>
-          {order.data ? <OrderCard order={order.data.order} view="support" wide /> : order.answer ? <ProblemNotice problem={describe(order.answer)!} /> : <Skeleton className="h-32" />}
+          {order.data ? <OrderCard order={order.data.order} view="support" wide /> : orderProblem ? <ProblemNotice problem={orderProblem} /> : <Skeleton className="h-32" />}
         </div>
       )}
     </div>

@@ -88,9 +88,11 @@ const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).to
 const address = { line1: '12 Jalan Telawi 3', line2: '', postcode: '59100', city: 'Kuala Lumpur', state: 'Wilayah Persekutuan Kuala Lumpur' }
 
 function order(id: string, customer: string, merchantId: string, lines: [string, number][], status: Order['status'], minutesAgo: number, payment: Order['payment'] = 'cash'): Order {
-  const merchant = merchants.find((x) => x.id === merchantId)!
+  const merchant = merchants.find((x) => x.id === merchantId)
+  if (!merchant) throw new Error(`Unknown seed merchant ${merchantId}`)
   const orderLines = lines.map(([itemId, quantity]) => {
-    const item = items.find((x) => x.id === itemId)!
+    const item = items.find((x) => x.id === itemId)
+    if (!item) throw new Error(`Unknown seed item ${itemId}`)
     return { item: itemId, name: item.name, quantity, unit_price_sen: item.price_sen }
   })
   const subtotal = orderLines.reduce((sum, line) => sum + line.quantity * line.unit_price_sen, 0)

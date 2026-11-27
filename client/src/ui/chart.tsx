@@ -23,7 +23,7 @@ const left = 56
 function niceMax(value: number): number {
   if (value <= 0) return 1
   const power = 10 ** Math.floor(Math.log10(value))
-  const step = [1, 2, 2.5, 5, 10].find((s) => s * power >= value / 4)! * power
+  const step = ([1, 2, 2.5, 5, 10].find((s) => s * power >= value / 4) ?? 10) * power
   return Math.ceil(value / step) * step
 }
 

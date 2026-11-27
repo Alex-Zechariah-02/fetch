@@ -1,6 +1,6 @@
 // Notices: a problem in plain words with who answered and the reference, a
 // failed refresh over stale data, loading skeletons and empty states.
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Copy, Question, ShieldWarning, WarningCircle } from '@phosphor-icons/react'
 import { describe, type Problem } from '../lib/messages'
 import type { Query } from '../lib/query'
@@ -23,11 +23,14 @@ export function shortRef(value: string): string {
 // refused), the tag shows the full reference instead, ready to select.
 export function RefTag({ value }: { value: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
   const copy = () => {
     const done = () => {
       setState('copied')
+      clearTimeout(timer.current)
       // "Copied" shows briefly, then the reference reads as before.
-      setTimeout(() => setState((s) => (s === 'copied' ? 'idle' : s)), 1600)
+      timer.current = setTimeout(() => setState((s) => (s === 'copied' ? 'idle' : s)), 1600)
     }
     try {
       navigator.clipboard.writeText(value).then(done, () => setState('failed'))

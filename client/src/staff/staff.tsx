@@ -1,6 +1,6 @@
 // Shared pieces of the partner workspaces: titles, view tabs, one write at a
 // time with its outcome, order cards and board columns.
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { outcomeOfWrite, type Answer } from '../lib/api'
 import { rm, time, reference } from '../lib/format'
 import { describe, type Problem, type Write } from '../lib/messages'
@@ -54,12 +54,15 @@ export function useAction(onDone: () => void) {
   const [problem, setProblem] = useState<{ key: string; problem: Problem } | null>(null)
   // done names the last action that succeeded, for a brief "Saved" message.
   const [done, setDone] = useState<string | null>(null)
+  const doneTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(doneTimer.current), [])
   const blocked = (key: string) => busy !== null && busy !== key
   const run = async (key: string, path: string, write: Write, body?: unknown) => {
     if (running.current) return
     running.current = true
     setBusy(key)
     setProblem(null)
+    clearTimeout(doneTimer.current)
     setDone(null)
     const answer: Answer<unknown> = await call({ method: body === undefined ? 'POST' : 'PATCH', path, body })
     running.current = false
@@ -68,9 +71,10 @@ export function useAction(onDone: () => void) {
     if (outcomeOfWrite(answer) === 'done') {
       setDone(key)
       // "Saved" stays long enough to notice, then clears so the row looks settled.
-      setTimeout(() => setDone((current) => (current === key ? null : current)), 2400)
+      doneTimer.current = setTimeout(() => setDone((current) => (current === key ? null : current)), 2400)
     } else {
-      setProblem({ key, problem: describe(answer, write)! })
+      const described = describe(answer, write)
+      if (described) setProblem({ key, problem: described })
     }
     onDone()
   }
