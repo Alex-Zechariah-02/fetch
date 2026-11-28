@@ -126,7 +126,7 @@ func (r *archiver) pass() {
 		r.trim()
 	}
 	r.keepReserve()
-	r.measure()
+	r.measure(diskOf)
 }
 
 // archive compresses or moves one rotated file of the log folder, records

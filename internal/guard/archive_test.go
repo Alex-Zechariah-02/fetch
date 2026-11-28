@@ -94,8 +94,41 @@ func TestMeasureRecordsBothFreeSpacesWhenSameDir(t *testing.T) {
 	dir := t.TempDir()
 	l := &securityLog{path: filepath.Join(dir, "orders-security.log")}
 	r := newArchiver(l, Storage{Archive: dir}, defaultReservePause)
-	r.measure()
+	r.measure(diskOf)
 	if r.freeLog.Load() != r.freeArchive.Load() || r.freeLog.Load() < 0 {
 		t.Fatalf("freeLog=%d freeArchive=%d, want both non-negative and equal", r.freeLog.Load(), r.freeArchive.Load())
+	}
+}
+
+func TestMeasureUsesOneObservationForEachDirectory(t *testing.T) {
+	t.Parallel()
+	for _, shared := range []bool{true, false} {
+		t.Run(map[bool]string{true: "shared", false: "separate"}[shared], func(t *testing.T) {
+			live := t.TempDir()
+			archive := live
+			if !shared {
+				archive = t.TempDir()
+			}
+			l := &securityLog{path: filepath.Join(live, "orders-security.log")}
+			r := newArchiver(l, Storage{Archive: archive}, defaultReservePause)
+			free := map[string]int64{live: 100}
+			if !shared {
+				free[archive] = 200
+			}
+			r.measure(func(path string) (disk, error) {
+				free[path]--
+				return disk{free: free[path]}, nil
+			})
+			wantArchive := int64(199)
+			if shared {
+				wantArchive = 99
+			}
+			if got := r.freeLog.Load(); got != 99 {
+				t.Fatalf("live free bytes %d, want 99", got)
+			}
+			if got := r.freeArchive.Load(); got != wantArchive {
+				t.Fatalf("archive free bytes %d, want %d", got, wantArchive)
+			}
+		})
 	}
 }

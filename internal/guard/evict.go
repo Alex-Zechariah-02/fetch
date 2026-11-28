@@ -127,38 +127,6 @@ func (r *archiver) evict(f logFile, reason string) error {
 	return nil
 }
 
-// measure publishes the archive's bytes, the files waiting and free space.
-func (r *archiver) measure() {
-	files, err := rotatedFiles(r.log.path, r.dir)
-	if err != nil {
-		return
-	}
-	var stored, waiting int64
-	for _, f := range files {
-		switch {
-		case f.dir == r.dir:
-			stored += f.bytes
-		case !f.packed:
-			waiting++
-		}
-	}
-	r.stored.Store(stored)
-	r.waiting.Store(waiting)
-	for _, target := range []struct {
-		dir   string
-		store func(int64)
-	}{
-		{r.live, r.freeLog.Store},
-		{r.dir, r.freeArchive.Store},
-	} {
-		d, err := diskOf(target.dir)
-		if err != nil {
-			d.free = -1
-		}
-		target.store(d.free)
-	}
-}
-
 // reserveName is the reserve file of the active file: <stem>.reserve.
 func reserveName(active string) string {
 	return strings.TrimSuffix(active, filepath.Ext(active)) + ".reserve"
