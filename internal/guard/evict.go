@@ -19,6 +19,11 @@ import (
 	"time"
 )
 
+type eviction struct {
+	at   int
+	seen uint64
+}
+
 // trim evicts until every bound holds or nothing is left to evict.
 func (r *archiver) trim() {
 	files, err := rotatedFiles(r.log.path, r.dir)
@@ -27,14 +32,19 @@ func (r *archiver) trim() {
 	}
 	for _, rule := range []struct {
 		reason string
-		pick   func([]logFile) int
+		pick   func([]logFile, uint64) eviction
 	}{
-		{"archive_budget", func(fs []logFile) int { return oldestOver(fs, r.dir, r.budget) }},
-		{"log_budget", func(fs []logFile) int { return oldestOver(fs, r.live, logFiles*r.log.limit-r.log.written.Load()) }},
+		{"archive_budget", func(fs []logFile, seen uint64) eviction {
+			return eviction{at: oldestOver(fs, r.dir, r.budget), seen: seen}
+		}},
+		{"log_budget", func(fs []logFile, seen uint64) eviction {
+			return eviction{at: oldestOver(fs, r.live, logFiles*r.log.limit-r.log.written.Load()), seen: seen}
+		}},
 		{"disk_pressure", r.underPressure},
 	} {
 		for len(files) > 0 && r.ctx.Err() == nil {
-			at := rule.pick(files)
+			picked := rule.pick(files, r.spaceSeen)
+			at := picked.at
 			if at < 0 {
 				break
 			}
@@ -42,6 +52,7 @@ func (r *archiver) trim() {
 				fmt.Fprintf(os.Stderr, "security log file %s not evicted yet: %v\n", files[at].name, err)
 				return
 			}
+			r.spaceSeen = picked.seen
 			files = slices.Delete(files, at, at+1)
 		}
 	}
@@ -70,24 +81,24 @@ func oldestOver(files []logFile, dir string, bound int64) int {
 // underPressure picks the oldest file on a disk below its threshold, or -1.
 // Each write refused for want of space also picks one file on the log disk,
 // whatever its free space reads (a quota or inode limit).
-func (r *archiver) underPressure(files []logFile) int {
+func (r *archiver) underPressure(files []logFile, seen uint64) eviction {
 	fails := r.log.spaceFails.Load()
 	for _, dir := range []string{r.live, r.dir} {
 		d, err := diskOf(dir)
-		full := dir == r.live && r.log.currentHealth() == healthNoSpace && fails != r.spaceSeen
+		full := dir == r.live && r.log.currentHealth() == healthNoSpace && fails != seen
 		if err != nil || !full && !d.below(r.minFree) {
 			continue
 		}
 		for i, f := range files {
 			if same, err := diskOf(f.dir); err == nil && same.id == d.id {
 				if full {
-					r.spaceSeen = fails
+					return eviction{at: i, seen: fails}
 				}
-				return i
+				return eviction{at: i, seen: seen}
 			}
 		}
 	}
-	return -1
+	return eviction{at: -1, seen: seen}
 }
 
 // evict records f, then deletes it.

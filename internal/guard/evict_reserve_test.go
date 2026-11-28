@@ -3,6 +3,7 @@
 package guard
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,6 +91,35 @@ func TestGuardNoSpaceEvictsOneFile(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if n := l.archive.evictions.Load(); n != 1 {
 		t.Fatalf("%d files evicted before the writer tried again, want 1", n)
+	}
+}
+
+func TestFailedEvictionLeavesPressurePending(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	log := &securityLog{path: filepath.Join(dir, "orders-security.log"), limit: 1 << 20}
+	if err := log.fail(fullDisk()); !errors.Is(err, errLogFailed) {
+		t.Fatalf("log failure result: %v", err)
+	}
+	if health := log.currentHealth(); health != healthNoSpace {
+		t.Fatalf("log health %v, want no space", health)
+	}
+
+	path := rotatedName(log.path, time.Unix(0, 0)) + ".gz"
+	if err := os.WriteFile(path, []byte("invalid archive metadata"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files, err := rotatedFiles(log.path, "")
+	if err != nil || len(files) != 1 || !files[0].packed {
+		t.Fatalf("rotated files %v, error %v", files, err)
+	}
+	archiver := &archiver{live: dir, log: log, ctx: t.Context()}
+	archiver.trim()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("failed eviction removed its file: %v", err)
+	}
+	if selected := archiver.underPressure(files, archiver.spaceSeen).at; selected != 0 {
+		t.Fatalf("failed eviction left selection %d, want the pending file", selected)
 	}
 }
 
